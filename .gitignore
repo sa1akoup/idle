@@ -1,0 +1,18 @@
+# Go 运行数据与本地配置
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/.env
+
+# 前端依赖与构建产物
+frontend/node_modules/
+frontend/dist/
+frontend/.env*
+
+# 通用日志与临时文件
+*.log
+*.tmp
+*.swp
+.DS_Store
+.idea/
+.vscode/

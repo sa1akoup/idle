@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">废弃城区战术地图</title>
+  <desc id="desc">由居民楼、仓库、海关、地下通道、集装箱场和码头组成的城区俯视图</desc>
+  <rect width="1200" height="760" fill="#171a17"/>
+  <path d="M0 115H1200M0 420H1200M305 0V760M835 0V760" stroke="#343a34" stroke-width="58"/>
+  <path d="M0 115H1200M0 420H1200M305 0V760M835 0V760" stroke="#50564c" stroke-width="2" stroke-dasharray="20 18"/>
+  <g fill="#242824" stroke="#464b43" stroke-width="3">
+    <path d="M42 35h205v120H42zM72 190h175v170H72zM360 36h190v122H360zM585 28h192v145H585z"/>
+    <path d="M902 38h250v145H902zM875 225h270v126H875zM35 484h210v218H35z"/>
+    <path d="M365 488h178v92H365zM365 610h178v92H365zM595 485h180v217H595z"/>
+    <path d="M900 480h248v222H900z"/>
+  </g>
+  <g fill="#30352f">
+    <path d="M95 65h35v60H95zM154 65h35v60H154zM405 67h95v62h-95zM633 60h95v82h-95z"/>
+    <path d="M934 68h74v82h-74zM1035 68h74v82h-74zM925 255h190v67H925z"/>
+    <path d="M64 525h152v40H64zM64 595h152v40H64zM624 530h122v130H624zM932 520h185v140H932z"/>
+  </g>
+  <g stroke="#887347" stroke-width="4" opacity=".7">
+    <path d="M820 468h365M860 510h310M860 552h310M860 594h310M860 636h310"/>
+  </g>
+  <path d="M15 728h1170" stroke="#708b87" stroke-width="20" opacity=".45"/>
+  <g fill="#8fa564" opacity=".42">
+    <circle cx="275" cy="166" r="13"/><circle cx="330" cy="385" r="18"/><circle cx="805" cy="190" r="11"/>
+    <circle cx="567" cy="445" r="15"/><circle cx="1180" cy="390" r="16"/><circle cx="285" cy="710" r="12"/>
+  </g>
+</svg>
