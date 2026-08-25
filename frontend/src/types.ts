@@ -1,12 +1,22 @@
 // 游戏领域类型：集中约束玩家、装备、地图与行动报告的数据结构。
 export type NavKey =
   | 'explore'
+  | 'live'
   | 'map'
   | 'character'
   | 'inventory'
   | 'merchant'
   | 'hideout'
   | 'logs'
+
+export interface User {
+	id: number
+	username: string
+	email?: string | null
+	status: string
+	createdAt: string
+	updatedAt: string
+}
 
 export type ActionStyle = 'balanced' | 'stealth' | 'aggressive' | 'greedy'
 
@@ -44,6 +54,7 @@ export interface Weapon {
   id: string
   name: string
   category: string
+  caliberId: string
   hit: number
   damage: number
   penetration: number
@@ -62,11 +73,25 @@ export interface Weapon {
   repRequirement: number
 }
 
+export interface Ammo {
+  id: string
+  name: string
+  caliberId: string
+  level: number
+  fleshDamageMultiplier: number
+  armorDamageMultiplier: number
+  price: number
+  roundsPerSlot: number
+  merchantCategory: string
+  repRequirement: number
+}
+
 export interface Armor {
   id: string
   name: string
   type: 'light' | 'heavy'
   protect: number
+  protectionLevel: number
   coverage: number
   mobility: number
   initiative: number
@@ -183,6 +208,7 @@ export interface LootItem {
 }
 
 export interface LootSummary {
+  id: string
   itemId: string
   name: string
   category: string
@@ -238,186 +264,28 @@ export interface Enemy {
   agility: number
   weaponId: string
   armorId: string
+  ammoId: string
+  ammoRounds: number
   evasion: number
   mobility: number
   suppress: number
   backpackContainerId: string
 }
 
-export interface InventoryItem {
-  id: number
-  itemId: string
-  name: string
-  kind: 'currency' | 'material' | 'loot' | 'weapon' | 'armor' | 'consumable' | 'chestrig' | 'backpack' | 'helmet' | 'headset'
-  category: string
-  quantity: number
-  price: number
-  weight: number
-  slots: number
-  raidExtract: boolean
-  merchantCategory: string
-  repRequirement: number
-  updatedAt: string
-}
 
-export interface Merchant {
-  id: string
-  name: string
-  category: string
-  reputation: number
-  desc: string
-  open: boolean
-  sortOrder: number
-}
-
-export interface MerchantCatalogItem {
-  id: string
-  name: string
-  kind: string
-  detail: string
-  basePrice: number
-  price: number
-  sellPrice: number
-  weight: number
-  slots: number
-  repRequirement: number
-}
-
-export interface PlayerLoadout {
-  id: number
-  characterId: number
-  weaponId: string
-  armorId: string
-  chestRigId: string
-  backpackId: string
-  helmetId: string
-  headsetId: string
-  consumables: string[]
-  presetWeaponId: string
-  presetArmorId: string
-  presetChestRigId: string
-  presetBackpackId: string
-  presetHelmetId: string
-  presetHeadsetId: string
-  presetConsumables: string[]
-  presetName: string
-  preset2WeaponId: string
-  preset2ArmorId: string
-  preset2ChestRigId: string
-  preset2BackpackId: string
-  preset2HelmetId: string
-  preset2HeadsetId: string
-  preset2Consumables: string[]
-  preset2Name: string
-  preset3WeaponId: string
-  preset3ArmorId: string
-  preset3ChestRigId: string
-  preset3BackpackId: string
-  preset3HelmetId: string
-  preset3HeadsetId: string
-  preset3Consumables: string[]
-  preset3Name: string
-  updatedAt: string
-}
-
-export interface SaveLoadoutRequest {
-  weaponId: string
-  armorId: string
-  chestRigId: string
-  backpackId: string
-  helmetId: string
-  headsetId: string
-  consumables: string[]
-  presetWeaponId: string
-  presetArmorId: string
-  presetChestRigId: string
-  presetBackpackId: string
-  presetHelmetId: string
-  presetHeadsetId: string
-  presetConsumables: string[]
-  presetName: string
-  preset2WeaponId: string
-  preset2ArmorId: string
-  preset2ChestRigId: string
-  preset2BackpackId: string
-  preset2HelmetId: string
-  preset2HeadsetId: string
-  preset2Consumables: string[]
-  preset2Name: string
-  preset3WeaponId: string
-  preset3ArmorId: string
-  preset3ChestRigId: string
-  preset3BackpackId: string
-  preset3HelmetId: string
-  preset3HeadsetId: string
-  preset3Consumables: string[]
-  preset3Name: string
-}
-
-// 预设装备序号对应的 loadout 字段组合
-export interface PresetSlot {
-  weaponId: string
-  armorId: string
-  consumables: string[]
-}
-
-export function presetOf(loadout: PlayerLoadout, index: number): PresetSlot {
-  switch (index) {
-    case 2:
-      return { weaponId: loadout.preset2WeaponId, armorId: loadout.preset2ArmorId, consumables: loadout.preset2Consumables }
-    case 3:
-      return { weaponId: loadout.preset3WeaponId, armorId: loadout.preset3ArmorId, consumables: loadout.preset3Consumables }
-    default:
-      return { weaponId: loadout.presetWeaponId, armorId: loadout.presetArmorId, consumables: loadout.presetConsumables }
-  }
-}
-
-export interface Session {
-  id: number
-  characterId: number
-  mapId: string
-  style: ActionStyle
-  recoveryPreset: number
-  weaponId: string
-  armorId: string
-  consumables: string
-  status: 'running' | 'waiting_injury' | 'finished' | 'aborted' | 'failed'
-  seed: number
-  startTime: string
-  endTime: string | null
-  offlineLimitMin: number
-  totalRuns: number
-  createdAt: string
-}
-
-export interface SessionRunRaw {
-  id: number
-  sessionId: number
-  runIndex: number
-  result: 'success' | 'partial' | 'emergency' | 'captured' | 'incapacitated'
-  durationMin: number
-  heat: number
-  ammoUsed: number
-  injury: string
-  loot: string
-  report: string
-  createdAt: string
-}
-
-export interface SessionRun extends Omit<SessionRunRaw, 'loot' | 'report'> {
-  loot: LootSummary[]
-  report: string[]
-}
-
-export interface SessionDetail {
-  session: Session
-  runs: SessionRunRaw[]
-}
-
-export type PreviewResult = Record<string, string>
-
-export interface StartSessionRequest {
-  mapId: string
-  style: ActionStyle
-  recoveryPreset: number
-}
+export type {
+  InventoryItem,
+  Merchant,
+  MerchantCatalogItem,
+  PlayerLoadout,
+  SaveLoadoutRequest,
+  PresetSlot,
+  Session,
+  SessionEventType,
+  SessionEvent,
+  SessionRunRaw,
+  SessionRun,
+  SessionDetail,
+  StartSessionRequest,
+} from './types_inventory'
+export { presetOf } from './types_inventory'

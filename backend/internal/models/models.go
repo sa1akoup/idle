@@ -2,10 +2,13 @@ package models
 
 import "time"
 
-// PlayerCharacterID 玩家角色在 MVP 中使用固定主键，避免出现预设角色池。
+// DefaultUserID 认证接口接入前使用的本地启动用户。
+const DefaultUserID uint = 1
+
+// PlayerCharacterID 保留给本地测试数据与旧结构引用。
 const PlayerCharacterID uint = 1
 
-// PlayerLoadoutID 玩家角色的装备配置使用固定主键。
+// PlayerLoadoutID 保留给本地测试数据与旧结构引用。
 const PlayerLoadoutID uint = 1
 
 // InventoryCapacity 仓库可容纳的非现金物品总数（当前装备与预设装备不计入）。
@@ -19,9 +22,40 @@ func BaseCarryWeight(strength int) float64 {
 	return 50 + float64(strength-50)*0.3
 }
 
+// User 用户账号。
+type User struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Username     string    `gorm:"uniqueIndex;not null" json:"username"`
+	Email        *string   `gorm:"uniqueIndex" json:"email,omitempty"`
+	PasswordHash string    `json:"-"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// AuthSession 登录会话 token 的摘要记录。
+type AuthSession struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"index;not null" json:"userId"`
+	TokenHash string    `gorm:"uniqueIndex;not null" json:"-"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"expiresAt"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// EconomicOperation 记录可重放的经济操作结果。
+type EconomicOperation struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	UserID        uint      `gorm:"uniqueIndex:idx_economic_operation,priority:1;not null" json:"userId"`
+	OperationKey  string    `gorm:"uniqueIndex:idx_economic_operation,priority:2;not null" json:"-"`
+	OperationType string    `gorm:"not null" json:"-"`
+	ResultJSON    string    `gorm:"not null" json:"-"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
 // Character 角色
 type Character struct {
 	ID          uint   `gorm:"primaryKey" json:"id"`
+	UserID      uint   `gorm:"uniqueIndex:idx_characters_user_id;not null" json:"userId"`
 	Name        string `json:"name"`
 	Desc        string `json:"desc"`
 	Strength    int    `json:"strength"` // 0-100
@@ -51,7 +85,9 @@ type Character struct {
 	Stress      int        `json:"stress"`
 	Injury      string     `json:"injury"` // none/light/heavy/lethal
 	InjuryUntil *time.Time `json:"injuryUntil"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	// ResourceVersion 用于在事务开始时获取该用户的资源行锁。
+	ResourceVersion int64     `gorm:"not null;default:0" json:"-"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 // EffectiveSkill 计算有效子技能
@@ -64,6 +100,7 @@ type WeaponDef struct {
 	ID           string `gorm:"primaryKey" json:"id"`
 	Name         string `json:"name"`
 	Category     string `json:"category"` // melee/pistol/smg/shotgun/rifle/sniper
+	CaliberID    string `gorm:"index" json:"caliberId"`
 	Hit          int    `json:"hit"`
 	Damage       int    `json:"damage"`
 	Penetration  int    `json:"penetration"`
@@ -83,13 +120,28 @@ type WeaponDef struct {
 	RepRequirement   int    `json:"repRequirement"`
 }
 
+// AmmoDef 弹药定义：同口径使用 N1-N6 穿甲等级区分弹种，价格按单发计算。
+type AmmoDef struct {
+	ID                    string  `gorm:"primaryKey" json:"id"`
+	Name                  string  `json:"name"`
+	CaliberID             string  `gorm:"uniqueIndex:idx_ammo_caliber_level,priority:1;not null" json:"caliberId"`
+	Level                 int     `gorm:"uniqueIndex:idx_ammo_caliber_level,priority:2;not null" json:"level"`
+	FleshDamageMultiplier float64 `json:"fleshDamageMultiplier"`
+	ArmorDamageMultiplier float64 `json:"armorDamageMultiplier"`
+	Price                 int     `json:"price"` // 单发价格
+	RoundsPerSlot         int     `json:"roundsPerSlot"`
+	MerchantCategory      string  `json:"merchantCategory"`
+	RepRequirement        int     `json:"repRequirement"`
+}
+
 // ArmorDef 护甲定义
 type ArmorDef struct {
 	ID               string `gorm:"primaryKey" json:"id"`
 	Name             string `json:"name"`
 	Type             string `json:"type"` // light/heavy
 	Protect          int    `json:"protect"`
-	Coverage         int    `json:"coverage"` // 0-100
+	ProtectionLevel  int    `json:"protectionLevel"` // A1-A6
+	Coverage         int    `json:"coverage"`        // 0-100
 	Mobility         int    `json:"mobility"`
 	Initiative       int    `json:"initiative"`
 	Conceal          int    `json:"conceal"`
@@ -259,6 +311,8 @@ type EnemyDef struct {
 	Agility             int    `json:"agility"`
 	WeaponID            string `json:"weaponId"`
 	ArmorID             string `json:"armorId"`
+	AmmoID              string `json:"ammoId"`
+	AmmoRounds          int    `json:"ammoRounds"`
 	Evasion             int    `json:"evasion"`
 	Mobility            int    `json:"mobility"`
 	Suppress            int    `json:"suppress"`
@@ -342,116 +396,4 @@ type EncounterPoolEntry struct {
 	Role    string `gorm:"uniqueIndex:idx_encounter_pool,priority:2;not null" json:"role"`
 	EnemyID string `gorm:"uniqueIndex:idx_encounter_pool,priority:3;not null" json:"enemyId"`
 	Weight  int    `json:"weight"`
-}
-
-// Session 挂机会话
-type Session struct {
-	ID              uint       `gorm:"primaryKey" json:"id"`
-	CharacterID     uint       `json:"characterId"`
-	MapID           string     `json:"mapId"`
-	Style           string     `json:"style"`          // 行动风格：balanced/stealth/aggressive/greedy
-	RecoveryPreset  int        `json:"recoveryPreset"` // 失能后使用的预设装备序号 1-3
-	WeaponID        string     `json:"weaponId"`
-	ArmorID         string     `json:"armorId"`
-	Consumables     string     `json:"consumables"` // csv
-	Status          string     `json:"status"`      // running/waiting_injury/finished/aborted/failed
-	Seed            int64      `json:"seed"`
-	StartTime       time.Time  `json:"startTime"`
-	EndTime         *time.Time `json:"endTime"`
-	OfflineLimitMin int        `json:"offlineLimitMin"` // 分钟
-	TotalRuns       int        `json:"totalRuns"`
-	CreatedAt       time.Time  `json:"createdAt"`
-}
-
-// SessionRun 单局
-type SessionRun struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	SessionID   uint      `json:"sessionId"`
-	RunIndex    int       `json:"runIndex"`
-	Result      string    `json:"result"` // success/partial/emergency/captured/incapacitated
-	DurationMin int       `json:"durationMin"`
-	Heat        int       `json:"heat"`
-	AmmoUsed    int       `json:"ammoUsed"`
-	Injury      string    `json:"injury"`
-	Loot        string    `json:"loot"`   // JSON array of extracted loot
-	Report      string    `json:"report"` // JSON array of lines
-	CreatedAt   time.Time `json:"createdAt"`
-}
-
-// PlayerLoadout 保存当前携行装备及失能后使用的 3 套预设补购清单。
-type PlayerLoadout struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	CharacterID        uint      `gorm:"uniqueIndex;not null" json:"characterId"`
-	WeaponID           string    `json:"weaponId"`
-	ArmorID            string    `json:"armorId"`
-	ChestRigID         string    `json:"chestRigId"`
-	BackpackID         string    `json:"backpackId"`
-	HelmetID           string    `json:"helmetId"`
-	HeadsetID          string    `json:"headsetId"`
-	Consumables        []string  `gorm:"serializer:json" json:"consumables"`
-	PresetWeaponID     string    `json:"presetWeaponId"`
-	PresetArmorID      string    `json:"presetArmorId"`
-	PresetChestRigID   string    `json:"presetChestRigId"`
-	PresetBackpackID   string    `json:"presetBackpackId"`
-	PresetHelmetID     string    `json:"presetHelmetId"`
-	PresetHeadsetID    string    `json:"presetHeadsetId"`
-	PresetName         string    `json:"presetName"`
-	PresetConsumables  []string  `gorm:"serializer:json" json:"presetConsumables"`
-	Preset2WeaponID    string    `json:"preset2WeaponId"`
-	Preset2ArmorID     string    `json:"preset2ArmorId"`
-	Preset2ChestRigID  string    `json:"preset2ChestRigId"`
-	Preset2BackpackID  string    `json:"preset2BackpackId"`
-	Preset2HelmetID    string    `json:"preset2HelmetId"`
-	Preset2HeadsetID   string    `json:"preset2HeadsetId"`
-	Preset2Name        string    `json:"preset2Name"`
-	Preset2Consumables []string  `gorm:"serializer:json" json:"preset2Consumables"`
-	Preset3WeaponID    string    `json:"preset3WeaponId"`
-	Preset3ArmorID     string    `json:"preset3ArmorId"`
-	Preset3ChestRigID  string    `json:"preset3ChestRigId"`
-	Preset3BackpackID  string    `json:"preset3BackpackId"`
-	Preset3HelmetID    string    `json:"preset3HelmetId"`
-	Preset3HeadsetID   string    `json:"preset3HeadsetId"`
-	Preset3Name        string    `json:"preset3Name"`
-	Preset3Consumables []string  `gorm:"serializer:json" json:"preset3Consumables"`
-	UpdatedAt          time.Time `json:"updatedAt"`
-}
-
-// Inventory 仓库
-type Inventory struct {
-	ID       uint   `gorm:"primaryKey" json:"id"`
-	ItemID   string `gorm:"uniqueIndex:idx_inv_src,priority:1;not null" json:"itemId"`
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`     // currency/material/loot/weapon/armor/consumable/chestrig/backpack/helmet/headset
-	Category string `json:"category"` // loot 子分类
-	Quantity int    `json:"quantity"`
-	Price    int    `json:"price"`
-	Weight   int    `json:"weight"` // 单件重量 kg
-	Slots    int    `json:"slots"`  // 单件占用格数
-	// 局内带出：探索掉落获得为 true，市场购买获得为 false（决定能否出售给商人）
-	RaidExtract bool `gorm:"uniqueIndex:idx_inv_src,priority:2" json:"raidExtract"`
-	// 商人类别与解锁所需好感度
-	MerchantCategory string    `json:"merchantCategory"`
-	RepRequirement   int       `json:"repRequirement"`
-	UpdatedAt        time.Time `json:"updatedAt"`
-}
-
-// MerchantDef 商人
-type MerchantDef struct {
-	ID         string `gorm:"primaryKey" json:"id"`
-	Name       string `json:"name"`
-	Category   string `json:"category"` // weapon/clothing/medical/mechanical/black/union
-	Reputation int    `json:"reputation"`
-	Desc       string `json:"desc"`
-	Open       bool   `json:"open"` // 占位商人暂不开放交易
-	SortOrder  int    `json:"sortOrder"`
-}
-
-// ArmorInstance 护甲实例（耐久）
-type ArmorInstance struct {
-	ID            uint   `gorm:"primaryKey" json:"id"`
-	ArmorID       string `json:"armorId"`
-	MaxDurability int    `json:"maxDurability"`
-	CurDurability int    `json:"curDurability"`
-	RepairCount   int    `json:"repairCount"` // 0/1
-	Status        string `json:"status"`      // normal/repairing/broken
 }

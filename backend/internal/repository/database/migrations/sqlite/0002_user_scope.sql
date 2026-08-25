@@ -1,0 +1,38 @@
+-- 用户作用域与商人个人状态。
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT UNIQUE,
+    password_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at DATETIME,
+    updated_at DATETIME
+);
+
+CREATE TABLE user_merchant_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    merchant_id TEXT NOT NULL,
+    reputation INTEGER NOT NULL DEFAULT 0,
+    unlocked BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME,
+    updated_at DATETIME,
+    UNIQUE (user_id, merchant_id)
+);
+
+ALTER TABLE characters ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE session_runs ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE player_loadouts ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE inventories ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE armor_instances ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+
+DROP INDEX idx_inv_src;
+CREATE UNIQUE INDEX idx_inv_user_item_src ON inventories (user_id, item_id, raid_extract);
+CREATE UNIQUE INDEX idx_characters_user_id ON characters (user_id);
+CREATE INDEX idx_sessions_user_id ON sessions (user_id);
+CREATE INDEX idx_session_runs_user_id ON session_runs (user_id);
+CREATE INDEX idx_player_loadouts_user_id ON player_loadouts (user_id);
+CREATE INDEX idx_inventories_user_id ON inventories (user_id);
+CREATE INDEX idx_armor_instances_user_id ON armor_instances (user_id);
+CREATE INDEX idx_user_merchant_states_user_id ON user_merchant_states (user_id);

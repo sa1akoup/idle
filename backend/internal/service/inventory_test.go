@@ -5,19 +5,21 @@ package service
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"idle/internal/models"
+	"idle/internal/repository/database"
 
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func newInventoryTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	dsn := fmt.Sprintf("file:inventory-%d?mode=memory&cache=shared", time.Now().UnixNano())
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	dsn := filepath.Join(os.TempDir(), fmt.Sprintf("idle-inventory-%d.db", time.Now().UnixNano()))
+	db, err := database.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("打开测试数据库: %v", err)
 	}
@@ -26,13 +28,16 @@ func newInventoryTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("读取测试连接: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+		_ = os.Remove(dsn)
+	})
 
-	if err := db.AutoMigrate(
-		&models.WeaponDef{}, &models.ArmorDef{}, &models.ConsumableDef{},
-		&models.Inventory{}, &models.ArmorInstance{}, &models.PlayerLoadout{}, &models.MerchantDef{},
-	); err != nil {
+	if err := database.Migrate(db, "sqlite"); err != nil {
 		t.Fatalf("迁移测试数据库: %v", err)
+	}
+	if err := db.Create(&models.Character{UserID: models.DefaultUserID, Name: "测试角色"}).Error; err != nil {
+		t.Fatalf("创建测试角色: %v", err)
 	}
 	for _, value := range []interface{}{
 		&models.WeaponDef{ID: "weapon", Name: "测试步枪", Price: 100, MerchantCategory: "weapon"},
@@ -52,7 +57,7 @@ func newInventoryTestDB(t *testing.T) *gorm.DB {
 
 func TestPurchaseItemDeductsCashAndAddsInventory(t *testing.T) {
 	db := newInventoryTestDB(t)
-	if err := db.Create(&models.Inventory{ItemID: "cash", Name: "现金", Kind: "currency", Quantity: 1000, Price: 1}).Error; err != nil {
+	if err := db.Create(&models.Inventory{UserID: models.DefaultUserID, ItemID: "cash", Name: "现金", Kind: "currency", Quantity: 1000, Price: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +72,7 @@ func TestPurchaseItemDeductsCashAndAddsInventory(t *testing.T) {
 	assertInventoryQuantity(t, db, "weapon", 2)
 	assertInventoryQuantity(t, db, "armor", 1)
 	var armorCount int64
-	if err := db.Model(&models.ArmorInstance{}).Count(&armorCount).Error; err != nil {
+	if err := db.Model(&models.ArmorInstance{}).Where("user_id = ?", models.DefaultUserID).Count(&armorCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if armorCount != 1 {
@@ -118,7 +123,7 @@ func TestReplaceLostLoadoutUsesChosenPreset(t *testing.T) {
 	}
 	assertInventoryQuantity(t, db, "weapon2", 1)
 	var lostCount int64
-	if err := db.Model(&models.Inventory{}).Where("item_id = ?", "weapon").Count(&lostCount).Error; err != nil {
+	if err := db.Model(&models.Inventory{}).Where("user_id = ? AND item_id = ?", models.DefaultUserID, "weapon").Count(&lostCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if lostCount != 0 {
@@ -167,7 +172,7 @@ func TestReplaceLostLoadoutKeepsLossWhenCashIsInsufficient(t *testing.T) {
 	assertInventoryQuantity(t, db, "cash", 100)
 	for _, itemID := range []string{"weapon", "armor", "smoke"} {
 		var count int64
-		if err := db.Model(&models.Inventory{}).Where("item_id = ?", itemID).Count(&count).Error; err != nil {
+		if err := db.Model(&models.Inventory{}).Where("user_id = ? AND item_id = ?", models.DefaultUserID, itemID).Count(&count).Error; err != nil {
 			t.Fatal(err)
 		}
 		if count != 0 {
@@ -190,13 +195,14 @@ func TestReplaceLostLoadoutKeepsLossWhenCashIsInsufficient(t *testing.T) {
 func seedTestLoadout(t *testing.T, db *gorm.DB, cash int) {
 	t.Helper()
 	values := []interface{}{
-		&models.Inventory{ItemID: "cash", Name: "现金", Kind: "currency", Quantity: cash, Price: 1},
-		&models.Inventory{ItemID: "weapon", Name: "测试步枪", Kind: "weapon", Quantity: 1, Price: 100},
-		&models.Inventory{ItemID: "armor", Name: "测试护甲", Kind: "armor", Quantity: 1, Price: 200},
-		&models.Inventory{ItemID: "smoke", Name: "测试烟雾弹", Kind: "consumable", Quantity: 1, Price: 50},
-		&models.ArmorInstance{ArmorID: "armor", MaxDurability: 80, CurDurability: 80, Status: "normal"},
+		&models.Inventory{UserID: models.DefaultUserID, ItemID: "cash", Name: "现金", Kind: "currency", Quantity: cash, Price: 1},
+		&models.Inventory{UserID: models.DefaultUserID, ItemID: "weapon", Name: "测试步枪", Kind: "weapon", Quantity: 1, Price: 100},
+		&models.Inventory{UserID: models.DefaultUserID, ItemID: "armor", Name: "测试护甲", Kind: "armor", Quantity: 1, Price: 200},
+		&models.Inventory{UserID: models.DefaultUserID, ItemID: "smoke", Name: "测试烟雾弹", Kind: "consumable", Quantity: 1, Price: 50},
+		&models.ArmorInstance{UserID: models.DefaultUserID, ArmorID: "armor", MaxDurability: 80, CurDurability: 80, Status: "normal"},
 		&models.PlayerLoadout{
-			ID: models.PlayerLoadoutID, CharacterID: models.PlayerCharacterID,
+			UserID: models.DefaultUserID,
+			ID:     models.PlayerLoadoutID, CharacterID: models.PlayerCharacterID,
 			WeaponID: "weapon", ArmorID: "armor", Consumables: []string{"smoke"},
 			PresetWeaponID: "weapon", PresetArmorID: "armor", PresetConsumables: []string{"smoke"},
 		},
@@ -211,7 +217,7 @@ func seedTestLoadout(t *testing.T, db *gorm.DB, cash int) {
 func assertInventoryQuantity(t *testing.T, db *gorm.DB, itemID string, want int) {
 	t.Helper()
 	var inventory models.Inventory
-	if err := db.Where("item_id = ?", itemID).First(&inventory).Error; err != nil {
+	if err := db.Where("user_id = ? AND item_id = ?", models.DefaultUserID, itemID).First(&inventory).Error; err != nil {
 		t.Fatalf("读取库存 %s: %v", itemID, err)
 	}
 	if inventory.Quantity != want {

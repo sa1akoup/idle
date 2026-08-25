@@ -1,10 +1,11 @@
 <!-- 日志页：浏览历史挂机会话、单局摘要与可解释行动报告。 -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Select, Warning } from '@element-plus/icons-vue'
 import api, { getApiError } from '../api'
-import type { ActionStyle, GameMap, LootSummary, Session, SessionDetail, SessionRun, Weapon } from '../types'
+import SessionTimeline from '../components/SessionTimeline.vue'
+import type { ActionStyle, GameMap, LootSummary, Session, SessionDetail, SessionEvent, SessionRun, Weapon } from '../types'
 
 const props = defineProps<{
   sessions: Session[]
@@ -15,9 +16,9 @@ const props = defineProps<{
 const emit = defineEmits<{ refresh: [] }>()
 const selectedId = ref<number | null>(null)
 const detail = ref<SessionDetail | null>(null)
+const events = ref<SessionEvent[]>([])
 const loading = ref(false)
 const aborting = ref(false)
-let refreshTimer: number | undefined
 
 watchEffect(() => {
   if (!props.sessions.some((item) => item.id === selectedId.value)) {
@@ -44,7 +45,7 @@ function parseLoot(raw: string): LootSummary[] {
 function isLootSummary(value: unknown): value is LootSummary {
   if (!value || typeof value !== 'object') return false
   const item = value as Record<string, unknown>
-  return typeof item.itemId === 'string' && typeof item.name === 'string' && typeof item.category === 'string'
+  return typeof item.id === 'string' && typeof item.itemId === 'string' && typeof item.name === 'string' && typeof item.category === 'string'
     && typeof item.quantity === 'number' && typeof item.containerId === 'string' && typeof item.source === 'string'
 }
 
@@ -72,9 +73,14 @@ function styleLabel(style: ActionStyle | string) {
 async function loadSession(id: number) {
   selectedId.value = id
   loading.value = true
+  events.value = []
   try {
-    const { data } = await api.get<SessionDetail>(`/session/${id}`)
-    detail.value = data
+    const [detailResponse, eventResponse] = await Promise.all([
+      api.get<SessionDetail>(`/session/${id}`),
+      api.get<SessionEvent[]>(`/session/${id}/events`),
+    ])
+    detail.value = detailResponse.data
+    events.value = eventResponse.data
   } catch (error) {
     ElMessage.error(getApiError(error, '行动日志读取失败'))
   } finally {
@@ -96,19 +102,6 @@ async function abortSession() {
     aborting.value = false
   }
 }
-
-onMounted(() => {
-  refreshTimer = window.setInterval(() => {
-    if (selectedId.value && props.sessions.some((item) => item.id === selectedId.value && (item.status === 'running' || item.status === 'waiting_injury'))) {
-      void loadSession(selectedId.value)
-      emit('refresh')
-    }
-  }, 5000)
-})
-
-onUnmounted(() => {
-  if (refreshTimer !== undefined) window.clearInterval(refreshTimer)
-})
 </script>
 
 <template>
@@ -134,6 +127,10 @@ onUnmounted(() => {
             <div><span>随机种子</span><strong>{{ String(detail.session.seed).slice(-8) }}</strong></div>
             <el-button v-if="detail.session.status === 'running' || detail.session.status === 'waiting_injury'" type="danger" plain :loading="aborting" @click="abortSession">中止行动</el-button>
           </div>
+          <section class="history-timeline">
+            <div class="panel-heading"><div><span>01</span><h2>事件时间线</h2></div><small>{{ events.length }} 条已记录事件</small></div>
+            <SessionTimeline :events="events" compact />
+          </section>
           <div class="run-list">
             <details v-for="run in runs" :key="run.id" class="run-entry" :open="run.runIndex === runs.length">
               <summary>
@@ -141,7 +138,7 @@ onUnmounted(() => {
                 <div><strong>第 {{ run.runIndex }} 局 · {{ run.result }}</strong><small>{{ run.durationMin }} 分钟 · 热度 {{ run.heat }} · 弹药 {{ run.ammoUsed }}</small></div>
                 <b>{{ run.injury === 'none' ? '无伤' : run.injury }}</b>
               </summary>
-              <div v-if="run.loot.length" class="run-loot"><span v-for="item in run.loot" :key="`${item.itemId}-${item.containerId}-${item.source}`">{{ item.name }} x{{ item.quantity }}</span></div>
+              <div v-if="run.loot.length" class="run-loot"><span v-for="item in run.loot" :key="item.id">{{ item.name }} x{{ item.quantity }}</span></div>
               <pre>{{ run.report.join('\n') }}</pre>
             </details>
           </div>

@@ -4,7 +4,23 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: '/api',
   timeout: 15_000,
+  withCredentials: true,
 })
+
+let unauthorizedHandler: (() => void) | null = null
+
+api.interceptors.response.use(undefined, (error: unknown) => {
+  if (axios.isAxiosError(error) && error.response?.status === 401) unauthorizedHandler?.()
+  return Promise.reject(error)
+})
+
+export function setUnauthorizedHandler(handler: () => void): void {
+  unauthorizedHandler = handler
+}
+
+export function isUnauthorized(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 401
+}
 
 export function getApiError(error: unknown, fallback = '请求失败，请稍后重试'): string {
   if (axios.isAxiosError<{ error?: string }>(error)) {

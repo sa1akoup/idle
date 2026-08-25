@@ -14,7 +14,6 @@ func seedConsumables(db *gorm.DB) error {
 		{ID: "bandage", Name: "止血带", Desc: "止血防恶化", Price: 100, Weight: 1, Slots: 1, MerchantCategory: "medical"},
 		{ID: "medkit", Name: "医疗包", Desc: "战后回血", Price: 250, Weight: 2, Slots: 2, MerchantCategory: "medical"},
 		{ID: "toolkit", Name: "工具包", Desc: "工程事件必需", Price: 300, Weight: 3, Slots: 2, MerchantCategory: "mechanical"},
-		{ID: "ammo_box", Name: "弹药箱", Desc: "补充弹药", Price: 150, Weight: 2, Slots: 2, MerchantCategory: "weapon"},
 	}
 	for _, c := range consumables {
 		if err := db.FirstOrCreate(&c, models.ConsumableDef{ID: c.ID}).Error; err != nil {
@@ -25,15 +24,17 @@ func seedConsumables(db *gorm.DB) error {
 		}
 	}
 
-	owned := []models.Inventory{
-		{ItemID: "smoke", Name: "烟雾弹", Kind: "consumable", Quantity: 1, Price: 200, Weight: 1, Slots: 1},
-		{ItemID: "toolkit", Name: "工具包", Kind: "consumable", Quantity: 1, Price: 300, Weight: 3, Slots: 2},
-		{ItemID: "ammo_box", Name: "弹药箱", Kind: "consumable", Quantity: 60, Price: 150, Weight: 2, Slots: 2, MerchantCategory: "weapon"},
-	}
-	for _, inv := range owned {
+	for _, inv := range initialConsumableInventory() {
 		if err := upsertInventory(db, inv); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func initialConsumableInventory() []models.Inventory {
+	return []models.Inventory{
+		{ItemID: "smoke", Name: "烟雾弹", Kind: "consumable", Quantity: 1, Price: 200, Weight: 1, Slots: 1, MerchantCategory: "medical"},
+		{ItemID: "toolkit", Name: "工具包", Kind: "consumable", Quantity: 1, Price: 300, Weight: 3, Slots: 2, MerchantCategory: "mechanical"},
+	}
 }

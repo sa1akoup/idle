@@ -1,5 +1,6 @@
 <!-- 游戏主导航：桌面固定侧栏，移动端使用可关闭抽屉。 -->
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Component } from 'vue'
 import {
   Box,
@@ -10,15 +11,9 @@ import {
   Operation,
   ShoppingCart,
   User,
+  VideoPlay,
 } from '@element-plus/icons-vue'
 import type { NavKey, Player } from '../types'
-
-defineProps<{
-  active: NavKey
-  mobileOpen: boolean
-  player: Player | null
-  cash: number
-}>()
 
 const emit = defineEmits<{
   select: [key: NavKey]
@@ -31,15 +26,27 @@ interface NavItem {
   icon: Component
 }
 
-const navigation: NavItem[] = [
-  { key: 'explore', label: '探索', icon: Compass },
-  { key: 'map', label: '地图', icon: MapLocation },
-  { key: 'character', label: '角色', icon: User },
-  { key: 'inventory', label: '仓库', icon: Box },
-  { key: 'merchant', label: '商人', icon: ShoppingCart },
-  { key: 'hideout', label: '藏身处', icon: House },
-  { key: 'logs', label: '日志', icon: Document },
-]
+const props = defineProps<{
+  active: NavKey
+  mobileOpen: boolean
+  player: Player | null
+  cash: number
+  hasActiveSession: boolean
+}>()
+
+const navigation = computed<NavItem[]>(() => {
+  const items: NavItem[] = [
+    { key: 'explore', label: '探索', icon: Compass },
+    { key: 'map', label: '地图', icon: MapLocation },
+    { key: 'character', label: '角色', icon: User },
+    { key: 'inventory', label: '仓库', icon: Box },
+    { key: 'merchant', label: '商人', icon: ShoppingCart },
+    { key: 'hideout', label: '藏身处', icon: House },
+  ]
+  if (props.hasActiveSession) items.push({ key: 'live', label: '实时行动', icon: VideoPlay })
+  items.push({ key: 'logs', label: '日志', icon: Document })
+  return items
+})
 
 function select(key: NavKey) {
   emit('select', key)

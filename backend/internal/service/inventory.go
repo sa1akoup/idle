@@ -34,14 +34,24 @@ type catalogItem struct {
 	MerchantCategory string
 	RepRequirement   int
 	ArmorMax         int
+	RoundsPerSlot    int
+	AmmoLevel        int
 }
 
 // PurchaseItem 从商人购买指定数量的商品（不校验商人归属，供测试/内部使用）。
 func PurchaseItem(db *gorm.DB, itemID string, quantity int) error {
-	if quantity <= 0 || quantity > 99 {
-		return fmt.Errorf("购买数量需为 1-99")
+	return PurchaseItemForUser(db, models.DefaultUserID, itemID, quantity)
+}
+
+// PurchaseItemForUser 为指定用户购买商品，供内部流程使用。
+func PurchaseItemForUser(db *gorm.DB, userID uint, itemID string, quantity int) error {
+	if quantity <= 0 || quantity > 999 {
+		return fmt.Errorf("购买数量需为 1-999")
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
+		if err := lockUserResourcesTx(tx, userID); err != nil {
+			return err
+		}
 		item, err := findCatalogItem(tx, itemID)
 		if err != nil {
 			return err
@@ -50,7 +60,7 @@ func PurchaseItem(db *gorm.DB, itemID string, quantity int) error {
 		for i := range items {
 			items[i] = item
 		}
-		_, err = purchaseCatalogItems(tx, items)
+		_, err = purchaseCatalogItems(tx, userID, items)
 		return err
 	})
 }
@@ -68,6 +78,17 @@ func findCatalogItem(db *gorm.DB, itemID string) (catalogItem, error) {
 		return catalogItem{ID: armor.ID, Name: armor.Name, Kind: "armor", Price: armor.Price, Weight: armor.Weight, Slots: armor.Slots, MerchantCategory: armor.MerchantCategory, RepRequirement: armor.RepRequirement, ArmorMax: armor.MaxDurability}, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return catalogItem{}, fmt.Errorf("读取护甲商品: %w", err)
+	}
+
+	var ammo models.AmmoDef
+	if err := db.First(&ammo, "id = ?", itemID).Error; err == nil {
+		return catalogItem{
+			ID: ammo.ID, Name: ammo.Name, Kind: "ammo", Price: ammo.Price, Slots: 1,
+			MerchantCategory: ammo.MerchantCategory, RepRequirement: ammo.RepRequirement,
+			RoundsPerSlot: ammo.RoundsPerSlot, AmmoLevel: ammo.Level,
+		}, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return catalogItem{}, fmt.Errorf("读取弹药商品: %w", err)
 	}
 
 	var consumable models.ConsumableDef
@@ -115,17 +136,21 @@ func findCatalogItem(db *gorm.DB, itemID string) (catalogItem, error) {
 	return catalogItem{}, fmt.Errorf("商品不存在")
 }
 
-func purchaseCatalogItems(tx *gorm.DB, items []catalogItem) (int, error) {
+func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, error) {
 	if len(items) == 0 {
 		return 0, nil
 	}
 
-	used, err := inventoryUsage(tx)
+	used, err := inventoryUsage(tx, userID)
 	if err != nil {
 		return 0, err
 	}
-	if used+len(items) > models.InventoryCapacity {
-		return 0, fmt.Errorf("%w：仓库空间不足，还需 %d 个空位", ErrPurchaseUnavailable, used+len(items)-models.InventoryCapacity)
+	additionalCapacity, err := purchaseCapacityDelta(tx, userID, items)
+	if err != nil {
+		return 0, err
+	}
+	if used+additionalCapacity > models.InventoryCapacity {
+		return 0, fmt.Errorf("%w：仓库空间不足，还需 %d 个空位", ErrPurchaseUnavailable, used+additionalCapacity-models.InventoryCapacity)
 	}
 
 	totalPrice := 0
@@ -136,30 +161,74 @@ func purchaseCatalogItems(tx *gorm.DB, items []catalogItem) (int, error) {
 		}
 		totalPrice += paid
 	}
-	if err := deductCash(tx, totalPrice); err != nil {
+	if err := deductCash(tx, userID, totalPrice); err != nil {
 		return 0, err
 	}
 
+	// 弹药单次可购买 999 发，同类商品聚合后只执行一次库存更新。
+	quantities := make(map[string]int, len(items))
+	definitions := make(map[string]catalogItem, len(items))
 	for _, item := range items {
-		if err := addInventoryItem(tx, item, 1, false); err != nil {
+		quantities[item.ID]++
+		definitions[item.ID] = item
+	}
+	for itemID, quantity := range quantities {
+		item := definitions[itemID]
+		if err := addInventoryItem(tx, userID, item, quantity, false); err != nil {
 			return 0, err
 		}
 		if item.Kind == "armor" {
-			instance := models.ArmorInstance{
-				ArmorID: item.ID, MaxDurability: item.ArmorMax,
-				CurDurability: item.ArmorMax, Status: "normal",
-			}
-			if err := tx.Create(&instance).Error; err != nil {
-				return 0, fmt.Errorf("创建护甲实例: %w", err)
+			for index := 0; index < quantity; index++ {
+				instance := models.ArmorInstance{
+					UserID:  userID,
+					ArmorID: item.ID, MaxDurability: item.ArmorMax,
+					CurDurability: item.ArmorMax, Status: "normal",
+				}
+				if err := tx.Create(&instance).Error; err != nil {
+					return 0, fmt.Errorf("创建护甲实例: %w", err)
+				}
 			}
 		}
 	}
 	return totalPrice, nil
 }
 
+func purchaseCapacityDelta(tx *gorm.DB, userID uint, items []catalogItem) (int, error) {
+	additional := 0
+	ammoAdds := make(map[string]int)
+	ammoDefs := make(map[string]catalogItem)
+	for _, item := range items {
+		if item.Kind != "ammo" {
+			additional++
+			continue
+		}
+		ammoAdds[item.ID]++
+		ammoDefs[item.ID] = item
+	}
+	for itemID, rounds := range ammoAdds {
+		perSlot := ammoDefs[itemID].RoundsPerSlot
+		if perSlot <= 0 {
+			return 0, fmt.Errorf("弹药 %s 的每格容量无效", itemID)
+		}
+		var existing int
+		if err := tx.Model(&models.Inventory{}).
+			Where("user_id = ? AND item_id = ?", userID, itemID).
+			Select("COALESCE(SUM(quantity), 0)").Scan(&existing).Error; err != nil {
+			return 0, fmt.Errorf("读取弹药库存 %s: %w", itemID, err)
+		}
+		additional += ceilDiv(existing+rounds, perSlot) - ceilDiv(existing, perSlot)
+	}
+	return additional, nil
+}
+
 // GetStorageCapacity 返回仓库容量与扣除装备配置后的实际占用。
 func GetStorageCapacity(db *gorm.DB) (*StorageCapacity, error) {
-	used, err := inventoryUsage(db)
+	return GetStorageCapacityForUser(db, models.DefaultUserID)
+}
+
+// GetStorageCapacityForUser 返回指定用户仓库容量与扣除装备配置后的实际占用。
+func GetStorageCapacityForUser(db *gorm.DB, userID uint) (*StorageCapacity, error) {
+	used, err := inventoryUsage(db, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -167,12 +236,13 @@ func GetStorageCapacity(db *gorm.DB) (*StorageCapacity, error) {
 }
 
 // addInventoryItem 按 (itemID, raidExtract) 新增或累加库存。
-func addInventoryItem(tx *gorm.DB, item catalogItem, quantity int, raidExtract bool) error {
+func addInventoryItem(tx *gorm.DB, userID uint, item catalogItem, quantity int, raidExtract bool) error {
 	var inventory models.Inventory
-	err := tx.Where("item_id = ? AND raid_extract = ?", item.ID, raidExtract).First(&inventory).Error
+	err := tx.Where("user_id = ? AND item_id = ? AND raid_extract = ?", userID, item.ID, raidExtract).First(&inventory).Error
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		inventory = models.Inventory{
+			UserID: userID,
 			ItemID: item.ID, Name: item.Name, Kind: item.Kind, Category: item.Category,
 			Quantity: quantity, Price: item.Price, Weight: item.Weight, Slots: item.Slots,
 			RaidExtract: raidExtract, MerchantCategory: item.MerchantCategory, RepRequirement: item.RepRequirement,
@@ -196,13 +266,13 @@ func addInventoryItem(tx *gorm.DB, item catalogItem, quantity int, raidExtract b
 }
 
 // removeInventoryItem 从该物品的总库存中扣除数量（优先扣局内带出），用于失能丢装。
-func removeInventoryItem(tx *gorm.DB, itemID string, quantity int) error {
+func removeInventoryItem(tx *gorm.DB, userID uint, itemID string, quantity int) error {
 	for _, raid := range []bool{true, false} {
 		if quantity <= 0 {
 			break
 		}
 		var inv models.Inventory
-		if err := tx.Where("item_id = ? AND raid_extract = ? AND quantity > 0", itemID, raid).First(&inv).Error; err != nil {
+		if err := tx.Where("user_id = ? AND item_id = ? AND raid_extract = ? AND quantity > 0", userID, itemID, raid).First(&inv).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
@@ -212,11 +282,16 @@ func removeInventoryItem(tx *gorm.DB, itemID string, quantity int) error {
 		if deduct > quantity {
 			deduct = quantity
 		}
-		if err := tx.Model(&models.Inventory{}).Where("id = ?", inv.ID).
-			Update("quantity", gorm.Expr("quantity - ?", deduct)).Error; err != nil {
-			return fmt.Errorf("扣除仓库物品 %s: %w", itemID, err)
+		result := tx.Model(&models.Inventory{}).
+			Where("user_id = ? AND id = ? AND quantity >= ?", userID, inv.ID, deduct).
+			Update("quantity", gorm.Expr("quantity - ?", deduct))
+		if result.Error != nil {
+			return fmt.Errorf("扣除仓库物品 %s: %w", itemID, result.Error)
 		}
-		if err := tx.Where("id = ? AND quantity <= 0", inv.ID).Delete(&models.Inventory{}).Error; err != nil {
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("仓库中的 %s 数量不足", itemID)
+		}
+		if err := tx.Where("user_id = ? AND id = ? AND quantity <= 0", userID, inv.ID).Delete(&models.Inventory{}).Error; err != nil {
 			return fmt.Errorf("清理空库存 %s: %w", itemID, err)
 		}
 		quantity -= deduct
@@ -230,9 +305,9 @@ func removeInventoryItem(tx *gorm.DB, itemID string, quantity int) error {
 // removeSellableItem removed (selling no longer restricted to raid-extract)
 
 // deductCash 扣减现金，不足则返回 ErrPurchaseUnavailable。
-func deductCash(tx *gorm.DB, amount int) error {
+func deductCash(tx *gorm.DB, userID uint, amount int) error {
 	result := tx.Model(&models.Inventory{}).
-		Where("item_id = ? AND quantity >= ?", "cash", amount).
+		Where("user_id = ? AND item_id = ? AND quantity >= ?", userID, "cash", amount).
 		Update("quantity", gorm.Expr("quantity - ?", amount))
 	if result.Error != nil {
 		return fmt.Errorf("扣除现金: %w", result.Error)
@@ -244,9 +319,9 @@ func deductCash(tx *gorm.DB, amount int) error {
 }
 
 // addCash 增加现金。
-func addCash(tx *gorm.DB, amount int) error {
+func addCash(tx *gorm.DB, userID uint, amount int) error {
 	result := tx.Model(&models.Inventory{}).
-		Where("item_id = ?", "cash").
+		Where("user_id = ? AND item_id = ?", userID, "cash").
 		Update("quantity", gorm.Expr("quantity + ?", amount))
 	if result.Error != nil {
 		return fmt.Errorf("增加现金: %w", result.Error)
@@ -255,103 +330,4 @@ func addCash(tx *gorm.DB, amount int) error {
 		return fmt.Errorf("现金账户不存在")
 	}
 	return nil
-}
-
-// inventoryUsage 计算仓库已占用容量，扣除当前装备与 3 套预设装备（含补给）的占用。
-func inventoryUsage(db *gorm.DB) (int, error) {
-	var rows []struct {
-		ItemID   string
-		Quantity int
-	}
-	if err := db.Model(&models.Inventory{}).
-		Where("item_id <> ? AND quantity > 0", "cash").
-		Select("item_id, quantity").Scan(&rows).Error; err != nil {
-		return 0, fmt.Errorf("计算仓库容量: %w", err)
-	}
-	alloc, err := loadoutAllocatedItems(db)
-	if err != nil {
-		return 0, err
-	}
-	stock := make(map[string]int, len(rows))
-	for _, row := range rows {
-		stock[row.ItemID] += row.Quantity
-	}
-	used := 0
-	for itemID, quantity := range stock {
-		deduct := alloc[itemID]
-		if deduct > quantity {
-			deduct = quantity
-		}
-		used += quantity - deduct
-	}
-	return used, nil
-}
-
-// loadoutAllocatedItems 统计当前装备与 3 套预设清单中每件物品各占用的仓库单位。
-func loadoutAllocatedItems(db *gorm.DB) (map[string]int, error) {
-	loadout, err := GetPlayerLoadout(db)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return map[string]int{}, nil
-		}
-		return nil, err
-	}
-	alloc := make(map[string]int)
-	add := func(ids []string) {
-		for _, id := range ids {
-			if id != "" {
-				alloc[id]++
-			}
-		}
-	}
-	add([]string{loadout.WeaponID, loadout.ArmorID, loadout.ChestRigID, loadout.BackpackID, loadout.HelmetID, loadout.HeadsetID})
-	add(loadout.Consumables)
-	for i := 1; i <= 3; i++ {
-		weaponID, armorID, consumables := PresetOf(loadout, i)
-		base := []string{weaponID, armorID}
-		base = append(base, presetEquipOf(loadout, i)...)
-		add(base)
-		add(consumables)
-	}
-	return alloc, nil
-}
-
-// presetEquipOf 返回第 N 套（1-3）预设新增装备（胸挂/背包/头盔/耳机）清单。
-func presetEquipOf(loadout *models.PlayerLoadout, index int) []string {
-	switch index {
-	case 2:
-		return []string{loadout.Preset2ChestRigID, loadout.Preset2BackpackID, loadout.Preset2HelmetID, loadout.Preset2HeadsetID}
-	case 3:
-		return []string{loadout.Preset3ChestRigID, loadout.Preset3BackpackID, loadout.Preset3HelmetID, loadout.Preset3HeadsetID}
-	default:
-		return []string{loadout.PresetChestRigID, loadout.PresetBackpackID, loadout.PresetHelmetID, loadout.PresetHeadsetID}
-	}
-}
-
-// PresetOf 返回第 N 套（1-3）预设装备清单，供补购与容量计算使用。
-func PresetOf(loadout *models.PlayerLoadout, index int) (weaponID, armorID string, consumables []string) {
-	switch index {
-	case 2:
-		return loadout.Preset2WeaponID, loadout.Preset2ArmorID, loadout.Preset2Consumables
-	case 3:
-		return loadout.Preset3WeaponID, loadout.Preset3ArmorID, loadout.Preset3Consumables
-	default:
-		return loadout.PresetWeaponID, loadout.PresetArmorID, loadout.PresetConsumables
-	}
-}
-
-func uniqueItemIDs(ids []string) []string {
-	seen := make(map[string]struct{}, len(ids))
-	result := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if id == "" {
-			continue
-		}
-		if _, exists := seen[id]; exists {
-			continue
-		}
-		seen[id] = struct{}{}
-		result = append(result, id)
-	}
-	return result
 }

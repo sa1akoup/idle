@@ -25,11 +25,16 @@ type CarryCapacity struct {
 
 // GetCarryCapacity 计算当前携行装备的容量与占用。
 func GetCarryCapacity(db *gorm.DB) (*CarryCapacity, error) {
+	return GetCarryCapacityForUser(db, models.DefaultUserID)
+}
+
+// GetCarryCapacityForUser 计算指定用户当前携行装备的容量与占用。
+func GetCarryCapacityForUser(db *gorm.DB, userID uint) (*CarryCapacity, error) {
 	var c models.Character
-	if err := db.First(&c, models.PlayerCharacterID).Error; err != nil {
+	if err := db.Where("user_id = ?", userID).First(&c).Error; err != nil {
 		return nil, fmt.Errorf("读取角色: %w", err)
 	}
-	loadout, err := GetPlayerLoadout(db)
+	loadout, err := GetPlayerLoadoutForUser(db, userID)
 	if err != nil {
 		return nil, err
 	}

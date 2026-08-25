@@ -27,6 +27,8 @@ type SaveLoadoutReq struct {
 	PresetHelmetID     string   `json:"presetHelmetId"`
 	PresetHeadsetID    string   `json:"presetHeadsetId"`
 	PresetConsumables  []string `json:"presetConsumables"`
+	PresetAmmoID       string   `json:"presetAmmoId"`
+	PresetAmmoRounds   int      `json:"presetAmmoRounds"`
 	PresetName         string   `json:"presetName"`
 	Preset2WeaponID    string   `json:"preset2WeaponId"`
 	Preset2ArmorID     string   `json:"preset2ArmorId"`
@@ -35,6 +37,8 @@ type SaveLoadoutReq struct {
 	Preset2HelmetID    string   `json:"preset2HelmetId"`
 	Preset2HeadsetID   string   `json:"preset2HeadsetId"`
 	Preset2Consumables []string `json:"preset2Consumables"`
+	Preset2AmmoID      string   `json:"preset2AmmoId"`
+	Preset2AmmoRounds  int      `json:"preset2AmmoRounds"`
 	Preset2Name        string   `json:"preset2Name"`
 	Preset3WeaponID    string   `json:"preset3WeaponId"`
 	Preset3ArmorID     string   `json:"preset3ArmorId"`
@@ -43,18 +47,30 @@ type SaveLoadoutReq struct {
 	Preset3HelmetID    string   `json:"preset3HelmetId"`
 	Preset3HeadsetID   string   `json:"preset3HeadsetId"`
 	Preset3Consumables []string `json:"preset3Consumables"`
+	Preset3AmmoID      string   `json:"preset3AmmoId"`
+	Preset3AmmoRounds  int      `json:"preset3AmmoRounds"`
 	Preset3Name        string   `json:"preset3Name"`
 }
 
 func GetPlayerLoadout(db *gorm.DB) (*models.PlayerLoadout, error) {
+	return GetPlayerLoadoutForUser(db, models.DefaultUserID)
+}
+
+// GetPlayerLoadoutForUser 读取指定用户的装备配置。
+func GetPlayerLoadoutForUser(db *gorm.DB, userID uint) (*models.PlayerLoadout, error) {
 	var loadout models.PlayerLoadout
-	if err := db.First(&loadout, models.PlayerLoadoutID).Error; err != nil {
+	if err := db.Where("user_id = ?", userID).First(&loadout).Error; err != nil {
 		return nil, fmt.Errorf("读取角色装备配置: %w", err)
 	}
 	return &loadout, nil
 }
 
 func SavePlayerLoadout(db *gorm.DB, req SaveLoadoutReq) (*models.PlayerLoadout, error) {
+	return SavePlayerLoadoutForUser(db, models.DefaultUserID, req)
+}
+
+// SavePlayerLoadoutForUser 保存指定用户的装备配置。
+func SavePlayerLoadoutForUser(db *gorm.DB, userID uint, req SaveLoadoutReq) (*models.PlayerLoadout, error) {
 	req.Consumables = uniqueItemIDs(req.Consumables)
 	req.PresetConsumables = uniqueItemIDs(req.PresetConsumables)
 	req.Preset2Consumables = uniqueItemIDs(req.Preset2Consumables)
@@ -66,17 +82,24 @@ func SavePlayerLoadout(db *gorm.DB, req SaveLoadoutReq) (*models.PlayerLoadout, 
 	}
 
 	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := lockUserResourcesTx(tx, userID); err != nil {
+			return err
+		}
+		if err := ensureLoadoutMutationAllowed(tx, userID); err != nil {
+			return err
+		}
 		if err := validateLoadoutCatalog(tx, req.WeaponID, req.ArmorID, req.Consumables,
 			req.ChestRigID, req.BackpackID, req.HelmetID, req.HeadsetID); err != nil {
 			return fmt.Errorf("当前装备无效: %w", err)
 		}
-		if err := validateOwnedLoadout(tx, req.WeaponID, req.ArmorID, req.Consumables,
+		if err := validateOwnedLoadoutForUser(tx, userID, req.WeaponID, req.ArmorID, req.Consumables,
 			req.ChestRigID, req.BackpackID, req.HelmetID, req.HeadsetID); err != nil {
 			return err
 		}
 		for i := 1; i <= 3; i++ {
 			weaponID, armorID, consumables, equip := presetOfReq(req, i)
-			if weaponID == "" && armorID == "" && len(consumables) == 0 && len(equip) == 0 {
+			ammoID, ammoRounds := presetAmmoOfReq(req, i)
+			if weaponID == "" && armorID == "" && len(consumables) == 0 && allEmpty(equip) && ammoID == "" && ammoRounds == 0 {
 				continue // 空预设允许，视为未配置
 			}
 			if weaponID == "" || armorID == "" {
@@ -85,6 +108,9 @@ func SavePlayerLoadout(db *gorm.DB, req SaveLoadoutReq) (*models.PlayerLoadout, 
 			if err := validateLoadoutCatalog(tx, weaponID, armorID, consumables,
 				equip[0], equip[1], equip[2], equip[3]); err != nil {
 				return fmt.Errorf("预设装备 %d 无效: %w", i, err)
+			}
+			if err := validatePresetAmmoCatalog(tx, weaponID, ammoID, ammoRounds); err != nil {
+				return fmt.Errorf("预设装备 %d 的弹药无效: %w", i, err)
 			}
 		}
 
@@ -95,22 +121,26 @@ func SavePlayerLoadout(db *gorm.DB, req SaveLoadoutReq) (*models.PlayerLoadout, 
 			PresetWeaponID: req.PresetWeaponID, PresetArmorID: req.PresetArmorID,
 			PresetChestRigID: req.PresetChestRigID, PresetBackpackID: req.PresetBackpackID,
 			PresetHelmetID: req.PresetHelmetID, PresetHeadsetID: req.PresetHeadsetID,
-			PresetName: req.PresetName, PresetConsumables: req.PresetConsumables,
+			PresetName: req.PresetName, PresetConsumables: req.PresetConsumables, PresetAmmoID: req.PresetAmmoID, PresetAmmoRounds: req.PresetAmmoRounds,
 			Preset2WeaponID: req.Preset2WeaponID, Preset2ArmorID: req.Preset2ArmorID,
 			Preset2ChestRigID: req.Preset2ChestRigID, Preset2BackpackID: req.Preset2BackpackID,
 			Preset2HelmetID: req.Preset2HelmetID, Preset2HeadsetID: req.Preset2HeadsetID,
-			Preset2Name: req.Preset2Name, Preset2Consumables: req.Preset2Consumables,
+			Preset2Name: req.Preset2Name, Preset2Consumables: req.Preset2Consumables, Preset2AmmoID: req.Preset2AmmoID, Preset2AmmoRounds: req.Preset2AmmoRounds,
 			Preset3WeaponID: req.Preset3WeaponID, Preset3ArmorID: req.Preset3ArmorID,
 			Preset3ChestRigID: req.Preset3ChestRigID, Preset3BackpackID: req.Preset3BackpackID,
 			Preset3HelmetID: req.Preset3HelmetID, Preset3HeadsetID: req.Preset3HeadsetID,
-			Preset3Name: req.Preset3Name, Preset3Consumables: req.Preset3Consumables,
+			Preset3Name: req.Preset3Name, Preset3Consumables: req.Preset3Consumables, Preset3AmmoID: req.Preset3AmmoID, Preset3AmmoRounds: req.Preset3AmmoRounds,
+		}
+		var player models.Character
+		if err := tx.Where("user_id = ?", userID).First(&player).Error; err != nil {
+			return fmt.Errorf("读取角色: %w", err)
 		}
 		if err := tx.Model(&models.PlayerLoadout{}).
-			Where("id = ?", models.PlayerLoadoutID).
+			Where("user_id = ? AND character_id = ?", userID, player.ID).
 			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables",
-				"PresetWeaponID", "PresetArmorID", "PresetChestRigID", "PresetBackpackID", "PresetHelmetID", "PresetHeadsetID", "PresetName", "PresetConsumables",
-				"Preset2WeaponID", "Preset2ArmorID", "Preset2ChestRigID", "Preset2BackpackID", "Preset2HelmetID", "Preset2HeadsetID", "Preset2Name", "Preset2Consumables",
-				"Preset3WeaponID", "Preset3ArmorID", "Preset3ChestRigID", "Preset3BackpackID", "Preset3HelmetID", "Preset3HeadsetID", "Preset3Name", "Preset3Consumables").
+				"PresetWeaponID", "PresetArmorID", "PresetChestRigID", "PresetBackpackID", "PresetHelmetID", "PresetHeadsetID", "PresetName", "PresetConsumables", "PresetAmmoID", "PresetAmmoRounds",
+				"Preset2WeaponID", "Preset2ArmorID", "Preset2ChestRigID", "Preset2BackpackID", "Preset2HelmetID", "Preset2HeadsetID", "Preset2Name", "Preset2Consumables", "Preset2AmmoID", "Preset2AmmoRounds",
+				"Preset3WeaponID", "Preset3ArmorID", "Preset3ChestRigID", "Preset3BackpackID", "Preset3HelmetID", "Preset3HeadsetID", "Preset3Name", "Preset3Consumables", "Preset3AmmoID", "Preset3AmmoRounds").
 			Updates(&updates).Error; err != nil {
 			return fmt.Errorf("保存角色装备配置: %w", err)
 		}
@@ -118,7 +148,7 @@ func SavePlayerLoadout(db *gorm.DB, req SaveLoadoutReq) (*models.PlayerLoadout, 
 	}); err != nil {
 		return nil, err
 	}
-	return GetPlayerLoadout(db)
+	return GetPlayerLoadoutForUser(db, userID)
 }
 
 // PresetNameOf 返回第 N 套（1-3）预设名称。
@@ -145,6 +175,53 @@ func presetOfReq(req SaveLoadoutReq, index int) (weaponID, armorID string, consu
 		return req.PresetWeaponID, req.PresetArmorID, req.PresetConsumables,
 			[]string{req.PresetChestRigID, req.PresetBackpackID, req.PresetHelmetID, req.PresetHeadsetID}
 	}
+}
+
+func presetAmmoOfReq(req SaveLoadoutReq, index int) (string, int) {
+	switch index {
+	case 2:
+		return req.Preset2AmmoID, req.Preset2AmmoRounds
+	case 3:
+		return req.Preset3AmmoID, req.Preset3AmmoRounds
+	default:
+		return req.PresetAmmoID, req.PresetAmmoRounds
+	}
+}
+
+func allEmpty(values []string) bool {
+	for _, value := range values {
+		if value != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validatePresetAmmoCatalog(db *gorm.DB, weaponID, ammoID string, rounds int) error {
+	var weapon models.WeaponDef
+	if err := db.First(&weapon, "id = ?", weaponID).Error; err != nil {
+		return fmt.Errorf("读取武器: %w", err)
+	}
+	if weapon.AmmoPerRound <= 0 {
+		if ammoID != "" || rounds != 0 {
+			return fmt.Errorf("近战武器不能配置弹药")
+		}
+		return nil
+	}
+	if rounds < weapon.AmmoPerRound || rounds > 9999 {
+		return fmt.Errorf("携弹量需为 %d-9999 发", weapon.AmmoPerRound)
+	}
+	var ammo models.AmmoDef
+	if err := db.First(&ammo, "id = ?", ammoID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("弹药不存在")
+		}
+		return fmt.Errorf("读取弹药: %w", err)
+	}
+	if ammo.CaliberID != weapon.CaliberID {
+		return fmt.Errorf("弹药口径 %s 与武器口径 %s 不匹配", ammo.CaliberID, weapon.CaliberID)
+	}
+	return nil
 }
 
 func validateLoadoutCatalog(db *gorm.DB, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
@@ -194,6 +271,10 @@ func validateLoadoutCatalog(db *gorm.DB, weaponID, armorID string, consumables [
 }
 
 func validateOwnedLoadout(db *gorm.DB, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
+	return validateOwnedLoadoutForUser(db, models.DefaultUserID, weaponID, armorID, consumables, chestRigID, backpackID, helmetID, headsetID)
+}
+
+func validateOwnedLoadoutForUser(db *gorm.DB, userID uint, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
 	ids := []string{weaponID, armorID}
 	ids = append(ids, consumables...)
 	for _, id := range []string{chestRigID, backpackID, helmetID, headsetID} {
@@ -203,7 +284,7 @@ func validateOwnedLoadout(db *gorm.DB, weaponID, armorID string, consumables []s
 	}
 	for _, itemID := range ids {
 		var inventory models.Inventory
-		if err := db.Where("item_id = ? AND quantity > 0", itemID).First(&inventory).Error; err != nil {
+		if err := db.Where("user_id = ? AND item_id = ? AND quantity > 0", userID, itemID).First(&inventory).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("仓库中缺少装备 %s", itemID)
 			}
@@ -211,7 +292,7 @@ func validateOwnedLoadout(db *gorm.DB, weaponID, armorID string, consumables []s
 		}
 	}
 	var armorInstance models.ArmorInstance
-	if err := db.Where("armor_id = ? AND status = ?", armorID, "normal").First(&armorInstance).Error; err != nil {
+	if err := db.Where("user_id = ? AND armor_id = ? AND status = ?", userID, armorID, "normal").First(&armorInstance).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("护甲 %s 已损坏或没有可用实例", armorID)
 		}
@@ -222,9 +303,17 @@ func validateOwnedLoadout(db *gorm.DB, weaponID, armorID string, consumables []s
 
 // ReplaceLostLoadout 扣除丢失装备并按第 presetIndex 套预设补购，返回补购金额。
 func ReplaceLostLoadout(db *gorm.DB, presetIndex int) (int, error) {
+	return ReplaceLostLoadoutForUser(db, models.DefaultUserID, presetIndex)
+}
+
+// ReplaceLostLoadoutForUser 处理指定用户失能后的丢失装备与预设补购。
+func ReplaceLostLoadoutForUser(db *gorm.DB, userID uint, presetIndex int) (int, error) {
 	var lostLoadout models.PlayerLoadout
 	if err := db.Transaction(func(tx *gorm.DB) error {
-		loadout, err := GetPlayerLoadout(tx)
+		if err := lockUserResourcesTx(tx, userID); err != nil {
+			return err
+		}
+		loadout, err := GetPlayerLoadoutForUser(tx, userID)
 		if err != nil {
 			return err
 		}
@@ -237,12 +326,12 @@ func ReplaceLostLoadout(db *gorm.DB, presetIndex int) (int, error) {
 			}
 		}
 		for _, itemID := range uniqueItemIDs(lostIDs) {
-			if err := removeInventoryItem(tx, itemID, 1); err != nil {
+			if err := removeInventoryItem(tx, userID, itemID, 1); err != nil {
 				return err
 			}
 		}
 		var armorInstance models.ArmorInstance
-		if err := tx.Where("armor_id = ?", loadout.ArmorID).Order("id asc").First(&armorInstance).Error; err != nil {
+		if err := tx.Where("user_id = ? AND armor_id = ?", userID, loadout.ArmorID).Order("id asc").First(&armorInstance).Error; err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("读取丢失护甲: %w", err)
 			}
@@ -251,7 +340,7 @@ func ReplaceLostLoadout(db *gorm.DB, presetIndex int) (int, error) {
 		}
 
 		cleared := models.PlayerLoadout{Consumables: []string{}}
-		if err := tx.Model(&models.PlayerLoadout{}).Where("id = ?", models.PlayerLoadoutID).
+		if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadout.ID).
 			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables").
 			Updates(&cleared).Error; err != nil {
 			return fmt.Errorf("清空丢失装备: %w", err)
@@ -269,6 +358,9 @@ func ReplaceLostLoadout(db *gorm.DB, presetIndex int) (int, error) {
 
 	paid := 0
 	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := lockUserResourcesTx(tx, userID); err != nil {
+			return err
+		}
 		presetIDs := append([]string{presetWeaponID, presetArmorID}, presetConsumables...)
 		for _, id := range presetEquip {
 			if id != "" {
@@ -282,13 +374,13 @@ func ReplaceLostLoadout(db *gorm.DB, presetIndex int) (int, error) {
 				return err
 			}
 			// 与商人联动：按归属商人的好感度折算价格，并校验解锁
-			if err := applyMerchantPrice(tx, &item); err != nil {
+			if err := applyMerchantPriceForUser(tx, userID, &item); err != nil {
 				return fmt.Errorf("%w：预设装备补购失败（%v）", ErrPurchaseUnavailable, err)
 			}
 			items = append(items, item)
 		}
 		var err error
-		paid, err = purchaseCatalogItems(tx, items)
+		paid, err = purchaseCatalogItems(tx, userID, items)
 		if err != nil {
 			return err
 		}
@@ -298,7 +390,7 @@ func ReplaceLostLoadout(db *gorm.DB, presetIndex int) (int, error) {
 			ChestRigID: presetEquip[0], BackpackID: presetEquip[1], HelmetID: presetEquip[2], HeadsetID: presetEquip[3],
 			Consumables: presetConsumables,
 		}
-		if err := tx.Model(&models.PlayerLoadout{}).Where("id = ?", models.PlayerLoadoutID).
+		if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, lostLoadout.ID).
 			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables").
 			Updates(&updates).Error; err != nil {
 			return fmt.Errorf("启用补购装备: %w", err)

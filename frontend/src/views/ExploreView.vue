@@ -1,105 +1,15 @@
-<!-- 探索部署页：配置地图、行动风格与失能后的预设装备，并执行风险预测与挂机。 -->
+<!-- 探索部署页：配置地图、行动风格与失能后的预设装备，并启动后台行动。 -->
 <script setup lang="ts">
-import { computed, ref, watch, watchEffect } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Compass, Refresh, VideoPlay, Warning } from '@element-plus/icons-vue'
-import api, { getApiError } from '../api'
-import { presetOf } from '../types'
-import type {
-  Armor,
-  ActionStyle,
-  Consumable,
-  GameMap,
-  Player,
-  PlayerLoadout,
-  PreviewResult,
-  Session,
-  StartSessionRequest,
-  Weapon,
-} from '../types'
+import { Compass, VideoPlay } from '@element-plus/icons-vue'
+import { useExploreDeployment, type ExploreEmit, type ExploreProps } from '../composables/useExploreDeployment'
 
-const props = defineProps<{
-  player: Player
-  loadout: PlayerLoadout
-  maps: GameMap[]
-  weapons: Weapon[]
-  armors: Armor[]
-  consumables: Consumable[]
-}>()
-
-const emit = defineEmits<{
-  created: [session: Session]
-}>()
-
-const styles = [
-  { value: 'balanced' as ActionStyle, label: '均衡型', desc: '在收益与风险之间保持平衡，普通巡逻优先绕行' },
-  { value: 'stealth' as ActionStyle, label: '隐秘型', desc: '优先避战、低热度和安全容器，较早返回撤离路线' },
-  { value: 'aggressive' as ActionStyle, label: '激进型', desc: '主动伏击和清除敌人，接受更高战斗与热度代价' },
-  { value: 'greedy' as ActionStyle, label: '贪婪型', desc: '优先高价值物资与情报，愿意为收益延后撤离' },
-]
-
-const selectedMap = ref('')
-const selectedStyle = ref<ActionStyle>('balanced')
-const selectedPreset = ref(1)
-const preview = ref<PreviewResult | null>(null)
-const previewing = ref(false)
-const starting = ref(false)
-
-watchEffect(() => {
-  if (!props.maps.some((item) => item.id === selectedMap.value)) selectedMap.value = props.maps[0]?.id ?? ''
-})
-
-watch([selectedMap, selectedStyle, selectedPreset], () => {
-  preview.value = null
-})
-
-function presetSummary(index: number) {
-  const slot = presetOf(props.loadout, index)
-  const weapon = props.weapons.find((item) => item.id === slot.weaponId)
-  const armor = props.armors.find((item) => item.id === slot.armorId)
-  if (!slot.weaponId || !slot.armorId || !weapon || !armor) return '未配置，请先在角色页面设置'
-  const supplies = slot.consumables.map((id) => props.consumables.find((item) => item.id === id)?.name ?? id).join('、')
-  return `${weapon.name} · ${armor.name}${supplies ? ` · ${supplies}` : ' · 无补给'}`
-}
-
-const selectedPresetSummary = computed(() => presetSummary(selectedPreset.value))
-const canSubmit = computed(() => Boolean(
-  selectedMap.value && props.loadout.weaponId && props.loadout.armorId
-  && presetOf(props.loadout, selectedPreset.value).weaponId && presetOf(props.loadout, selectedPreset.value).armorId,
-))
-
-function buildRequest(): StartSessionRequest {
-  return {
-    mapId: selectedMap.value,
-    style: selectedStyle.value,
-    recoveryPreset: selectedPreset.value,
-  }
-}
-
-async function loadPreview() {
-  previewing.value = true
-  try {
-    const { data } = await api.post<PreviewResult>('/session/preview', buildRequest())
-    preview.value = data
-  } catch (error) {
-    ElMessage.error(getApiError(error, '风险预测失败'))
-  } finally {
-    previewing.value = false
-  }
-}
-
-async function startSession() {
-  starting.value = true
-  try {
-    const { data } = await api.post<Session>('/session/start', buildRequest())
-    ElMessage.success(`行动 #${data.id} 已开始后台执行`)
-    emit('created', data)
-  } catch (error) {
-    ElMessage.error(getApiError(error, '行动启动失败'))
-  } finally {
-    starting.value = false
-  }
-}
+const props = defineProps<ExploreProps>()
+const emit = defineEmits<ExploreEmit>()
+const {
+  styles, selectedMap, selectedStyle, selectedPreset, selectedAmmoId, selectedAmmoRounds, starting,
+  currentWeapon, compatibleOwnedAmmos, ammoInventoryQuantity, selectedAmmoStock,
+  presetSummary, selectedPresetSummary, canSubmit, startSession,
+} = useExploreDeployment(props, emit)
 </script>
 
 <template>
@@ -166,23 +76,45 @@ async function startSession() {
             <small>补给：{{ loadout.consumables.map((id) => consumables.find((item) => item.id === id)?.name ?? id).join('、') || '无' }}，装备配置请在角色页面调整</small>
           </div>
         </div>
+
+        <div v-if="currentWeapon?.ammoPerRound" class="form-grid">
+          <label class="field-group">
+            <span>携带弹药</span>
+            <el-select v-model="selectedAmmoId" size="large" placeholder="仓库中没有兼容弹药">
+              <el-option
+                v-for="ammo in compatibleOwnedAmmos"
+                :key="ammo.id"
+                :label="`${ammo.name} · 库存 ${ammoInventoryQuantity(ammo.id)} 发`"
+                :value="ammo.id"
+              />
+            </el-select>
+          </label>
+          <label class="field-group">
+            <span>携弹发数</span>
+            <el-input-number
+              v-model="selectedAmmoRounds"
+              :min="currentWeapon.ammoPerRound"
+              :max="Math.max(currentWeapon.ammoPerRound, selectedAmmoStock)"
+              :step="currentWeapon.ammoPerRound"
+              size="large"
+              controls-position="right"
+            />
+            <small>启动后从仓库预留；本批弹药耗尽后，按 Session 启动时可购买的最高等级自动降级补给</small>
+          </label>
+        </div>
       </div>
 
-      <aside class="risk-panel surface-panel">
+      <aside class="launch-panel surface-panel">
         <div class="panel-heading">
-          <div><span>02</span><h2>风险预估</h2></div>
-          <el-button :icon="Refresh" :loading="previewing" circle title="刷新预测" @click="loadPreview" />
+          <div><span>02</span><h2>开始行动</h2></div>
+          <small>配置确认后立即进入实时行动</small>
         </div>
 
-        <div v-if="preview" class="risk-metrics">
-          <div v-for="(value, key) in preview" :key="key" class="risk-metric">
-            <span>{{ key }}</span><strong>{{ value }}</strong>
-          </div>
-        </div>
-        <div v-else class="risk-empty">
-          <el-icon><Warning /></el-icon>
-          <strong>尚未生成预测</strong>
-          <span>基于当前配置执行 100 次快速模拟</span>
+        <div class="launch-summary">
+          <div><span>目标区域</span><strong>{{ maps.find((item) => item.id === selectedMap)?.name || '未选择' }}</strong></div>
+          <div><span>行动风格</span><strong>{{ styles.find((item) => item.value === selectedStyle)?.label }}</strong></div>
+          <div><span>失能预案</span><strong>预设 {{ selectedPreset }}</strong></div>
+          <div v-if="currentWeapon?.ammoPerRound"><span>携带弹药</span><strong>{{ ammos.find((item) => item.id === selectedAmmoId)?.name || '未配置' }} ×{{ selectedAmmoRounds }}</strong></div>
         </div>
 
         <div class="launch-block">
@@ -194,7 +126,7 @@ async function startSession() {
             :loading="starting"
             :disabled="!canSubmit || (player.injury !== '' && player.injury !== 'none')"
             @click="startSession"
-          >开始探索</el-button>
+          >开始行动</el-button>
         </div>
       </aside>
     </div>

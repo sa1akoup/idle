@@ -15,11 +15,15 @@ const equippedIds = computed(() => {
   ])
 })
 const kindNames: Record<InventoryItem['kind'], string> = {
-  currency: '资金', material: '材料', loot: '战利品', weapon: '武器', armor: '护甲', consumable: '补给',
+  currency: '资金', material: '材料', loot: '战利品', weapon: '武器', armor: '护甲', ammo: '弹药', consumable: '补给',
   chestrig: '胸挂', backpack: '背包', helmet: '头盔', headset: '耳机',
 }
 const lootCategoryNames: Record<string, string> = {
   tool: '工具', material: '建材', electronics: '电子', info: '情报', medical: '医疗', food: '食品', valuable: '贵重物', fuel: '燃料', weaponpart: '武器零件',
+}
+
+function ammoSlots(quantity: number): number {
+  return Math.ceil(quantity / 999)
 }
 </script>
 
@@ -38,7 +42,7 @@ const lootCategoryNames: Record<string, string> = {
       <div v-for="item in inventory" :key="item.id" class="data-list-row inventory-row">
         <div class="item-name"><span class="item-icon"><el-icon><Coin v-if="item.itemId === 'cash'" /><Box v-else /></el-icon></span><div><strong>{{ item.name }}</strong><small>{{ item.itemId }}</small></div></div>
         <span>{{ item.kind === 'loot' ? lootCategoryNames[item.category] ?? kindNames[item.kind] : kindNames[item.kind] }}</span><b>× {{ item.quantity }}</b>
-        <span class="text-muted">{{ item.weight }}kg / {{ item.slots }}格</span>
+        <span class="text-muted">{{ item.kind === 'ammo' ? `${ammoSlots(item.quantity)} 格 · 每格最多 999 发` : `${item.weight}kg / ${item.slots}格` }}</span>
         <span v-if="equippedIds.has(item.itemId)" class="equipped-label"><el-icon><Suitcase /></el-icon>已装备</span><span v-else class="text-muted">仓库存放</span>
         <strong>￥{{ (item.quantity * item.price).toLocaleString() }}</strong>
       </div>

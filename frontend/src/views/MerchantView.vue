@@ -12,13 +12,14 @@ const props = defineProps<{
   sellingId: string | null
 }>()
 
-const emit = defineEmits<{ purchase: [merchantId: string, itemId: string]; sell: [merchantId: string, itemId: string, quantity: number] }>()
+const emit = defineEmits<{ purchase: [merchantId: string, itemId: string, quantity: number]; sell: [merchantId: string, itemId: string, quantity: number] }>()
 
 const selectedId = ref('')
 const catalog = ref<MerchantCatalogItem[]>([])
 const catalogLoading = ref(false)
 const catalogError = ref('')
 const sellQty = ref<Record<string, number>>({})
+const buyQty = ref<Record<string, number>>({})
 
 const selectedMerchant = computed(() => props.merchants.find((m) => m.id === selectedId.value))
 
@@ -34,6 +35,9 @@ async function loadCatalog(id: string) {
   try {
     const { data } = await api.get<MerchantCatalogItem[]>(`/merchants/${id}/catalog`)
     catalog.value = data
+    for (const item of data) {
+      if (item.kind === 'ammo' && !buyQty.value[item.id]) buyQty.value[item.id] = 30
+    }
   } catch (error) {
     catalogError.value = getApiError(error, '商品目录加载失败')
   } finally {
@@ -66,6 +70,11 @@ function qtyFor(itemId: string): number {
 }
 function ownedQty(itemId: string): number {
   return props.inventory.filter((i) => i.itemId === itemId && i.quantity > 0).reduce((s, i) => s + i.quantity, 0)
+}
+function buyQuantity(item: MerchantCatalogItem): number {
+  const quantity = buyQty.value[item.id]
+  if (quantity && quantity > 0) return quantity
+  return item.kind === 'ammo' ? 30 : 1
 }
 
 onMounted(() => {
@@ -125,7 +134,8 @@ watch(() => props.merchants, (list) => {
               <div class="catalog-action">
                 <b>￥{{ item.price.toLocaleString() }}</b>
                 <small v-if="item.repRequirement > 0">需好感度 {{ item.repRequirement }}</small>
-                <el-button type="primary" size="small" :loading="purchasingId === item.id" :disabled="purchasingId !== null || cash < item.price" @click="emit('purchase', selectedId, item.id)">购买</el-button>
+                <el-input-number v-if="item.kind === 'ammo'" v-model="buyQty[item.id]" :min="1" :max="999" :step="30" size="small" />
+                <el-button type="primary" size="small" :loading="purchasingId === item.id" :disabled="purchasingId !== null || selectedMerchant.reputation < item.repRequirement || cash < item.price * buyQuantity(item)" @click="emit('purchase', selectedId, item.id, buyQuantity(item))">购买</el-button>
               </div>
             </div>
             <el-empty v-if="catalog.length === 0" description="暂无在售商品" />
