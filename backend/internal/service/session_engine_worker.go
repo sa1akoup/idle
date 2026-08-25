@@ -40,6 +40,17 @@ func planEngineRun(engineVersion string, snapshot engine.ScenarioSnapshot, seed 
 	return RunPlan{RunIndex: runIndex, Input: state, Result: result, Events: result.Trace, Hash: hash}, runStartAt.Add(time.Duration(result.DurationSec) * time.Second), nil
 }
 
+func validateSessionEngineVersion(version string) error {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return fmt.Errorf("行动会话缺少引擎版本")
+	}
+	if version != engine.EngineVersion {
+		return fmt.Errorf("行动会话使用不受支持的引擎版本 %s，请先中止后重新开始", version)
+	}
+	return nil
+}
+
 func (s *SessionService) simulateSession(id uint) error {
 	var sess models.Session
 	if err := s.db.Where("user_id = ? AND id = ?", s.userID, id).First(&sess).Error; err != nil {
@@ -60,8 +71,8 @@ func (s *SessionService) simulateSession(id uint) error {
 	if sess.Status == "running" && sess.PendingRunIndex <= 0 {
 		return fmt.Errorf("行动会话缺少待结算局计划")
 	}
-	if strings.TrimSpace(sess.EngineVersion) == "" {
-		return fmt.Errorf("行动会话缺少引擎版本")
+	if err := validateSessionEngineVersion(sess.EngineVersion); err != nil {
+		return err
 	}
 	var snapshot engine.ScenarioSnapshot
 	if err := json.Unmarshal([]byte(sess.ScenarioSnapshot), &snapshot); err != nil {

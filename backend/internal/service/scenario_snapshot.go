@@ -31,11 +31,19 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取场景地图: %w", err)
 	}
 	var nodes []models.NodeDef
-	if err := db.Where("map_id = ?", mapID).Order("route_order asc, id asc").Find(&nodes).Error; err != nil {
+	if err := db.Where("map_id = ?", mapID).Order("position_y asc, position_x asc, id asc").Find(&nodes).Error; err != nil {
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取场景节点: %w", err)
 	}
 	if len(nodes) == 0 {
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("地图没有可探索节点")
+	}
+	var edges []models.MapEdgeDef
+	if err := db.Where("map_id = ?", mapID).Order("from_node_id asc, to_node_id asc, id asc").Find(&edges).Error; err != nil {
+		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取地图边: %w", err)
+	}
+	var extractionPoints []models.ExtractionPointDef
+	if err := db.Where("map_id = ?", mapID).Order("id asc").Find(&extractionPoints).Error; err != nil {
+		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取撤离点: %w", err)
 	}
 	nodeIDs := make([]string, 0, len(nodes))
 	for _, node := range nodes {
@@ -114,6 +122,8 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		SchemaVersion:            engine.SchemaVersion,
 		Map:                      convertMap(gameMap),
 		Nodes:                    make([]engine.Node, 0, len(nodes)),
+		Edges:                    make([]engine.MapEdge, 0, len(edges)),
+		ExtractionPoints:         make([]engine.ExtractionPoint, 0, len(extractionPoints)),
 		NodeContainerAssignments: make([]engine.NodeContainerAssignment, 0, len(assignments)),
 		Containers:               make(map[string]engine.Container, len(containerDefs)),
 		LootItems:                make(map[string]engine.LootItem, len(lootDefs)),
@@ -132,6 +142,18 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 	}
 	for _, node := range nodes {
 		snapshot.Nodes = append(snapshot.Nodes, convertNode(node))
+	}
+	for _, edge := range edges {
+		snapshot.Edges = append(snapshot.Edges, engine.MapEdge{
+			ID: edge.ID, MapID: edge.MapID, FromNodeID: edge.FromNodeID, ToNodeID: edge.ToNodeID,
+			MoveTime: edge.MoveTime, Bidirectional: edge.Bidirectional,
+		})
+	}
+	for _, point := range extractionPoints {
+		snapshot.ExtractionPoints = append(snapshot.ExtractionPoints, engine.ExtractionPoint{
+			ID: point.ID, MapID: point.MapID, Name: point.Name, Kind: point.Kind, AnchorNodeID: point.AnchorNodeID,
+			TravelTime: point.TravelTime, Enabled: point.Enabled, IconKey: point.IconKey, Tags: append([]string(nil), point.Tags...),
+		})
 	}
 	for _, assignment := range assignments {
 		snapshot.NodeContainerAssignments = append(snapshot.NodeContainerAssignments, engine.NodeContainerAssignment{
@@ -271,11 +293,11 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 }
 
 func convertMap(definition models.MapDef) engine.Map {
-	return engine.Map{ID: definition.ID, Name: definition.Name, Desc: definition.Desc, StartNodeID: definition.StartNodeID, ExtractionNodeID: definition.ExtractionNodeID, Tags: append([]string(nil), definition.Tags...)}
+	return engine.Map{ID: definition.ID, Name: definition.Name, Desc: definition.Desc, StartNodeID: definition.StartNodeID, LayoutColumns: definition.LayoutColumns, LayoutRows: definition.LayoutRows, Tags: append([]string(nil), definition.Tags...)}
 }
 
 func convertNode(definition models.NodeDef) engine.Node {
-	return engine.Node{ID: definition.ID, MapID: definition.MapID, Name: definition.Name, RouteOrder: definition.RouteOrder, ExploreTime: definition.ExploreTime, Distance: definition.Distance, EnemyID: definition.EnemyID, EncounterRole: definition.EncounterRole, ContainerSlots: definition.ContainerSlots, ValueTier: definition.ValueTier, Connections: splitIDs(definition.Connections), Tags: append([]string(nil), definition.Tags...)}
+	return engine.Node{ID: definition.ID, MapID: definition.MapID, Name: definition.Name, PositionX: definition.PositionX, PositionY: definition.PositionY, ExploreTime: definition.ExploreTime, Distance: definition.Distance, EnemyID: definition.EnemyID, EncounterRole: definition.EncounterRole, ContainerSlots: definition.ContainerSlots, ValueTier: definition.ValueTier, Tags: append([]string(nil), definition.Tags...)}
 }
 
 func convertJSON(source interface{}, target interface{}) error {

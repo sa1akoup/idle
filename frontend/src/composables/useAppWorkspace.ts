@@ -14,6 +14,7 @@ import type {
   Headset,
   Helmet,
   InventoryItem,
+  MapGraph,
   MapNode,
   Merchant,
   NavKey,
@@ -44,6 +45,7 @@ export function useAppWorkspace() {
   const player = ref<Player | null>(null)
   const loadout = ref<PlayerLoadout | null>(null)
   const maps = ref<GameMap[]>([])
+  const mapGraphs = ref<Record<string, MapGraph>>({})
   const nodes = ref<MapNode[]>([])
   const enemies = ref<Enemy[]>([])
   const weapons = ref<Weapon[]>([])
@@ -81,11 +83,11 @@ export function useAppWorkspace() {
     loadError.value = ''
     try {
       const [
-        playerRes, mapsRes, nodesRes, enemiesRes, weaponsRes, ammosRes, armorsRes,
+        playerRes, mapsRes, enemiesRes, weaponsRes, ammosRes, armorsRes,
         armorInstancesRes, consumablesRes, chestRigsRes, backpacksRes, helmetsRes, headsetsRes,
         inventoryRes, storageCapacityRes, sessionsRes, loadoutRes, merchantsRes,
       ] = await Promise.all([
-        api.get<Player>('/player'), api.get<GameMap[]>('/maps'), api.get<MapNode[]>('/nodes'),
+        api.get<Player>('/player'), api.get<GameMap[]>('/maps'),
         api.get<Enemy[]>('/enemies'), api.get<Weapon[]>('/weapons'), api.get<Ammo[]>('/ammos'), api.get<Armor[]>('/armors'),
         api.get<ArmorInstance[]>('/armor-instances'), api.get<Consumable[]>('/consumables'),
         api.get<ChestRig[]>('/chestrigs'), api.get<Backpack[]>('/backpacks'), api.get<Helmet[]>('/helmets'), api.get<Headset[]>('/headsets'),
@@ -96,7 +98,9 @@ export function useAppWorkspace() {
       ])
       player.value = playerRes.data
       maps.value = mapsRes.data
-      nodes.value = nodesRes.data
+      const graphResults = await Promise.all(mapsRes.data.map((map) => api.get<MapGraph>(`/maps/${map.id}/graph`)))
+      mapGraphs.value = Object.fromEntries(graphResults.map((response) => [response.data.map.id, response.data]))
+      nodes.value = graphResults.flatMap((response) => response.data.nodes)
       enemies.value = enemiesRes.data
       weapons.value = weaponsRes.data
       ammos.value = ammosRes.data
@@ -256,7 +260,7 @@ export function useAppWorkspace() {
   return {
     activeView, user, authChecking, authError, mobileOpen, loading, loadError,
     savingPlayer, savingLoadout, purchasingId, sellingId, repairingId,
-    player, loadout, maps, nodes, enemies, weapons, ammos, armors, armorInstances,
+    player, loadout, maps, mapGraphs, nodes, enemies, weapons, ammos, armors, armorInstances,
     consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
     storageCapacity, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
     loadAll, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,

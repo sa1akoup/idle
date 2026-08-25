@@ -15,12 +15,26 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 	if _, ok := byID[snapshot.Map.StartNodeID]; !ok {
 		return nil, fmt.Errorf("起点节点 %s 不存在", snapshot.Map.StartNodeID)
 	}
+	routePlan, err := PlanRoute(snapshot, style, rng, RoutePlannerOptions{
+		MaxRouteNodes: len(nodes), MaxCandidates: 512,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("规划本局探索路线: %w", err)
+	}
+	if err := ValidateRoutePlan(snapshot, routePlan); err != nil {
+		return nil, fmt.Errorf("校验本局探索路线: %w", err)
+	}
+	adjacency := buildAdjacency(snapshot.Edges)
 	events := newEventManager(snapshot)
 	materialized := materializeNodeContainers(nodes, snapshot.NodeContainerAssignments, rng)
 	lines := []string{fmt.Sprintf("=== 第%d局开始 地图:%s 风格:%s ===", runIndex, snapshot.Map.Name, stylePolicy(snapshot.Styles, style).Label)}
 	trace := make([]TraceEvent, 0, len(nodes)*4)
 	appendTraceEvent(&trace, TraceRunStarted, 0, "", "", map[string]interface{}{
 		"runIndex": runIndex, "mapId": snapshot.Map.ID, "mapName": snapshot.Map.Name, "style": style,
+	})
+	appendTraceEvent(&trace, TraceRoutePlanned, 0, snapshot.Map.StartNodeID, routePlan.ExtractionID, map[string]interface{}{
+		"route": append([]string(nil), routePlan.NodeIDs...), "extractionId": routePlan.ExtractionID,
+		"anchorNodeId": routePlan.AnchorNodeID,
 	})
 	playerActor := buildPlayerActor(character, weapon, armor, armorDurability, ammo, ammoRounds)
 	availableItems := make(map[string]int, len(consumables))
@@ -145,21 +159,38 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 
 	result := ""
 	finishedSession := false
-	currentNodeID := snapshot.Map.StartNodeID
-	for step := 0; step < len(nodes)+1; step++ {
+	for step, currentNodeID := range routePlan.NodeIDs {
+		moveDurationSec := int64(0)
+		if step > 0 {
+			previousNodeID := routePlan.NodeIDs[step-1]
+			moveTime := edgeMoveTime(adjacency[previousNodeID], currentNodeID)
+			if moveTime <= 0 {
+				return nil, fmt.Errorf("路线缺少移动边 %s -> %s", previousNodeID, currentNodeID)
+			}
+			actualMoveSec := state.consumeNextMoveDuration(int64(moveTime) * 60)
+			moveDurationSec = actualMoveSec
+			state.addTrace(TraceNodeMoveStarted, state.DurationSec, previousNodeID, currentNodeID, map[string]interface{}{
+				"fromNodeId": previousNodeID, "toNodeId": currentNodeID, "moveTime": moveTime,
+				"actualMoveTimeSec": actualMoveSec,
+			})
+			state.DurationSec += actualMoveSec
+		}
 		node, ok := byID[currentNodeID]
 		if !ok {
 			return nil, fmt.Errorf("路线节点 %s 不存在", currentNodeID)
 		}
 		state.Node = node
+		state.ExtractionPoint = nil
 		state.VisitSequence++
 		state.resetNodeActions()
 		modeAtEntry := state.Mode
 		minutes := int(state.DurationSec / 60)
+		nodeDurationSec := int64(0)
 		if modeAtEntry == runModeExploring {
 			lines = append(lines, fmt.Sprintf("[%02d:%02d] 进入节点 %s，探索%d分钟，距离%s", minutes/60, minutes%60, node.Name, node.ExploreTime, node.Distance))
+			nodeDurationSec = int64(node.ExploreTime) * 60
 		} else {
-			lines = append(lines, fmt.Sprintf("[%02d:%02d] 撤离途中抵达 %s，移动%d分钟，距离%s", minutes/60, minutes%60, node.Name, node.ExploreTime, node.Distance))
+			lines = append(lines, fmt.Sprintf("[%02d:%02d] 撤离途中抵达 %s，距离%s", minutes/60, minutes%60, node.Name, node.Distance))
 		}
 		state.addTrace(TraceNodeEntered, state.DurationSec, node.ID, node.ID, map[string]interface{}{
 			"name": node.Name, "mode": modeAtEntry, "exploreTime": node.ExploreTime, "distance": node.Distance,
@@ -167,9 +198,8 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			"playerStress": state.Player.Stress, "playerAmmo": state.Player.AmmoRounds,
 			"playerArmorDurability": state.Player.ArmorDurability,
 		})
-		nodeDurationSec := int64(node.ExploreTime) * 60
-		actualDurationSec := state.consumeNextMoveDuration(nodeDurationSec)
-		state.DurationSec += actualDurationSec
+		state.DurationSec += nodeDurationSec
+		actualDurationSec := nodeDurationSec + moveDurationSec
 
 		if err := events.Trigger(state, eventPhaseEnterNode, rng); err != nil {
 			return nil, err
@@ -244,37 +274,74 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			}
 		}
 
-		// 每经过一个节点的移动/探索时间都产生减压效果，撤离点也已经计入本局时间轴。
+		// 每经过一个节点的移动/探索时间都产生减压效果。
 		stressRecovery := float64(actualDurationSec) / 60 * 5
 		state.Player.Stress = clamp(state.Player.Stress-stressRecovery, 0, state.Player.StressThreshold)
-		if node.ID == snapshot.Map.ExtractionNodeID {
-			if err := events.Trigger(state, eventPhaseAtExtraction, rng); err != nil {
-				return nil, err
-			}
-			if state.Player.HP <= 0 {
-				lines = append(lines, ">> 玩家在撤离点失去行动能力")
-				result = "incapacitated"
-				finishedSession = true
-				break
-			}
-			result = "success"
-			if state.EvacuationEmergency {
-				result = "emergency"
-			}
-			lines = append(lines, fmt.Sprintf(">> 抵达撤离点 %s，完成%s", node.Name, extractionLabel(result)))
-			break
+		if node.ID != routePlan.AnchorNodeID {
+			continue
 		}
-		nextNode, found, err := nextForwardNode(node, byID)
-		if err != nil {
+
+		point, ok := extractionPointByID(snapshot.ExtractionPoints, routePlan.ExtractionID)
+		if !ok {
+			return nil, fmt.Errorf("撤离点 %s 不存在", routePlan.ExtractionID)
+		}
+		if state.Mode != runModeEvacuating {
+			state.beginEvacuation("route_complete", false)
+		}
+		if err := startEvacuationEvents(events, state, rng); err != nil {
 			return nil, err
 		}
-		if !found {
-			return nil, fmt.Errorf("节点 %s 不是撤离点却没有下一节点", node.ID)
+		state.ExtractionPoint = &point
+		state.addTrace(TraceExtractionApproach, state.DurationSec, node.ID, point.ID, map[string]interface{}{
+			"extractionId": point.ID, "name": point.Name, "anchorNodeId": point.AnchorNodeID, "travelTime": point.TravelTime,
+		})
+		if err := events.Trigger(state, eventPhaseExtractionApproach, rng); err != nil {
+			return nil, err
 		}
-		currentNodeID = nextNode.ID
+		state.DurationSec += int64(point.TravelTime) * 60
+		state.Player.Stress = clamp(state.Player.Stress-float64(point.TravelTime)*5, 0, state.Player.StressThreshold)
+		state.addTrace(TraceExtractionPointReached, state.DurationSec, node.ID, point.ID, map[string]interface{}{
+			"extractionId": point.ID, "name": point.Name, "travelTime": point.TravelTime,
+		})
+		if err := events.Trigger(state, eventPhaseExtractionPointReached, rng); err != nil {
+			return nil, err
+		}
+		// 撤离点事件可以设置 encounter；只有明确设置了撤离遭遇角色时，
+		// 才交给统一战斗解析器，避免把锚点节点的普通敌人重复处理一次。
+		extractionEncountered := false
+		if state.EncounterRole != "" {
+			_, _, _, extractionEncountered, err = resolveNodeEncounter(snapshot, state, events, node, rng)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if extractionEncountered && state.Player.HP <= 0 {
+			lines = append(lines, ">> 玩家在撤离点交战中失去行动能力")
+			result = "incapacitated"
+			finishedSession = true
+			break
+		}
+		if err := events.Trigger(state, eventPhaseAtExtraction, rng); err != nil {
+			return nil, err
+		}
+		if state.Player.HP <= 0 {
+			lines = append(lines, ">> 玩家在撤离点失去行动能力")
+			result = "incapacitated"
+			finishedSession = true
+			break
+		}
+		result = "success"
+		if state.EvacuationEmergency {
+			result = "emergency"
+		}
+		state.addTrace(TraceExtractionCompleted, state.DurationSec, node.ID, point.ID, map[string]interface{}{
+			"extractionId": point.ID, "name": point.Name, "result": result,
+		})
+		lines = append(lines, fmt.Sprintf(">> 抵达撤离点 %s，完成%s", point.Name, extractionLabel(result)))
+		break
 	}
 	if result == "" {
-		return nil, fmt.Errorf("单局节点推进超过路线长度，地图配置可能存在环路")
+		return nil, fmt.Errorf("规划路线未抵达撤离锚点")
 	}
 
 	injury := "none"

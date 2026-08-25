@@ -63,7 +63,7 @@ func TestSimulateRunGolden(t *testing.T) {
 		CarryUsedSlots  int
 		CarryUsedWeight float64
 	}{
-		Result: "success", DurationSec: 120, Heat: 0, AmmoUsed: 0, Injury: "none",
+		Result: "success", DurationSec: 240, Heat: 0, AmmoUsed: 0, Injury: "none",
 		Stress: 0, PistolProf: 1, ArmorDurability: 100, CarryUsedSlots: 2, CarryUsedWeight: 10,
 	}
 	got := struct {
@@ -94,16 +94,17 @@ func TestNodeTravelReducesStressIncludingExtraction(t *testing.T) {
 		RunIndex:    1,
 		Style:       ActionStyleBalanced,
 		State: EngineState{
-			Character: CharacterState{Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, Stress: 10},
-			Loadout:   LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
-			Carry:     CarryState{TotalSlots: 20, UsedSlots: 2, TotalWeight: 100, UsedWeight: 10},
+			Character:       CharacterState{Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, Stress: 10},
+			Loadout:         LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
+			ArmorDurability: 100,
+			Carry:           CarryState{TotalSlots: 20, UsedSlots: 2, TotalWeight: 100, UsedWeight: 10},
 		},
 	})
 	if err != nil {
 		t.Fatalf("模拟节点移动失败: %v", err)
 	}
-	if result.DurationSec != 120 {
-		t.Fatalf("节点移动时间 = %d，期望 120 秒", result.DurationSec)
+	if result.DurationSec != 240 {
+		t.Fatalf("节点移动时间 = %d，期望 240 秒", result.DurationSec)
 	}
 	if result.NextState.Character.Stress != 0 {
 		t.Fatalf("包含撤离点在内的节点移动后压力 = %d，期望 0", result.NextState.Character.Stress)
@@ -115,37 +116,37 @@ func TestShortcutReducesStressRecoveryByActualDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("带捷径的压力恢复模拟失败: %v", err)
 	}
-	if result.DurationSec != 300 {
-		t.Fatalf("捷径后的实际耗时 = %d 秒，期望 300 秒", result.DurationSec)
+	if result.DurationSec != 720 {
+		t.Fatalf("捷径后的实际耗时 = %d 秒，期望 720 秒", result.DurationSec)
 	}
-	if result.NextState.Character.Stress != 15 {
-		t.Fatalf("按实际耗时恢复后的压力 = %d，期望 15", result.NextState.Character.Stress)
+	if result.NextState.Character.Stress != 0 {
+		t.Fatalf("按实际耗时恢复后的压力 = %d，期望 0", result.NextState.Character.Stress)
 	}
 }
 
 func TestZeroDurationShortcutDoesNotRecoverStress(t *testing.T) {
-	result, err := SimulateRun(shortcutStressSnapshot(2), shortcutStressInput(30))
+	result, err := SimulateRun(shortcutStressSnapshot(2), shortcutStressInput(40))
 	if err != nil {
 		t.Fatalf("零耗时捷径模拟失败: %v", err)
 	}
-	if result.DurationSec != 240 {
-		t.Fatalf("零耗时捷径后的实际耗时 = %d 秒，期望 240 秒", result.DurationSec)
+	if result.DurationSec != 660 {
+		t.Fatalf("零耗时捷径后的实际耗时 = %d 秒，期望 660 秒", result.DurationSec)
 	}
-	if result.NextState.Character.Stress != 10 {
-		t.Fatalf("零耗时节点后的压力 = %d，期望 10", result.NextState.Character.Stress)
+	if result.NextState.Character.Stress != 0 {
+		t.Fatalf("零耗时节点后的压力 = %d，期望 0", result.NextState.Character.Stress)
 	}
 }
 
 func TestShortcutOnlyAffectsNextNodeDurationAndStress(t *testing.T) {
-	result, err := SimulateRun(shortcutStressSnapshot(1), shortcutStressInput(50))
+	result, err := SimulateRun(shortcutStressSnapshot(1), shortcutStressInput(40))
 	if err != nil {
 		t.Fatalf("捷径作用范围模拟失败: %v", err)
 	}
-	if result.DurationSec != 300 {
-		t.Fatalf("捷径影响了后续节点耗时，实际耗时 = %d 秒，期望 300 秒", result.DurationSec)
+	if result.DurationSec != 720 {
+		t.Fatalf("捷径影响了后续节点耗时，实际耗时 = %d 秒，期望 720 秒", result.DurationSec)
 	}
-	if result.NextState.Character.Stress != 25 {
-		t.Fatalf("捷径后的压力 = %d，期望 25", result.NextState.Character.Stress)
+	if result.NextState.Character.Stress != 0 {
+		t.Fatalf("捷径后的压力 = %d，期望 0", result.NextState.Character.Stress)
 	}
 }
 
@@ -170,11 +171,13 @@ func TestSnapshotHashIsOrderIndependent(t *testing.T) {
 func replayTestSnapshot() ScenarioSnapshot {
 	return ScenarioSnapshot{
 		SchemaVersion: SchemaVersion,
-		Map:           Map{ID: "map_test", Name: "回放地图", StartNodeID: "node_start", ExtractionNodeID: "node_extract"},
+		Map:           Map{ID: "map_test", Name: "回放地图", StartNodeID: "node_start", LayoutColumns: 2, LayoutRows: 1},
 		Nodes: []Node{
-			{ID: "node_start", MapID: "map_test", Name: "起点", RouteOrder: 1, ExploreTime: 1, Connections: []string{"node_extract"}},
-			{ID: "node_extract", MapID: "map_test", Name: "撤离点", RouteOrder: 2, ExploreTime: 1},
+			{ID: "node_start", MapID: "map_test", Name: "起点", PositionX: 0, PositionY: 0, ExploreTime: 1},
+			{ID: "node_extract", MapID: "map_test", Name: "撤离锚点", PositionX: 1, PositionY: 0, ExploreTime: 1},
 		},
+		Edges:            []MapEdge{{ID: 1, MapID: "map_test", FromNodeID: "node_start", ToNodeID: "node_extract", MoveTime: 1, Bidirectional: true}},
+		ExtractionPoints: []ExtractionPoint{{ID: "extract_test", MapID: "map_test", Name: "测试撤离点", Kind: "normal", AnchorNodeID: "node_extract", TravelTime: 1, Enabled: true}},
 		Items: map[string]ItemDefinition{
 			"weapon_test": {ID: "weapon_test", Kind: "weapon", Name: "测试武器", Weight: 5, Slots: 1},
 			"armor_test":  {ID: "armor_test", Kind: "armor", Name: "测试护甲", Weight: 5, Slots: 1},
@@ -193,11 +196,17 @@ func replayTestSnapshot() ScenarioSnapshot {
 func shortcutStressSnapshot(shortcutMinutes int) ScenarioSnapshot {
 	snapshot := replayTestSnapshot()
 	snapshot.Nodes = []Node{
-		{ID: "node_start", MapID: "map_test", Name: "起点", RouteOrder: 1, ExploreTime: 2, Connections: []string{"node_middle"}},
-		{ID: "node_middle", MapID: "map_test", Name: "中段", RouteOrder: 2, ExploreTime: 2, Connections: []string{"node_extract"}},
-		{ID: "node_extract", MapID: "map_test", Name: "撤离点", RouteOrder: 3, ExploreTime: 2},
+		{ID: "node_start", MapID: "map_test", Name: "起点", PositionX: 0, PositionY: 0, ExploreTime: 2},
+		{ID: "node_middle", MapID: "map_test", Name: "中段", PositionX: 1, PositionY: 0, ExploreTime: 2},
+		{ID: "node_extract", MapID: "map_test", Name: "撤离锚点", PositionX: 2, PositionY: 0, ExploreTime: 2},
 	}
-	snapshot.Map.ExtractionNodeID = "node_extract"
+	snapshot.Map.LayoutColumns = 3
+	snapshot.Map.LayoutRows = 1
+	snapshot.Edges = []MapEdge{
+		{ID: 1, MapID: "map_test", FromNodeID: "node_start", ToNodeID: "node_middle", MoveTime: 3, Bidirectional: true},
+		{ID: 2, MapID: "map_test", FromNodeID: "node_middle", ToNodeID: "node_extract", MoveTime: 3, Bidirectional: true},
+	}
+	snapshot.ExtractionPoints = []ExtractionPoint{{ID: "extract_test", MapID: "map_test", Name: "测试撤离点", Kind: "normal", AnchorNodeID: "node_extract", TravelTime: 1, Enabled: true}}
 	snapshot.Events = EventCatalog{
 		Definitions: map[string]EventDefinition{
 			"shortcut_test": {

@@ -11,20 +11,23 @@ const (
 	runModeExploring  = "exploring"
 	runModeEvacuating = "evacuating"
 
-	eventPhaseEnterNode     = "enter_node"
-	eventPhasePreEncounter  = "pre_encounter"
-	eventPhasePostEncounter = "post_encounter"
-	eventPhasePreSearch     = "pre_search"
-	eventPhasePostSearch    = "post_search"
-	eventPhaseEvacStart     = "evac_start"
-	eventPhaseEvacStep      = "evac_step"
-	eventPhaseAtExtraction  = "at_extraction"
+	eventPhaseEnterNode              = "enter_node"
+	eventPhasePreEncounter           = "pre_encounter"
+	eventPhasePostEncounter          = "post_encounter"
+	eventPhasePreSearch              = "pre_search"
+	eventPhasePostSearch             = "post_search"
+	eventPhaseEvacStart              = "evac_start"
+	eventPhaseEvacStep               = "evac_step"
+	eventPhaseExtractionApproach     = "extraction_approach"
+	eventPhaseExtractionPointReached = "extraction_point_reached"
+	eventPhaseAtExtraction           = "at_extraction"
 )
 
 func supportedEventPhase(phase string) bool {
 	switch phase {
 	case eventPhaseEnterNode, eventPhasePreEncounter, eventPhasePostEncounter, eventPhasePreSearch,
-		eventPhasePostSearch, eventPhaseEvacStart, eventPhaseEvacStep, eventPhaseAtExtraction:
+		eventPhasePostSearch, eventPhaseEvacStart, eventPhaseEvacStep, eventPhaseExtractionApproach,
+		eventPhaseExtractionPointReached, eventPhaseAtExtraction:
 		return true
 	default:
 		return false
@@ -52,7 +55,7 @@ func (manager *eventManager) Trigger(state *eventRunState, phase string, rng *ra
 	}
 	matched := make(map[string]EventBinding)
 	for _, binding := range manager.bindings {
-		if !binding.Enabled || binding.Phase != phase || !manager.matchScope(binding, state.Node) {
+		if !binding.Enabled || binding.Phase != phase || !manager.matchScope(binding, state) {
 			continue
 		}
 		stored, ok := matched[binding.EventID]
@@ -121,7 +124,7 @@ func (manager *eventManager) Trigger(state *eventRunState, phase string, rng *ra
 	return nil
 }
 
-func (manager *eventManager) matchScope(binding EventBinding, node Node) bool {
+func (manager *eventManager) matchScope(binding EventBinding, state *eventRunState) bool {
 	switch binding.ScopeType {
 	case "global":
 		return true
@@ -130,9 +133,13 @@ func (manager *eventManager) matchScope(binding EventBinding, node Node) bool {
 	case "map_tag":
 		return containsString(manager.gameMap.Tags, binding.ScopeID)
 	case "node":
-		return binding.ScopeID == node.ID
+		return binding.ScopeID == state.Node.ID
 	case "node_tag":
-		return containsString(node.Tags, binding.ScopeID)
+		return containsString(state.Node.Tags, binding.ScopeID)
+	case "extraction":
+		return state.ExtractionPoint != nil && state.ExtractionPoint.ID == binding.ScopeID
+	case "extraction_tag":
+		return state.ExtractionPoint != nil && containsString(state.ExtractionPoint.Tags, binding.ScopeID)
 	default:
 		return false
 	}
@@ -140,9 +147,13 @@ func (manager *eventManager) matchScope(binding EventBinding, node Node) bool {
 
 func scopeSpecificity(scopeType string) int {
 	switch scopeType {
+	case "extraction":
+		return 6
 	case "node":
 		return 5
 	case "node_tag":
+		return 4
+	case "extraction_tag":
 		return 4
 	case "map":
 		return 3

@@ -225,6 +225,31 @@ func eventBindings() []models.EventBinding {
 	add("evt_container_elite_convoy", "node", "node_container", "pre_encounter", 1000, 100, 85, 1, 0)
 	add("evt_pier_signal_failure", "node", "node_pier", "at_extraction", 2200, 100, 90, 1, 0)
 	add("evt_pier_final_ambush", "node", "node_pier", "pre_encounter", 1800, 100, 100, 1, 0)
+	// 节点拓扑升级后，旧节点事件绑定迁移到九宫格节点或独立撤离点作用域。
+	nodeAlias := map[string]string{
+		"node_apt": "city_ruins_node_5", "node_warehouse": "city_ruins_node_2", "node_customs": "city_ruins_node_8",
+		"node_tunnel": "city_ruins_node_4", "node_container": "city_ruins_node_6", "node_pier": "city_ruins_node_1",
+	}
+	for index := range bindings {
+		binding := &bindings[index]
+		if binding.ScopeType == "node" {
+			if replacement, ok := nodeAlias[binding.ScopeID]; ok {
+				binding.ScopeID = replacement
+			}
+		}
+		switch binding.EventID {
+		case "evt_extraction_ambush":
+			binding.ScopeType = "extraction_tag"
+			binding.ScopeID = "normal"
+			binding.Phase = "extraction_point_reached"
+		case "evt_extraction_window":
+			binding.ScopeType = "extraction_tag"
+			binding.ScopeID = "normal"
+		case "evt_pier_signal_failure":
+			binding.ScopeType = "extraction"
+			binding.ScopeID = "extract_pier"
+		}
+	}
 	return bindings
 }
 

@@ -14,20 +14,23 @@ const (
 	runModeExploring  = "exploring"
 	runModeEvacuating = "evacuating"
 
-	eventPhaseEnterNode     = "enter_node"
-	eventPhasePreEncounter  = "pre_encounter"
-	eventPhasePostEncounter = "post_encounter"
-	eventPhasePreSearch     = "pre_search"
-	eventPhasePostSearch    = "post_search"
-	eventPhaseEvacStart     = "evac_start"
-	eventPhaseEvacStep      = "evac_step"
-	eventPhaseAtExtraction  = "at_extraction"
+	eventPhaseEnterNode              = "enter_node"
+	eventPhasePreEncounter           = "pre_encounter"
+	eventPhasePostEncounter          = "post_encounter"
+	eventPhasePreSearch              = "pre_search"
+	eventPhasePostSearch             = "post_search"
+	eventPhaseEvacStart              = "evac_start"
+	eventPhaseEvacStep               = "evac_step"
+	eventPhaseExtractionApproach     = "extraction_approach"
+	eventPhaseExtractionPointReached = "extraction_point_reached"
+	eventPhaseAtExtraction           = "at_extraction"
 )
 
 var supportedEventPhases = map[string]bool{
 	eventPhaseEnterNode: true, eventPhasePreEncounter: true, eventPhasePostEncounter: true,
 	eventPhasePreSearch: true, eventPhasePostSearch: true, eventPhaseEvacStart: true,
-	eventPhaseEvacStep: true, eventPhaseAtExtraction: true,
+	eventPhaseEvacStep: true, eventPhaseExtractionApproach: true, eventPhaseExtractionPointReached: true,
+	eventPhaseAtExtraction: true,
 }
 
 var supportedEventEffects = map[string]bool{
@@ -99,6 +102,8 @@ func ValidateEventConfig(db *gorm.DB) error {
 	var maps []models.MapDef
 	var nodes []models.NodeDef
 	var bindings []models.EventBinding
+	var edges []models.MapEdgeDef
+	var extractionPoints []models.ExtractionPointDef
 	var pools []models.EncounterPoolEntry
 	var enemies []models.EnemyDef
 	var containers []models.LootContainerDef
@@ -112,6 +117,12 @@ func ValidateEventConfig(db *gorm.DB) error {
 	}
 	if err := db.Find(&bindings).Error; err != nil {
 		return fmt.Errorf("校验事件绑定: %w", err)
+	}
+	if err := db.Find(&edges).Error; err != nil {
+		return fmt.Errorf("校验地图边: %w", err)
+	}
+	if err := db.Find(&extractionPoints).Error; err != nil {
+		return fmt.Errorf("校验撤离点: %w", err)
 	}
 	if err := db.Find(&pools).Error; err != nil {
 		return fmt.Errorf("校验遭遇池: %w", err)
@@ -131,6 +142,7 @@ func ValidateEventConfig(db *gorm.DB) error {
 
 	mapIDs, nodeIDs, enemyIDs, containerIDs, consumableIDs := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	mapTags, nodeTags := map[string]bool{}, map[string]bool{}
+	extractionIDs, extractionTags := map[string]bool{}, map[string]bool{}
 	for _, gameMap := range maps {
 		mapIDs[gameMap.ID] = true
 		for _, tag := range gameMap.Tags {
@@ -145,8 +157,24 @@ func ValidateEventConfig(db *gorm.DB) error {
 		if len(mapNodes) == 0 {
 			return fmt.Errorf("地图 %s 没有节点", gameMap.ID)
 		}
-		if err := validateDirectedRoute(mapNodes, gameMap); err != nil {
-			return fmt.Errorf("地图 %s 撤离路线无效: %w", gameMap.ID, err)
+		mapEdges := make([]engine.MapEdge, 0)
+		for _, edge := range edges {
+			if edge.MapID == gameMap.ID {
+				mapEdges = append(mapEdges, engine.MapEdge{ID: edge.ID, MapID: edge.MapID, FromNodeID: edge.FromNodeID, ToNodeID: edge.ToNodeID, MoveTime: edge.MoveTime, Bidirectional: edge.Bidirectional})
+			}
+		}
+		mapPoints := make([]engine.ExtractionPoint, 0)
+		for _, point := range extractionPoints {
+			if point.MapID == gameMap.ID {
+				mapPoints = append(mapPoints, engine.ExtractionPoint{ID: point.ID, MapID: point.MapID, Name: point.Name, Kind: point.Kind, AnchorNodeID: point.AnchorNodeID, TravelTime: point.TravelTime, Enabled: point.Enabled, IconKey: point.IconKey, Tags: point.Tags})
+			}
+		}
+		mapNodesSnapshot := make([]engine.Node, 0, len(mapNodes))
+		for _, node := range mapNodes {
+			mapNodesSnapshot = append(mapNodesSnapshot, convertNode(node))
+		}
+		if err := engine.ValidateMapGraph(convertMap(gameMap), mapNodesSnapshot, mapEdges, mapPoints); err != nil {
+			return fmt.Errorf("地图 %s 图配置无效: %w", gameMap.ID, err)
 		}
 	}
 	for _, node := range nodes {
@@ -156,6 +184,15 @@ func ValidateEventConfig(db *gorm.DB) error {
 		nodeIDs[node.ID] = true
 		for _, tag := range node.Tags {
 			nodeTags[tag] = true
+		}
+	}
+	for _, point := range extractionPoints {
+		if point.ID == "" || point.MapID == "" || point.AnchorNodeID == "" || point.TravelTime <= 0 {
+			return fmt.Errorf("撤离点 %s 配置无效", point.ID)
+		}
+		extractionIDs[point.ID] = true
+		for _, tag := range point.Tags {
+			extractionTags[tag] = true
 		}
 	}
 	for _, enemy := range enemies {
@@ -241,7 +278,9 @@ func ValidateEventConfig(db *gorm.DB) error {
 			(binding.ScopeType == "map" && mapIDs[binding.ScopeID]) ||
 			(binding.ScopeType == "node" && nodeIDs[binding.ScopeID]) ||
 			(binding.ScopeType == "map_tag" && mapTags[binding.ScopeID]) ||
-			(binding.ScopeType == "node_tag" && nodeTags[binding.ScopeID])
+			(binding.ScopeType == "node_tag" && nodeTags[binding.ScopeID]) ||
+			(binding.ScopeType == "extraction" && extractionIDs[binding.ScopeID]) ||
+			(binding.ScopeType == "extraction_tag" && extractionTags[binding.ScopeID])
 		if !scopeValid {
 			return fmt.Errorf("事件绑定 %s 的作用域无效", binding.ID)
 		}
@@ -308,7 +347,7 @@ func ValidateEventConfig(db *gorm.DB) error {
 			}
 		}
 		for _, binding := range bindings {
-			if !bindingAppliesToMap(binding, gameMap, mapNodes) {
+			if !bindingAppliesToMap(binding, gameMap, mapNodes, extractionPoints) {
 				continue
 			}
 			for role := range rolesByEvent[binding.EventID] {
@@ -330,7 +369,7 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func bindingAppliesToMap(binding models.EventBinding, gameMap models.MapDef, nodes []models.NodeDef) bool {
+func bindingAppliesToMap(binding models.EventBinding, gameMap models.MapDef, nodes []models.NodeDef, extractionPoints []models.ExtractionPointDef) bool {
 	switch binding.ScopeType {
 	case "global":
 		return true
@@ -347,6 +386,18 @@ func bindingAppliesToMap(binding models.EventBinding, gameMap models.MapDef, nod
 	case "node_tag":
 		for _, node := range nodes {
 			if containsString(node.Tags, binding.ScopeID) {
+				return true
+			}
+		}
+	case "extraction":
+		for _, point := range extractionPoints {
+			if point.MapID == gameMap.ID && point.ID == binding.ScopeID && point.Enabled {
+				return true
+			}
+		}
+	case "extraction_tag":
+		for _, point := range extractionPoints {
+			if point.MapID == gameMap.ID && point.Enabled && containsString(point.Tags, binding.ScopeID) {
 				return true
 			}
 		}

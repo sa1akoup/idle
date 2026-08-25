@@ -184,6 +184,27 @@ func seedContainers(db *gorm.DB) error {
 		{ID: 48, NodeID: "node_warehouse", Pool: "workshop_fallback", ContainerID: "tool_crate", Weight: 100},
 		{ID: 49, NodeID: "node_container", Pool: "workshop_fallback", ContainerID: "tool_crate", Weight: 100},
 	}
+	// 旧内容器配置复用到九宫格语义节点，新增三个节点的基础搜索池。
+	nodeAlias := map[string]string{
+		"node_apt": "city_ruins_node_5", "node_warehouse": "city_ruins_node_2", "node_customs": "city_ruins_node_8",
+		"node_tunnel": "city_ruins_node_4", "node_container": "city_ruins_node_6", "node_pier": "city_ruins_node_1",
+	}
+	for index := range assignments {
+		if replacement, ok := nodeAlias[assignments[index].NodeID]; ok {
+			assignments[index].NodeID = replacement
+		}
+	}
+	assignments = append(assignments,
+		models.NodeContainerDef{NodeID: "city_ruins_node_3", ContainerID: "food_shelf", Weight: 45},
+		models.NodeContainerDef{NodeID: "city_ruins_node_3", ContainerID: "cargo_crate", Weight: 30},
+		models.NodeContainerDef{NodeID: "city_ruins_node_3", ContainerID: "computer_case", Weight: 25},
+		models.NodeContainerDef{NodeID: "city_ruins_node_7", ContainerID: "medical_cache", Weight: 55},
+		models.NodeContainerDef{NodeID: "city_ruins_node_7", ContainerID: "medical_bag", Weight: 30},
+		models.NodeContainerDef{NodeID: "city_ruins_node_7", ContainerID: "safehouse_cache", Weight: 15},
+		models.NodeContainerDef{NodeID: "city_ruins_node_9", ContainerID: "utility_box", Weight: 45},
+		models.NodeContainerDef{NodeID: "city_ruins_node_9", ContainerID: "utility_box", Weight: 35},
+		models.NodeContainerDef{NodeID: "city_ruins_node_9", ContainerID: "cargo_crate", Weight: 20},
+	)
 	nodeIDs := make([]string, 0, len(assignments))
 	seenNodes := make(map[string]bool)
 	for _, assignment := range assignments {

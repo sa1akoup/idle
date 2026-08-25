@@ -25,6 +25,17 @@ func TestStartSessionRejectsMissingAmmo(t *testing.T) {
 	}
 }
 
+func TestValidateSessionEngineVersionRejectsLegacy(t *testing.T) {
+	if err := validateSessionEngineVersion(engine.EngineVersion); err != nil {
+		t.Fatalf("当前引擎版本不应被拒绝: %v", err)
+	}
+	for _, version := range []string{"", "exploration-engine-v3", "unknown-engine"} {
+		if err := validateSessionEngineVersion(version); err == nil {
+			t.Fatalf("旧或空引擎版本 %q 应被拒绝", version)
+		}
+	}
+}
+
 func TestResumeAfterInjuryWithoutAmmoFinishesSession(t *testing.T) {
 	db := newSessionEventsTestDB(t, "session-injury-resource")
 	if err := config.Seed(db); err != nil {

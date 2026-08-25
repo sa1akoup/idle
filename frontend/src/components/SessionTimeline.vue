@@ -32,7 +32,9 @@ function formatTime(value: string): string {
 function eventTitle(event: SessionEvent): string {
   switch (event.eventType) {
     case 'run_started': return `第 ${event.runIndex} 局开始`
+    case 'route_planned': return '本局路线已规划'
     case 'node_entered': return `抵达 ${textOf(event, 'name', event.nodeId)}`
+    case 'node_move_started': return `移动至 ${textOf(event, 'toNodeId', event.subjectId)}`
     case 'event_triggered': return textOf(event, 'name', '触发事件')
     case 'evacuation_started': return '行动转入撤离'
     case 'container_search_started': return `发现容器：${textOf(event, 'name', event.subjectId)}`
@@ -44,6 +46,9 @@ function eventTitle(event: SessionEvent): string {
     case 'battle_round': return `战斗第 ${numberOf(event, 'round')} 轮`
     case 'battle_escape': return '脱离判定'
     case 'battle_finished': return '战斗结束'
+    case 'extraction_approach': return `接近撤离点：${textOf(event, 'name', event.subjectId)}`
+    case 'extraction_point_reached': return `抵达撤离点：${textOf(event, 'name', event.subjectId)}`
+    case 'extraction_completed': return '撤离完成'
     case 'loot_extracted': return `成功带出：${textOf(event, 'name', event.subjectId)}`
     case 'loot_stored': return `已存入仓库：${textOf(event, 'name', event.subjectId)}`
     case 'loot_overflow': return `仓库不足，放弃：${textOf(event, 'name', event.subjectId)}`
@@ -59,7 +64,9 @@ function eventTitle(event: SessionEvent): string {
 function eventSummary(event: SessionEvent): string {
   switch (event.eventType) {
     case 'run_started': return textOf(event, 'mapName', '开始推进路线')
+    case 'route_planned': return `${Array.isArray(valueOf(event, 'route')) ? (valueOf(event, 'route') as unknown[]).length : 0} 个节点 · ${textOf(event, 'extractionId', '常规撤离')}`
     case 'node_entered': return `${textOf(event, 'distance', '未知距离')} · 探索 ${numberOf(event, 'exploreTime')} 分钟`
+    case 'node_move_started': return `移动 ${numberOf(event, 'moveTime')} 分钟 · 实际 ${Math.round(numberOf(event, 'actualMoveTimeSec') / 60)} 分钟`
     case 'event_triggered': return `${valueOf(event, 'success') === false ? '判定未通过' : textOf(event, 'intent', '自动决策')} · ${textOf(event, 'phase')}`
     case 'evacuation_started': return `${textOf(event, 'reason', '未知原因')}${valueOf(event, 'emergency') === true ? ' · 紧急' : ''}`
     case 'container_search_started': return `${textOf(event, 'source', '节点搜索')} · 搜索 ${numberOf(event, 'searchTime')} 分钟`
@@ -77,6 +84,9 @@ function eventSummary(event: SessionEvent): string {
     case 'battle_round': return `玩家 ${numberOf(event, 'playerHp').toFixed(1)} HP / 护甲 ${numberOf(event, 'playerArmorDurability').toFixed(1)} · 敌人 ${numberOf(event, 'enemyHp').toFixed(1)} HP / 护甲 ${numberOf(event, 'enemyArmorDurability').toFixed(1)} · 弹药 ${numberOf(event, 'playerAmmo')}`
     case 'battle_escape': return `${textOf(event, 'message', '脱离判定完成')} · ${valueOf(event, 'success') === true ? '成功' : '失败'}`
     case 'battle_finished': return `结果：${textOf(event, 'winner', '未知')}`
+    case 'extraction_approach': return `锚点后移动 ${numberOf(event, 'travelTime')} 分钟`
+    case 'extraction_point_reached': return '进入终点处理阶段'
+    case 'extraction_completed': return `结果：${textOf(event, 'result', 'success')}`
     case 'loot_extracted': return `${numberOf(event, 'quantity')} 件成功撤离地图`
     case 'loot_stored': return `${numberOf(event, 'quantity')} 件已写入基地仓库`
     case 'loot_overflow': return `${numberOf(event, 'quantity')} 件因仓库容量不足被放弃`
@@ -96,6 +106,7 @@ function eventSummary(event: SessionEvent): string {
 
 function eventClass(event: SessionEvent): string {
   if (event.eventType.startsWith('battle_')) return 'battle'
+  if (event.eventType.startsWith('extraction_')) return 'success'
   if (event.eventType.startsWith('loot_') || event.eventType.startsWith('container_') || event.eventType === 'ammo_refilled') return 'loot'
   if (event.eventType === 'session_finished' || event.eventType === 'run_settled') return 'success'
   if (event.eventType === 'session_aborted' || event.eventType === 'session_failed') return 'danger'

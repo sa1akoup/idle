@@ -39,7 +39,7 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 	if snapshot.Map.ID == "" {
 		return fmt.Errorf("场景快照缺少地图")
 	}
-	if err := validateDirectedRoute(snapshot.Nodes, snapshot.Map); err != nil {
+	if err := ValidateMapGraph(snapshot.Map, snapshot.Nodes, snapshot.Edges, snapshot.ExtractionPoints); err != nil {
 		return err
 	}
 	if len(snapshot.Styles) == 0 {
@@ -237,7 +237,7 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 			return fmt.Errorf("事件绑定 %s 的概率或限制无效", entry.ID)
 		}
 		switch entry.ScopeType {
-		case "global", "map", "map_tag", "node", "node_tag":
+		case "global", "map", "map_tag", "node", "node_tag", "extraction", "extraction_tag":
 		default:
 			return fmt.Errorf("事件绑定 %s 使用未知作用域 %s", entry.ID, entry.ScopeType)
 		}

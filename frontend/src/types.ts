@@ -222,7 +222,8 @@ export interface GameMap {
   name: string
   desc: string
   startNodeId: string
-  extractionNodeId: string
+  layoutColumns: number
+  layoutRows: number
   tags: string[]
 }
 
@@ -242,16 +243,44 @@ export interface MapNode {
   id: string
   mapId: string
   name: string
-  routeOrder: number
+  positionX: number
+  positionY: number
   exploreTime: number
   distance: 'close' | 'mid' | 'far'
   enemyId: string
   encounterRole: string
   containerSlots: number
   valueTier: number
-  connections: string
   tags: string[]
   containers: NodeContainerView[]
+}
+
+export interface MapEdge {
+  id: number
+  mapId: string
+  fromNodeId: string
+  toNodeId: string
+  moveTime: number
+  bidirectional: boolean
+}
+
+export interface ExtractionPoint {
+  id: string
+  mapId: string
+  name: string
+  kind: string
+  anchorNodeId: string
+  travelTime: number
+  enabled: boolean
+  iconKey: string
+  tags: string[]
+}
+
+export interface MapGraph {
+  map: GameMap
+  nodes: MapNode[]
+  edges: MapEdge[]
+  extractionPoints: ExtractionPoint[]
 }
 
 export interface Enemy {

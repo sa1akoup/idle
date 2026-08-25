@@ -276,12 +276,13 @@ type HeadsetDef struct {
 
 // MapDef 地图
 type MapDef struct {
-	ID               string   `gorm:"primaryKey" json:"id"`
-	Name             string   `json:"name"`
-	Desc             string   `json:"desc"`
-	StartNodeID      string   `json:"startNodeId"`
-	ExtractionNodeID string   `json:"extractionNodeId"`
-	Tags             []string `gorm:"serializer:json" json:"tags"`
+	ID            string   `gorm:"primaryKey" json:"id"`
+	Name          string   `json:"name"`
+	Desc          string   `json:"desc"`
+	StartNodeID   string   `json:"startNodeId"`
+	LayoutColumns int      `json:"layoutColumns"`
+	LayoutRows    int      `json:"layoutRows"`
+	Tags          []string `gorm:"serializer:json" json:"tags"`
 }
 
 // NodeDef 节点
@@ -289,15 +290,38 @@ type NodeDef struct {
 	ID             string   `gorm:"primaryKey" json:"id"`
 	MapID          string   `json:"mapId"`
 	Name           string   `json:"name"`
-	RouteOrder     int      `json:"routeOrder"`  // 单向路线中的顺序
+	PositionX      int      `json:"positionX"`
+	PositionY      int      `json:"positionY"`
 	ExploreTime    int      `json:"exploreTime"` // 分钟
 	Distance       string   `json:"distance"`    // close/mid/far
 	EnemyID        string   `json:"enemyId"`
 	EncounterRole  string   `json:"encounterRole"`  // patrol/guard/elite 等行为角色
 	ContainerSlots int      `json:"containerSlots"` // 本节点每局生成的容器槽位
 	ValueTier      int      `json:"valueTier"`      // 节点整体价值等级，1-5
-	Connections    string   `json:"connections"`    // 仅允许填写向前的出口，csv
 	Tags           []string `gorm:"serializer:json" json:"tags"`
+}
+
+// MapEdgeDef 地图节点之间的移动边；Bidirectional 决定是否允许反向通行。
+type MapEdgeDef struct {
+	ID            uint   `gorm:"primaryKey" json:"id"`
+	MapID         string `gorm:"uniqueIndex:idx_map_edge,priority:1;not null" json:"mapId"`
+	FromNodeID    string `gorm:"uniqueIndex:idx_map_edge,priority:2;not null" json:"fromNodeId"`
+	ToNodeID      string `gorm:"uniqueIndex:idx_map_edge,priority:3;not null" json:"toNodeId"`
+	MoveTime      int    `gorm:"not null" json:"moveTime"`
+	Bidirectional bool   `gorm:"not null;default:true" json:"bidirectional"`
+}
+
+// ExtractionPointDef 独立撤离点，通过 AnchorNodeID 挂接到探索图。
+type ExtractionPointDef struct {
+	ID           string   `gorm:"primaryKey" json:"id"`
+	MapID        string   `gorm:"index;not null" json:"mapId"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	AnchorNodeID string   `gorm:"index;not null" json:"anchorNodeId"`
+	TravelTime   int      `json:"travelTime"`
+	Enabled      bool     `gorm:"not null;default:true" json:"enabled"`
+	IconKey      string   `json:"iconKey"`
+	Tags         []string `gorm:"serializer:json" json:"tags"`
 }
 
 // EnemyDef 聚合敌人

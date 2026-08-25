@@ -16,7 +16,7 @@ import { useAppWorkspace } from './composables/useAppWorkspace'
 const {
   activeView, user, authChecking, authError, mobileOpen, loading, loadError,
   savingPlayer, savingLoadout, purchasingId, sellingId, repairingId,
-  player, loadout, maps, nodes, enemies, weapons, ammos, armors, armorInstances,
+  player, loadout, maps, mapGraphs, enemies, weapons, ammos, armors, armorInstances,
   consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
   storageCapacity, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
   loadAll, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,
@@ -60,7 +60,7 @@ const {
             :player="player" :loadout="loadout" :maps="maps" :weapons="weapons" :ammos="ammos" :armors="armors" :consumables="consumables" :inventory="inventory"
             @created="handleSessionCreated"
           />
-          <MapView v-else-if="activeView === 'map'" :maps="maps" :nodes="nodes" :enemies="enemies" />
+          <MapView v-else-if="activeView === 'map'" :maps="maps" :map-graphs="mapGraphs" :enemies="enemies" />
           <CharacterView
             v-else-if="activeView === 'character' && loadout"
             :player="player" :loadout="loadout" :inventory="inventory" :weapons="weapons" :ammos="ammos" :armors="armors" :consumables="consumables"
@@ -82,7 +82,7 @@ const {
           />
           <LiveSessionView
             v-else-if="activeView === 'live' && activeSessionId"
-            :key="activeSessionId" :session-id="activeSessionId" :player="player" :maps="maps" :nodes="nodes"
+            :key="activeSessionId" :session-id="activeSessionId" :player="player" :maps="maps" :map-graphs="mapGraphs"
             @refresh="refreshSessions" @open-logs="activeView = 'logs'"
           />
           <LogsView v-else :sessions="sessions" :maps="maps" :weapons="weapons" @refresh="refreshSessions" />

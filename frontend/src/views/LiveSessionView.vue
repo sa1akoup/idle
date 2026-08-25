@@ -4,15 +4,16 @@ import { computed, ref, toRef } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DataLine, MapLocation, Timer, VideoPlay, Warning } from '@element-plus/icons-vue'
 import api, { getApiError } from '../api'
+import MapGraphCanvas from '../components/MapGraphCanvas.vue'
 import SessionTimeline from '../components/SessionTimeline.vue'
 import { useSessionStream } from '../composables/useSessionStream'
-import type { GameMap, MapNode, Player, Session, SessionEvent } from '../types'
+import type { GameMap, MapGraph, Player, Session, SessionEvent } from '../types'
 
 const props = defineProps<{
   sessionId: number
   player: Player
   maps: GameMap[]
-  nodes: MapNode[]
+  mapGraphs: Record<string, MapGraph>
 }>()
 
 const emit = defineEmits<{
@@ -23,7 +24,21 @@ const emit = defineEmits<{
 const aborting = ref(false)
 const { session, events, loading, errorMessage, now, loadSession, reconnectNow } = useSessionStream(toRef(props, 'sessionId'), () => emit('refresh'))
 
-const currentNodeEvent = computed(() => [...events.value].reverse().find((event) => event.eventType === 'node_entered') ?? null)
+const routePlannedEvent = computed(() => [...events.value].reverse().find((event) => event.eventType === 'route_planned') ?? null)
+const currentRunIndex = computed(() => routePlannedEvent.value?.runIndex || [...events.value].reverse().find((event) => event.eventType === 'node_entered')?.runIndex || (session.value?.totalRuns || 0) + 1)
+const currentRunEvents = computed(() => events.value.filter((event) => event.runIndex === currentRunIndex.value))
+const currentNodeEvent = computed(() => [...currentRunEvents.value].reverse().find((event) => event.eventType === 'node_entered') ?? null)
+const currentGraph = computed(() => session.value ? props.mapGraphs[session.value.mapId] : undefined)
+const plannedRoute = computed(() => {
+  const value = routePlannedEvent.value?.payload.route
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+})
+const visitedNodeIds = computed(() => currentRunEvents.value.filter((event) => event.eventType === 'node_entered').map((event) => event.nodeId))
+const plannedExtractionName = computed(() => {
+  const extractionID = routePlannedEvent.value?.payload.extractionId
+  if (typeof extractionID !== 'string') return ''
+  return currentGraph.value?.extractionPoints.find((point) => point.id === extractionID)?.name || extractionID
+})
 const latestBattleStart = computed(() => [...events.value].reverse().find((event) => event.eventType === 'battle_started') ?? null)
 const latestBattleFinished = computed(() => {
   if (!latestBattleStart.value) return null
@@ -94,7 +109,7 @@ function mapName(mapID: string): string {
 function currentNodeName(): string {
   const name = payloadText(currentNodeEvent.value, 'name', '')
   if (name) return name
-  return props.nodes.find((node) => node.id === currentNodeEvent.value?.nodeId)?.name || '等待第一个节点'
+  return currentGraph.value?.nodes.find((node) => node.id === currentNodeEvent.value?.nodeId)?.name || '等待第一个节点'
 }
 
 async function abortSession() {
@@ -158,8 +173,17 @@ async function abortSession() {
 
         <aside class="live-side">
           <section class="live-map surface-panel">
-            <div class="panel-heading"><div><span>02</span><h2><el-icon><MapLocation /></el-icon>路线</h2></div><small>{{ mapName(session.mapId) }}</small></div>
-            <div class="live-map__image"><img src="/city-map.svg" alt="当前行动区域地图" /><div class="live-map__node"><el-icon><MapLocation /></el-icon><strong>{{ currentNodeName() }}</strong></div></div>
+            <div class="panel-heading"><div><span>02</span><h2><el-icon><MapLocation /></el-icon>路线</h2></div><small>{{ plannedExtractionName || mapName(session.mapId) }}</small></div>
+            <MapGraphCanvas
+              v-if="currentGraph"
+              :graph="currentGraph"
+              :compact="true"
+              :current-node-id="currentNodeEvent?.nodeId || ''"
+              :visited-node-ids="visitedNodeIds"
+              :route-node-ids="plannedRoute"
+            />
+            <div v-else class="live-map__empty">等待本局路线规划</div>
+            <div class="live-route-summary"><span>当前局 {{ currentRunIndex }}</span><strong>{{ plannedRoute.length ? `${plannedRoute.length} 个探索节点` : '路线尚未公开' }}</strong></div>
           </section>
 
           <section class="live-metrics surface-panel">
@@ -180,3 +204,31 @@ async function abortSession() {
     </template>
   </section>
 </template>
+
+<style scoped>
+.live-map :deep(.map-graph-canvas) {
+  min-height: 360px;
+  border: 0;
+}
+
+.live-route-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  color: var(--muted-text, #84969a);
+  font-size: 12px;
+}
+
+.live-route-summary strong {
+  color: #d9a441;
+  font-weight: 650;
+}
+
+.live-map__empty {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  color: var(--muted-text, #84969a);
+}
+</style>

@@ -2,18 +2,19 @@
 package engine
 
 const (
-	SchemaVersion = "exploration-snapshot-v3"
-	EngineVersion = "exploration-engine-v3"
+	SchemaVersion = "exploration-snapshot-v4"
+	EngineVersion = "exploration-engine-v4"
 )
 
 // Map 是探索路线的不可变快照。
 type Map struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Desc             string   `json:"desc"`
-	StartNodeID      string   `json:"startNodeId"`
-	ExtractionNodeID string   `json:"extractionNodeId"`
-	Tags             []string `json:"tags"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Desc          string   `json:"desc"`
+	StartNodeID   string   `json:"startNodeId"`
+	LayoutColumns int      `json:"layoutColumns"`
+	LayoutRows    int      `json:"layoutRows"`
+	Tags          []string `json:"tags"`
 }
 
 // Node 是路线节点的不可变快照。
@@ -21,15 +22,38 @@ type Node struct {
 	ID             string   `json:"id"`
 	MapID          string   `json:"mapId"`
 	Name           string   `json:"name"`
-	RouteOrder     int      `json:"routeOrder"`
+	PositionX      int      `json:"positionX"`
+	PositionY      int      `json:"positionY"`
 	ExploreTime    int      `json:"exploreTime"`
 	Distance       string   `json:"distance"`
 	EnemyID        string   `json:"enemyId"`
 	EncounterRole  string   `json:"encounterRole"`
 	ContainerSlots int      `json:"containerSlots"`
 	ValueTier      int      `json:"valueTier"`
-	Connections    []string `json:"connections"`
 	Tags           []string `json:"tags"`
+}
+
+// MapEdge 是固定在快照中的节点移动边。
+type MapEdge struct {
+	ID            uint   `json:"id"`
+	MapID         string `json:"mapId"`
+	FromNodeID    string `json:"fromNodeId"`
+	ToNodeID      string `json:"toNodeId"`
+	MoveTime      int    `json:"moveTime"`
+	Bidirectional bool   `json:"bidirectional"`
+}
+
+// ExtractionPoint 是固定在快照中的地图外撤离终点。
+type ExtractionPoint struct {
+	ID           string   `json:"id"`
+	MapID        string   `json:"mapId"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	AnchorNodeID string   `json:"anchorNodeId"`
+	TravelTime   int      `json:"travelTime"`
+	Enabled      bool     `json:"enabled"`
+	IconKey      string   `json:"iconKey"`
+	Tags         []string `json:"tags"`
 }
 
 // NodeContainerAssignment 描述普通搜索池和事件奖励池的挂载关系。
@@ -255,17 +279,20 @@ type EventCatalog struct {
 }
 
 type StylePolicy struct {
-	ID               string         `json:"id"`
-	Label            string         `json:"label"`
-	Description      string         `json:"description"`
-	HealthEvacRatio  float64        `json:"healthEvacRatio"`
-	StressEvacRatio  float64        `json:"stressEvacRatio"`
-	CarryEvacRatio   float64        `json:"carryEvacRatio"`
-	PatrolApproach   string         `json:"patrolApproach"`
-	ValueWeight      int            `json:"valueWeight"`
-	RiskWeight       int            `json:"riskWeight"`
-	IntentBias       map[string]int `json:"intentBias"`
-	CheckIntentBonus map[string]int `json:"checkIntentBonus"`
+	ID                string         `json:"id"`
+	Label             string         `json:"label"`
+	Description       string         `json:"description"`
+	HealthEvacRatio   float64        `json:"healthEvacRatio"`
+	StressEvacRatio   float64        `json:"stressEvacRatio"`
+	CarryEvacRatio    float64        `json:"carryEvacRatio"`
+	PatrolApproach    string         `json:"patrolApproach"`
+	ValueWeight       int            `json:"valueWeight"`
+	RiskWeight        int            `json:"riskWeight"`
+	MoveTimeWeight    int            `json:"moveTimeWeight"`
+	ExploreTimeWeight int            `json:"exploreTimeWeight"`
+	LengthWeight      int            `json:"lengthWeight"`
+	IntentBias        map[string]int `json:"intentBias"`
+	CheckIntentBonus  map[string]int `json:"checkIntentBonus"`
 }
 
 type RecoveryItem struct {
@@ -289,6 +316,8 @@ type ScenarioSnapshot struct {
 	SchemaVersion            string                    `json:"schemaVersion"`
 	Map                      Map                       `json:"map"`
 	Nodes                    []Node                    `json:"nodes"`
+	Edges                    []MapEdge                 `json:"edges"`
+	ExtractionPoints         []ExtractionPoint         `json:"extractionPoints"`
 	NodeContainerAssignments []NodeContainerAssignment `json:"nodeContainerAssignments"`
 	Containers               map[string]Container      `json:"containers"`
 	LootItems                map[string]LootItem       `json:"lootItems"`

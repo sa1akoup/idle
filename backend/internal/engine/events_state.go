@@ -8,12 +8,13 @@ import (
 
 // eventRunState 是事件、战斗、搜索和撤离共用的单局内存状态。
 type eventRunState struct {
-	Character *CharacterState
-	Player    *BattleActor
-	Node      Node
-	Mode      string
-	Style     string
-	Styles    []StylePolicy
+	Character       *CharacterState
+	Player          *BattleActor
+	Node            Node
+	ExtractionPoint *ExtractionPoint
+	Mode            string
+	Style           string
+	Styles          []StylePolicy
 
 	EvacuationReason    string
 	EvacuationEmergency bool

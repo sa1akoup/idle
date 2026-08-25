@@ -32,7 +32,7 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	if err := validateDirectedRoute(snapshot.Nodes, snapshot.Map); err != nil {
+	if err := ValidateMapGraph(snapshot.Map, snapshot.Nodes, snapshot.Edges, snapshot.ExtractionPoints); err != nil {
 		return RunResult{}, err
 	}
 	weapon, ok := snapshot.Weapons[input.State.Loadout.WeaponID]

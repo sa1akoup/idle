@@ -44,14 +44,34 @@ func normalizeSnapshot(snapshot ScenarioSnapshot) ScenarioSnapshot {
 	snapshot.SchemaVersion = valueOr(snapshot.SchemaVersion, SchemaVersion)
 	snapshot.Map.Tags = sortedStrings(snapshot.Map.Tags)
 	sort.SliceStable(snapshot.Nodes, func(i, j int) bool {
-		if snapshot.Nodes[i].RouteOrder == snapshot.Nodes[j].RouteOrder {
-			return snapshot.Nodes[i].ID < snapshot.Nodes[j].ID
+		if snapshot.Nodes[i].PositionY == snapshot.Nodes[j].PositionY {
+			if snapshot.Nodes[i].PositionX == snapshot.Nodes[j].PositionX {
+				return snapshot.Nodes[i].ID < snapshot.Nodes[j].ID
+			}
+			return snapshot.Nodes[i].PositionX < snapshot.Nodes[j].PositionX
 		}
-		return snapshot.Nodes[i].RouteOrder < snapshot.Nodes[j].RouteOrder
+		return snapshot.Nodes[i].PositionY < snapshot.Nodes[j].PositionY
 	})
 	for i := range snapshot.Nodes {
 		snapshot.Nodes[i].Tags = sortedStrings(snapshot.Nodes[i].Tags)
 	}
+	sort.SliceStable(snapshot.Edges, func(i, j int) bool {
+		left, right := snapshot.Edges[i], snapshot.Edges[j]
+		if left.MapID != right.MapID {
+			return left.MapID < right.MapID
+		}
+		if left.FromNodeID != right.FromNodeID {
+			return left.FromNodeID < right.FromNodeID
+		}
+		if left.ToNodeID != right.ToNodeID {
+			return left.ToNodeID < right.ToNodeID
+		}
+		return left.ID < right.ID
+	})
+	for i := range snapshot.ExtractionPoints {
+		snapshot.ExtractionPoints[i].Tags = sortedStrings(snapshot.ExtractionPoints[i].Tags)
+	}
+	sort.SliceStable(snapshot.ExtractionPoints, func(i, j int) bool { return snapshot.ExtractionPoints[i].ID < snapshot.ExtractionPoints[j].ID })
 	for i := range snapshot.NodeContainerAssignments {
 		if snapshot.NodeContainerAssignments[i].Pool == "" {
 			snapshot.NodeContainerAssignments[i].Pool = NodeContainerPoolSearch

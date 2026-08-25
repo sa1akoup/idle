@@ -176,7 +176,9 @@ export interface Session {
 
 export type SessionEventType =
   | 'run_started'
+  | 'route_planned'
   | 'node_entered'
+  | 'node_move_started'
   | 'event_triggered'
   | 'evacuation_started'
   | 'container_search_started'
@@ -188,6 +190,9 @@ export type SessionEventType =
   | 'battle_round'
   | 'battle_escape'
   | 'battle_finished'
+  | 'extraction_approach'
+  | 'extraction_point_reached'
+  | 'extraction_completed'
   | 'loot_extracted'
   | 'loot_stored'
   | 'loot_overflow'

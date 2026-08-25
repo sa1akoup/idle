@@ -7,7 +7,9 @@ type TraceEventType string
 
 const (
 	TraceRunStarted              TraceEventType = "run_started"
+	TraceRoutePlanned            TraceEventType = "route_planned"
 	TraceNodeEntered             TraceEventType = "node_entered"
+	TraceNodeMoveStarted         TraceEventType = "node_move_started"
 	TraceEventTriggered          TraceEventType = "event_triggered"
 	TraceEvacuationStarted       TraceEventType = "evacuation_started"
 	TraceContainerSearchStarted  TraceEventType = "container_search_started"
@@ -19,6 +21,9 @@ const (
 	TraceBattleRound             TraceEventType = "battle_round"
 	TraceBattleEscape            TraceEventType = "battle_escape"
 	TraceBattleFinished          TraceEventType = "battle_finished"
+	TraceExtractionApproach      TraceEventType = "extraction_approach"
+	TraceExtractionPointReached  TraceEventType = "extraction_point_reached"
+	TraceExtractionCompleted     TraceEventType = "extraction_completed"
 )
 
 // TraceEvent 是可重放的局内事件，不包含数据库 ID、用户 ID 或现实时间。
