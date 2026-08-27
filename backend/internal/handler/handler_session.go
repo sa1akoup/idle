@@ -211,22 +211,6 @@ func (h *Handler) ListSessions(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, list)
 }
-func (h *Handler) AbortSession(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "行动编号无效"})
-		return
-	}
-	if err := h.sessionService(c).Abort(uint(id)); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "行动不存在"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
 func (h *Handler) RepairArmor(c *gin.Context) {
 	var req struct {
 		ID uint `json:"id"`
@@ -235,7 +219,7 @@ func (h *Handler) RepairArmor(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	newMax, err := service.RepairArmorForUser(h.db, userID(c), req.ID)
+	err := service.QueueArmorRepairForUser(h.db, userID(c), req.ID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(404, gin.H{"error": "not found"})
@@ -248,5 +232,5 @@ func (h *Handler) RepairArmor(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"ok": true, "newMax": newMax})
+	c.JSON(http.StatusAccepted, gin.H{"ok": true})
 }

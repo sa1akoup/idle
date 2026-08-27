@@ -10,7 +10,18 @@ type EngineState struct {
 	ArmorDurability int            `json:"armorDurability"`
 	Ammo            CarriedAmmo    `json:"ammo"`
 	Consumables     []ItemStack    `json:"consumables"`
+	CarriedItems    []CarriedItem  `json:"carriedItems"`
 	Carry           CarryState     `json:"carry"`
+}
+
+// CarriedItem 是行动内携带的聚合补给或耐久实例。
+type CarriedItem struct {
+	InstanceID        uint    `json:"instanceId"`
+	ItemID            string  `json:"itemId"`
+	Quantity          int     `json:"quantity"`
+	CurrentDurability float64 `json:"currentDurability"`
+	MaxDurability     float64 `json:"maxDurability"`
+	RaidExtract       bool    `json:"raidExtract"`
 }
 
 type RunInput struct {
@@ -33,7 +44,12 @@ type RunResult struct {
 	DurationSec             int64        `json:"durationSec"` // 探索时间轴秒；配置中的1分钟按60秒换算
 	Heat                    int          `json:"heat"`
 	AmmoUsed                int          `json:"ammoUsed"`
-	Injury                  string       `json:"injury"`
+	StartHP                 float64      `json:"startHp"`
+	EndHP                   float64      `json:"endHp"`
+	StartEnergy             float64      `json:"startEnergy"`
+	EndEnergy               float64      `json:"endEnergy"`
+	StartHydration          float64      `json:"startHydration"`
+	EndHydration            float64      `json:"endHydration"`
 	Loot                    []LootDrop   `json:"loot"`
 	ExtractedLoot           []LootDrop   `json:"extractedLoot"`
 	ConsumedItems           []ItemStack  `json:"consumedItems"`
@@ -46,6 +62,10 @@ type RunResult struct {
 
 func CloneItemStacks(stacks []ItemStack) []ItemStack {
 	return append([]ItemStack(nil), stacks...)
+}
+
+func CloneCarriedItems(items []CarriedItem) []CarriedItem {
+	return append([]CarriedItem(nil), items...)
 }
 
 func SortItemStacks(stacks []ItemStack) {

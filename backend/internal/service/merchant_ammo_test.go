@@ -24,7 +24,8 @@ func newMerchantAmmoTestDB(t *testing.T) *gorm.DB {
 		&models.MerchantDef{}, &models.UserMerchantState{},
 		&models.WeaponDef{}, &models.AmmoDef{}, &models.ArmorDef{}, &models.ConsumableDef{},
 		&models.ChestRigDef{}, &models.BackpackDef{}, &models.HelmetDef{}, &models.HeadsetDef{},
-		&models.Inventory{}, &models.PlayerLoadout{}, &models.Character{},
+		&models.Inventory{}, &models.PlayerLoadout{}, &models.Character{}, &models.ItemUseDef{}, &models.ItemInstance{}, &models.LootItemDef{}, &models.FacilityJob{},
+		&models.FacilityDef{}, &models.FacilityLevelDef{}, &models.HideoutFacility{},
 	); err != nil {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}

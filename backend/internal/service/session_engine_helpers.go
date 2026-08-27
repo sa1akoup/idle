@@ -9,19 +9,6 @@ import (
 	"idle/internal/engine"
 )
 
-func injuryWaitSeconds(injury string) int64 {
-	switch injury {
-	case "light":
-		return lightInjuryWaitSec
-	case "heavy":
-		return heavyInjuryWaitSec
-	case "lethal":
-		return lethalInjuryWaitSec
-	default:
-		return 0
-	}
-}
-
 func appendEngineReport(report []string, line string) []string {
 	return append(append([]string(nil), report...), line)
 }

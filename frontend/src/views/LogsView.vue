@@ -13,12 +13,10 @@ const props = defineProps<{
   weapons: Weapon[]
 }>()
 
-const emit = defineEmits<{ refresh: [] }>()
 const selectedId = ref<number | null>(null)
 const detail = ref<SessionDetail | null>(null)
 const events = ref<SessionEvent[]>([])
 const loading = ref(false)
-const aborting = ref(false)
 
 watchEffect(() => {
   if (!props.sessions.some((item) => item.id === selectedId.value)) {
@@ -88,20 +86,6 @@ async function loadSession(id: number) {
   }
 }
 
-async function abortSession() {
-  if (!selectedId.value) return
-  aborting.value = true
-  try {
-    await api.post(`/session/${selectedId.value}/abort`)
-    ElMessage.success('已提交中止信号')
-    await loadSession(selectedId.value)
-    emit('refresh')
-  } catch (error) {
-    ElMessage.error(getApiError(error, '中止行动失败'))
-  } finally {
-    aborting.value = false
-  }
-}
 </script>
 
 <template>
@@ -113,7 +97,7 @@ async function abortSession() {
           <span>#{{ session.id.toString().padStart(4, '0') }}</span>
           <strong>{{ styleLabel(session.style) }}</strong>
           <small>{{ formatTime(session.startTime) }} · {{ session.totalRuns }} 局</small>
-          <i :class="session.status">{{ session.status === 'finished' ? '已完成' : session.status === 'aborted' ? '已中止' : session.status === 'failed' ? '执行失败' : session.status === 'waiting_injury' ? '伤势恢复中' : '进行中' }}</i>
+          <i :class="session.status">{{ session.status === 'success' ? '撤离成功' : session.status === 'incapacitated' ? '失能' : session.status === 'failed' ? '执行失败' : '进行中' }}</i>
         </button>
       </aside>
 
@@ -125,7 +109,6 @@ async function abortSession() {
             <div><span>风格 / 失能预案</span><strong>{{ styleLabel(detail.session.style) }} · 预设 {{ detail.session.recoveryPreset }}</strong></div>
             <div><span>武器</span><strong>{{ nameOf(detail.session.weaponId, weapons) }}</strong></div>
             <div><span>随机种子</span><strong>{{ String(detail.session.seed).slice(-8) }}</strong></div>
-            <el-button v-if="detail.session.status === 'running' || detail.session.status === 'waiting_injury'" type="danger" plain :loading="aborting" @click="abortSession">中止行动</el-button>
           </div>
           <section class="history-timeline">
             <div class="panel-heading"><div><span>01</span><h2>事件时间线</h2></div><small>{{ events.length }} 条已记录事件</small></div>
@@ -136,7 +119,7 @@ async function abortSession() {
               <summary>
                 <span class="result-icon" :class="run.result"><el-icon><Select v-if="run.result === 'success'" /><Warning v-else /></el-icon></span>
                 <div><strong>第 {{ run.runIndex }} 局 · {{ run.result }}</strong><small>{{ run.durationMin }} 分钟 · 热度 {{ run.heat }} · 弹药 {{ run.ammoUsed }}</small></div>
-                <b>{{ run.injury === 'none' ? '无伤' : run.injury }}</b>
+                <b>HP {{ Math.round(run.endHp) }}</b>
               </summary>
               <div v-if="run.loot.length" class="run-loot"><span v-for="item in run.loot" :key="item.id">{{ item.name }} x{{ item.quantity }}</span></div>
               <pre>{{ run.report.join('\n') }}</pre>

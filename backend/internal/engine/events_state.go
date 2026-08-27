@@ -38,6 +38,8 @@ type eventRunState struct {
 
 	AvailableItems map[string]int
 	ConsumedItems  map[string]int
+	CarriedItems   []CarriedItem
+	ItemUseDefs    map[string]ItemUseDefinition
 	Flags          map[string]bool
 	EventCounts    map[string]int
 	LastEventVisit map[string]int
@@ -81,11 +83,46 @@ func (state *eventRunState) hasItem(itemID string) bool {
 }
 
 func (state *eventRunState) consumeItem(itemID string) bool {
-	if !state.hasItem(itemID) {
+	if itemID == "" || state.AvailableItems[itemID] <= 0 {
 		return false
 	}
-	state.AvailableItems[itemID]--
-	state.ConsumedItems[itemID]++
+	for index := range state.CarriedItems {
+		if state.CarriedItems[index].ItemID != itemID {
+			continue
+		}
+		if state.consumeCarriedItem(index) {
+			return true
+		}
+	}
+	return false
+}
+
+func (state *eventRunState) consumeCarriedItem(index int) bool {
+	if index < 0 || index >= len(state.CarriedItems) {
+		return false
+	}
+	item := &state.CarriedItems[index]
+	if state.AvailableItems[item.ItemID] <= 0 {
+		return false
+	}
+	if item.InstanceID == 0 {
+		if item.Quantity <= 0 {
+			return false
+		}
+		item.Quantity--
+	} else {
+		if item.CurrentDurability <= 0 {
+			return false
+		}
+		definition := state.ItemUseDefs[item.ItemID]
+		use := definition.UseDurability
+		if use <= 0 || use > item.CurrentDurability {
+			use = item.CurrentDurability
+		}
+		item.CurrentDurability -= use
+	}
+	state.AvailableItems[item.ItemID]--
+	state.ConsumedItems[item.ItemID]++
 	return true
 }
 

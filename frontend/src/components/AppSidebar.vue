@@ -84,7 +84,7 @@ function select(key: NavKey) {
       <span class="status-dot" />
       <div class="sidebar-player__info">
         <strong>{{ player?.name || '载入中' }}</strong>
-        <span>{{ player?.injury && player.injury !== 'none' ? '伤势恢复中' : '可执行行动' }}</span>
+        <span>{{ player && (player.hp <= 0 || player.energy <= 0 || player.hydration <= 0) ? '资源恢复中' : '可执行行动' }}</span>
       </div>
       <b>￥{{ cash.toLocaleString() }}</b>
     </div>

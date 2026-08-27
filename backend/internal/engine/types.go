@@ -2,8 +2,8 @@
 package engine
 
 const (
-	SchemaVersion = "exploration-snapshot-v4"
-	EngineVersion = "exploration-engine-v4"
+	SchemaVersion = "exploration-snapshot-v5"
+	EngineVersion = "exploration-engine-v5"
 )
 
 // Map 是探索路线的不可变快照。
@@ -114,6 +114,22 @@ type ItemDefinition struct {
 	MerchantCategory string `json:"merchantCategory"`
 	RepRequirement   int    `json:"repRequirement"`
 	ArmorMax         int    `json:"armorMax"`
+}
+
+// ItemUseDefinition 是探索快照中的物品效果定义，避免引擎在运行过程中读取数据库。
+type ItemUseDefinition struct {
+	ItemID            string  `json:"itemId"`
+	HPRecovery        float64 `json:"hpRecovery"`
+	EnergyRecovery    float64 `json:"energyRecovery"`
+	HydrationRecovery float64 `json:"hydrationRecovery"`
+	RepairValue       float64 `json:"repairValue"`
+	FuelSeconds       int64   `json:"fuelSeconds"`
+	MaxDurability     float64 `json:"maxDurability"`
+	UseDurability     float64 `json:"useDurability"`
+	UsePriority       int     `json:"usePriority"`
+	InstanceRequired  bool    `json:"instanceRequired"`
+	UsableInSession   bool    `json:"usableInSession"`
+	UsableInHideout   bool    `json:"usableInHideout"`
 }
 
 type Weapon struct {
@@ -313,49 +329,51 @@ type RecoveryPreset struct {
 
 // ScenarioSnapshot 是启动 Session 时固定下来的全部运行配置。
 type ScenarioSnapshot struct {
-	SchemaVersion            string                    `json:"schemaVersion"`
-	Map                      Map                       `json:"map"`
-	Nodes                    []Node                    `json:"nodes"`
-	Edges                    []MapEdge                 `json:"edges"`
-	ExtractionPoints         []ExtractionPoint         `json:"extractionPoints"`
-	NodeContainerAssignments []NodeContainerAssignment `json:"nodeContainerAssignments"`
-	Containers               map[string]Container      `json:"containers"`
-	LootItems                map[string]LootItem       `json:"lootItems"`
-	Items                    map[string]ItemDefinition `json:"items"`
-	Weapons                  map[string]Weapon         `json:"weapons"`
-	Ammos                    map[string]Ammo           `json:"ammos"`
-	AmmoSupplies             map[string]AmmoSupply     `json:"ammoSupplies"`
-	Armors                   map[string]Armor          `json:"armors"`
-	Enemies                  map[string]Enemy          `json:"enemies"`
-	Events                   EventCatalog              `json:"events"`
-	Styles                   []StylePolicy             `json:"styles"`
-	RecoveryPresets          map[int]RecoveryPreset    `json:"recoveryPresets"`
+	SchemaVersion            string                       `json:"schemaVersion"`
+	Map                      Map                          `json:"map"`
+	Nodes                    []Node                       `json:"nodes"`
+	Edges                    []MapEdge                    `json:"edges"`
+	ExtractionPoints         []ExtractionPoint            `json:"extractionPoints"`
+	NodeContainerAssignments []NodeContainerAssignment    `json:"nodeContainerAssignments"`
+	Containers               map[string]Container         `json:"containers"`
+	LootItems                map[string]LootItem          `json:"lootItems"`
+	Items                    map[string]ItemDefinition    `json:"items"`
+	ItemUseDefs              map[string]ItemUseDefinition `json:"itemUseDefs"`
+	Weapons                  map[string]Weapon            `json:"weapons"`
+	Ammos                    map[string]Ammo              `json:"ammos"`
+	AmmoSupplies             map[string]AmmoSupply        `json:"ammoSupplies"`
+	Armors                   map[string]Armor             `json:"armors"`
+	Enemies                  map[string]Enemy             `json:"enemies"`
+	Events                   EventCatalog                 `json:"events"`
+	Styles                   []StylePolicy                `json:"styles"`
+	RecoveryPresets          map[int]RecoveryPreset       `json:"recoveryPresets"`
 }
 
 type CharacterState struct {
-	Name        string `json:"name"`
-	Strength    int    `json:"strength"`
-	Agility     int    `json:"agility"`
-	Intellect   int    `json:"intellect"`
-	Charisma    int    `json:"charisma"`
-	Stealth     int    `json:"stealth"`
-	Perception  int    `json:"perception"`
-	Negotiation int    `json:"negotiation"`
-	Luck        int    `json:"luck"`
-	Survival    int    `json:"survival"`
-	Resist      int    `json:"resist"`
-	Engineering int    `json:"engineering"`
-	Medical     int    `json:"medical"`
-	MeleeProf   int    `json:"meleeProf"`
-	PistolProf  int    `json:"pistolProf"`
-	SMGProf     int    `json:"smgProf"`
-	ShotgunProf int    `json:"shotgunProf"`
-	RifleProf   int    `json:"rifleProf"`
-	SniperProf  int    `json:"sniperProf"`
-	Trait       string `json:"trait"`
-	Fatigue     int    `json:"fatigue"`
-	Stress      int    `json:"stress"`
-	Injury      string `json:"injury"`
+	Name        string  `json:"name"`
+	Strength    int     `json:"strength"`
+	Agility     int     `json:"agility"`
+	Intellect   int     `json:"intellect"`
+	Charisma    int     `json:"charisma"`
+	Stealth     int     `json:"stealth"`
+	Perception  int     `json:"perception"`
+	Negotiation int     `json:"negotiation"`
+	Luck        int     `json:"luck"`
+	Survival    int     `json:"survival"`
+	Resist      int     `json:"resist"`
+	Engineering int     `json:"engineering"`
+	Medical     int     `json:"medical"`
+	MeleeProf   int     `json:"meleeProf"`
+	PistolProf  int     `json:"pistolProf"`
+	SMGProf     int     `json:"smgProf"`
+	ShotgunProf int     `json:"shotgunProf"`
+	RifleProf   int     `json:"rifleProf"`
+	SniperProf  int     `json:"sniperProf"`
+	Trait       string  `json:"trait"`
+	HP          float64 `json:"hp"`
+	Energy      float64 `json:"energy"`
+	Hydration   float64 `json:"hydration"`
+	Stress      int     `json:"stress"`
 }
 
 type ItemStack struct {
@@ -364,12 +382,13 @@ type ItemStack struct {
 }
 
 type LoadoutState struct {
-	WeaponID   string `json:"weaponId"`
-	ArmorID    string `json:"armorId"`
-	ChestRigID string `json:"chestRigId"`
-	BackpackID string `json:"backpackId"`
-	HelmetID   string `json:"helmetId"`
-	HeadsetID  string `json:"headsetId"`
+	WeaponID        string `json:"weaponId"`
+	ArmorID         string `json:"armorId"`
+	ArmorInstanceID uint   `json:"armorInstanceId"`
+	ChestRigID      string `json:"chestRigId"`
+	BackpackID      string `json:"backpackId"`
+	HelmetID        string `json:"helmetId"`
+	HeadsetID       string `json:"headsetId"`
 }
 
 type CarryState struct {

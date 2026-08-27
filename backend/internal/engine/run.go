@@ -179,49 +179,19 @@ func lootQuantity(loot []LootDrop) int {
 }
 
 func selectExtractedLoot(result string, loot []LootDrop) []LootDrop {
-	if result == "success" {
-		return cloneLoot(loot)
-	}
-	if result != "emergency" && result != "partial" {
+	if result != "success" {
 		return nil
 	}
-	return takeLootUnits(loot, (lootQuantity(loot)+1)/2)
-}
-
-func takeLootUnits(loot []LootDrop, quantity int) []LootDrop {
-	if quantity <= 0 {
-		return nil
-	}
-	result := make([]LootDrop, 0, len(loot))
-	for _, drop := range loot {
-		if quantity <= 0 {
-			break
-		}
-		kept := drop.Quantity
-		if kept > quantity {
-			kept = quantity
-		}
-		copyDrop := drop
-		copyDrop.Quantity = kept
-		result = append(result, copyDrop)
-		quantity -= kept
-	}
-	return result
+	return cloneLoot(loot)
 }
 
 func cloneLoot(loot []LootDrop) []LootDrop {
 	return append([]LootDrop(nil), loot...)
 }
 
+// extractionLabel 单局终态只有成功/失能，不再有紧急或部分撤离分支。
 func extractionLabel(result string) string {
-	switch result {
-	case "emergency":
-		return "紧急撤离"
-	case "partial":
-		return "部分撤离"
-	default:
-		return "撤离"
-	}
+	return "撤离"
 }
 
 func minInt(value, ceiling int) int {

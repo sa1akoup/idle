@@ -16,7 +16,7 @@ func TestSimulateRunIsReplayable(t *testing.T) {
 		RunIndex:    1,
 		Style:       ActionStyleBalanced,
 		State: EngineState{
-			Character:       CharacterState{Name: "回放角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, Stress: 10},
+			Character:       CharacterState{Name: "回放角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, HP: 100, Energy: 100, Hydration: 100, Stress: 10},
 			Loadout:         LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
 			ArmorDurability: 100,
 			Carry:           CarryState{TotalSlots: 20, UsedSlots: 2, TotalWeight: 100, UsedWeight: 10},
@@ -42,7 +42,7 @@ func TestSimulateRunGolden(t *testing.T) {
 		RunIndex:    1,
 		Style:       ActionStyleBalanced,
 		State: EngineState{
-			Character:       CharacterState{Name: "回放角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, Stress: 10},
+			Character:       CharacterState{Name: "回放角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, HP: 100, Energy: 100, Hydration: 100, Stress: 10},
 			Loadout:         LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
 			ArmorDurability: 100,
 			Carry:           CarryState{TotalSlots: 20, UsedSlots: 2, TotalWeight: 100, UsedWeight: 10},
@@ -56,14 +56,13 @@ func TestSimulateRunGolden(t *testing.T) {
 		DurationSec     int64
 		Heat            int
 		AmmoUsed        int
-		Injury          string
 		Stress          int
 		PistolProf      int
 		ArmorDurability int
 		CarryUsedSlots  int
 		CarryUsedWeight float64
 	}{
-		Result: "success", DurationSec: 240, Heat: 0, AmmoUsed: 0, Injury: "none",
+		Result: "success", DurationSec: 240, Heat: 0, AmmoUsed: 0,
 		Stress: 0, PistolProf: 1, ArmorDurability: 100, CarryUsedSlots: 2, CarryUsedWeight: 10,
 	}
 	got := struct {
@@ -71,7 +70,6 @@ func TestSimulateRunGolden(t *testing.T) {
 		DurationSec     int64
 		Heat            int
 		AmmoUsed        int
-		Injury          string
 		Stress          int
 		PistolProf      int
 		ArmorDurability int
@@ -79,7 +77,7 @@ func TestSimulateRunGolden(t *testing.T) {
 		CarryUsedWeight float64
 	}{
 		Result: result.Result, DurationSec: result.DurationSec, Heat: result.Heat, AmmoUsed: result.AmmoUsed,
-		Injury: result.Injury, Stress: result.NextState.Character.Stress, PistolProf: result.NextState.Character.PistolProf,
+		Stress: result.NextState.Character.Stress, PistolProf: result.NextState.Character.PistolProf,
 		ArmorDurability: result.NextState.ArmorDurability, CarryUsedSlots: result.NextState.Carry.UsedSlots,
 		CarryUsedWeight: result.NextState.Carry.UsedWeight,
 	}
@@ -94,7 +92,7 @@ func TestNodeTravelReducesStressIncludingExtraction(t *testing.T) {
 		RunIndex:    1,
 		Style:       ActionStyleBalanced,
 		State: EngineState{
-			Character:       CharacterState{Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, Stress: 10},
+			Character:       CharacterState{Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, HP: 100, Energy: 100, Hydration: 100, Stress: 10},
 			Loadout:         LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
 			ArmorDurability: 100,
 			Carry:           CarryState{TotalSlots: 20, UsedSlots: 2, TotalWeight: 100, UsedWeight: 10},
@@ -232,7 +230,7 @@ func shortcutStressInput(stress int) RunInput {
 		RunIndex:    1,
 		Style:       ActionStyleBalanced,
 		State: EngineState{
-			Character:       CharacterState{Name: "捷径测试角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, Stress: stress},
+			Character:       CharacterState{Name: "捷径测试角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, HP: 100, Energy: 100, Hydration: 100, Stress: stress},
 			Loadout:         LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
 			ArmorDurability: 100,
 			Carry:           CarryState{TotalSlots: 20, UsedSlots: 2, TotalWeight: 100, UsedWeight: 10},

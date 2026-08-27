@@ -18,15 +18,15 @@ func characterToEngineState(character models.Character) engine.CharacterState {
 		Charisma: character.Charisma, Stealth: character.Stealth, Perception: character.Perception, Negotiation: character.Negotiation,
 		Luck: character.Luck, Survival: character.Survival, Resist: character.Resist, Engineering: character.Engineering, Medical: character.Medical,
 		MeleeProf: character.MeleeProf, PistolProf: character.PistolProf, SMGProf: character.SMGProf, ShotgunProf: character.ShotgunProf,
-		RifleProf: character.RifleProf, SniperProf: character.SniperProf, Trait: character.Trait, Fatigue: character.Fatigue,
-		Stress: character.Stress, Injury: character.Injury,
+		RifleProf: character.RifleProf, SniperProf: character.SniperProf, Trait: character.Trait,
+		HP: character.HP, Energy: character.Energy, Hydration: character.Hydration, Stress: character.Stress,
 	}
 }
 
 func loadoutToEngineState(loadout *models.PlayerLoadout) engine.LoadoutState {
 	return engine.LoadoutState{
 		WeaponID: loadout.WeaponID, ArmorID: loadout.ArmorID, ChestRigID: loadout.ChestRigID, BackpackID: loadout.BackpackID,
-		HelmetID: loadout.HelmetID, HeadsetID: loadout.HeadsetID,
+		ArmorInstanceID: loadout.ArmorInstanceID, HelmetID: loadout.HelmetID, HeadsetID: loadout.HeadsetID,
 	}
 }
 
@@ -50,9 +50,14 @@ func buildEngineState(db *gorm.DB, userID uint, character models.Character, load
 		return engine.EngineState{}, err
 	}
 	loadoutState := loadoutToEngineState(loadout)
+	loadoutState.ArmorInstanceID = armorInstance.ID
+	carriedItems, err := carriedItemsForLoadout(db, userID, loadout)
+	if err != nil {
+		return engine.EngineState{}, err
+	}
 	return engine.EngineState{
 		Character: characterToEngineState(character), Loadout: loadoutState,
-		ArmorDurability: armorInstance.CurDurability, Consumables: itemIDsToStacks(loadout.Consumables),
+		ArmorDurability: armorInstance.CurDurability, Consumables: itemStacksFromCarriedItems(carriedItems), CarriedItems: carriedItems,
 		Ammo:  ammo,
 		Carry: engine.CarryState{TotalSlots: carry.TotalSlots, UsedSlots: carry.UsedSlots, TotalWeight: carry.TotalWeight, UsedWeight: carry.UsedWeight},
 	}, nil

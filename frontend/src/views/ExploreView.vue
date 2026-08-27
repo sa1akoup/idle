@@ -7,8 +7,9 @@ const props = defineProps<ExploreProps>()
 const emit = defineEmits<ExploreEmit>()
 const {
   styles, selectedMap, selectedStyle, selectedPreset, selectedAmmoId, selectedAmmoRounds, starting,
-  currentWeapon, compatibleOwnedAmmos, ammoInventoryQuantity, selectedAmmoStock,
-  presetSummary, selectedPresetSummary, canSubmit, startSession,
+  recoveryMethods, selectedHPRecoveryMethod, selectedEnergyRecoveryMethod, selectedHydrationRecoveryMethod,
+  currentWeapon, deploymentArmor, recoveryPending, compatibleOwnedAmmos, ammoInventoryQuantity, selectedAmmoStock,
+  presetSummary, selectedPresetSummary, recoveryMethodLabel, canSubmit, startSession,
 } = useExploreDeployment(props, emit)
 </script>
 
@@ -23,7 +24,7 @@ const {
       <div class="operator-badge">
         <span class="operator-badge__icon"><el-icon><Compass /></el-icon></span>
         <div><span>当前行动员</span><strong>{{ player.name }}</strong></div>
-        <i :class="player.injury && player.injury !== 'none' ? 'danger' : ''" />
+        <i :class="player.hp <= 0 || player.energy <= 0 || player.hydration <= 0 ? 'danger' : ''" />
       </div>
     </header>
 
@@ -51,6 +52,33 @@ const {
 
         <p class="style-note">{{ styles.find((item) => item.value === selectedStyle)?.desc }}</p>
 
+        <div class="recovery-block">
+          <div class="recovery-block__heading">
+            <span>行动后自动恢复</span>
+            <small>撤离成功或失能后按此配置自动执行</small>
+          </div>
+          <div class="recovery-grid">
+            <label class="field-group">
+              <span>生命 · 恢复至 100%</span>
+              <el-select v-model="selectedHPRecoveryMethod" size="large">
+                <el-option v-for="item in recoveryMethods" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </label>
+            <label class="field-group">
+              <span>能量 · 恢复至 80%</span>
+              <el-select v-model="selectedEnergyRecoveryMethod" size="large">
+                <el-option v-for="item in recoveryMethods" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </label>
+            <label class="field-group">
+              <span>饮水 · 恢复至 80%</span>
+              <el-select v-model="selectedHydrationRecoveryMethod" size="large">
+                <el-option v-for="item in recoveryMethods" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </label>
+          </div>
+        </div>
+
         <div class="preset-block">
           <span class="preset-block__label">失能预案 · 丢装后按第 N 套预设继续探索</span>
           <div class="preset-picker">
@@ -72,7 +100,7 @@ const {
         <div class="loadout-row">
           <div class="deployment-loadout">
             <span>当前携行</span>
-            <strong>{{ weapons.find((item) => item.id === loadout.weaponId)?.name }} · {{ armors.find((item) => item.id === loadout.armorId)?.name }}</strong>
+            <strong>{{ currentWeapon?.name || '自动补购武器' }} · {{ deploymentArmor?.name || '自动补购护甲' }}</strong>
             <small>补给：{{ loadout.consumables.map((id) => consumables.find((item) => item.id === id)?.name ?? id).join('、') || '无' }}，装备配置请在角色页面调整</small>
           </div>
         </div>
@@ -114,17 +142,18 @@ const {
           <div><span>目标区域</span><strong>{{ maps.find((item) => item.id === selectedMap)?.name || '未选择' }}</strong></div>
           <div><span>行动风格</span><strong>{{ styles.find((item) => item.value === selectedStyle)?.label }}</strong></div>
           <div><span>失能预案</span><strong>预设 {{ selectedPreset }}</strong></div>
+          <div><span>生命恢复</span><strong>{{ recoveryMethodLabel(selectedHPRecoveryMethod) }}</strong></div>
           <div v-if="currentWeapon?.ammoPerRound"><span>携带弹药</span><strong>{{ ammos.find((item) => item.id === selectedAmmoId)?.name || '未配置' }} ×{{ selectedAmmoRounds }}</strong></div>
         </div>
 
         <div class="launch-block">
-          <p><span class="status-dot" />{{ player.injury && player.injury !== 'none' ? '行动员暂不可出发' : '行动员状态正常' }}</p>
+          <p><span class="status-dot" />{{ recoveryPending ? '恢复目标尚未达成' : player.hp <= 0 || player.energy <= 0 || player.hydration <= 0 ? '行动员资源不足' : '行动员状态正常' }}</p>
           <el-button
             type="primary"
             size="large"
             :icon="VideoPlay"
             :loading="starting"
-            :disabled="!canSubmit || (player.injury !== '' && player.injury !== 'none')"
+            :disabled="!canSubmit || recoveryPending || player.hp <= 0 || player.energy <= 0 || player.hydration <= 0"
             @click="startSession"
           >开始行动</el-button>
         </div>

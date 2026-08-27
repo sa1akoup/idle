@@ -7,7 +7,7 @@ import (
 	"math/rand"
 )
 
-func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weapon Weapon, armor Armor, armorDurability int, ammo Ammo, ammoRounds int, consumables []ItemStack, nodes []Node, rng *rand.Rand, style string, carrySlots int, carryWeight float64, runIndex int) (*simulatedRun, error) {
+func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weapon Weapon, armor Armor, armorDurability int, ammo Ammo, ammoRounds int, consumables []ItemStack, carriedItems []CarriedItem, itemUseDefs map[string]ItemUseDefinition, nodes []Node, rng *rand.Rand, style string, carrySlots int, carryWeight float64, runIndex int) (*simulatedRun, error) {
 	byID := make(map[string]Node, len(nodes))
 	for _, node := range nodes {
 		byID[node.ID] = node
@@ -43,7 +43,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 	}
 	state := &eventRunState{
 		Character: &character, Player: &playerActor, Mode: runModeExploring, Style: style, Styles: snapshot.Styles,
-		CarrySlots: carrySlots, CarryWeight: carryWeight, AvailableItems: availableItems,
+		CarrySlots: carrySlots, CarryWeight: carryWeight, AvailableItems: availableItems, CarriedItems: CloneCarriedItems(carriedItems), ItemUseDefs: itemUseDefs,
 		ConsumedItems: make(map[string]int), Flags: make(map[string]bool), EventCounts: make(map[string]int),
 		LastEventVisit: make(map[string]int), Lines: &lines, Trace: &trace,
 	}
@@ -235,6 +235,8 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		if err := events.Trigger(state, eventPhasePostEncounter, rng); err != nil {
 			return nil, err
 		}
+		maybeAutoRecoverNeeds(state)
+		maybeAutoHeal(state)
 		evaluateAutomaticEvacuation(state, weapon)
 		if err := startEvacuationEvents(events, state, rng); err != nil {
 			return nil, err
@@ -324,6 +326,8 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		if err := events.Trigger(state, eventPhaseAtExtraction, rng); err != nil {
 			return nil, err
 		}
+		maybeAutoRecoverNeeds(state)
+		maybeAutoHeal(state)
 		if state.Player.HP <= 0 {
 			lines = append(lines, ">> 玩家在撤离点失去行动能力")
 			result = "incapacitated"
@@ -331,9 +335,6 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			break
 		}
 		result = "success"
-		if state.EvacuationEmergency {
-			result = "emergency"
-		}
 		state.addTrace(TraceExtractionCompleted, state.DurationSec, node.ID, point.ID, map[string]interface{}{
 			"extractionId": point.ID, "name": point.Name, "result": result,
 		})
@@ -344,15 +345,13 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		return nil, fmt.Errorf("规划路线未抵达撤离锚点")
 	}
 
-	injury := "none"
-	if result == "incapacitated" || state.Player.HP <= 0 {
-		injury = "lethal"
-	} else if state.Player.HP < state.Player.MaxHP*0.3 {
-		injury = "heavy"
-	} else if state.Player.HP < state.Player.MaxHP || (state.EvacuationEmergency && state.EvacuationReason == "stress") {
-		injury = "light"
+	if result != "incapacitated" {
+		result = "success"
 	}
-	lines = append(lines, fmt.Sprintf("=== 本局结束 结果:%s 耗时:%d分 热度:%d 弹药:%d 伤势:%s ===", result, state.DurationSec/60, state.Heat, state.AmmoUsed, injury))
+	character.HP = state.Player.HP
+	applyNeedDrain(&character, state.DurationSec)
+	maybeAutoRecoverNeeds(state)
+	lines = append(lines, fmt.Sprintf("=== 本局结束 结果:%s 耗时:%d分 热度:%d 弹药:%d HP:%.1f 能量:%.1f 饮水:%.1f ===", result, state.DurationSec/60, state.Heat, state.AmmoUsed, character.HP, character.Energy, character.Hydration))
 	if len(loot) == 0 {
 		lines = append(lines, ">> 本局没有搜集到可带回的物资")
 	} else {
@@ -365,9 +364,10 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 	}
 	return &simulatedRun{
 		result: result, durationSec: state.DurationSec, heat: state.Heat, ammoUsed: state.AmmoUsed,
-		ammoRounds:   state.Player.AmmoRounds,
+		ammoRounds: state.Player.AmmoRounds,
+		playerHP:   state.Player.HP, energy: character.Energy, hydration: character.Hydration,
 		playerStress: state.Player.Stress,
-		injury:       injury, finished: finishedSession, armorDurability: int(math.Round(state.Player.ArmorDurability)),
+		finished:     finishedSession, armorDurability: int(math.Round(state.Player.ArmorDurability)), carriedItems: CloneCarriedItems(state.CarriedItems),
 		loot: cloneLoot(loot), extractedLoot: extractedLoot, consumedItems: state.ConsumedItems, report: lines, trace: trace,
 	}, nil
 }

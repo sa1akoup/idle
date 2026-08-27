@@ -27,7 +27,6 @@ func pendingRunTestData(t *testing.T) (models.Session, engine.EngineState) {
 	result := engine.RunResult{
 		Result:      "success",
 		DurationSec: 60,
-		Injury:      "none",
 		Trace: []engine.TraceEvent{
 			{Sequence: 1, Type: engine.TraceRunStarted, OffsetSec: 0},
 			{Sequence: 2, Type: engine.TraceNodeEntered, OffsetSec: 60, NodeID: "node_test"},
@@ -166,11 +165,11 @@ func TestSessionEventsCursorReturnsEveryEventOnce(t *testing.T) {
 	}
 }
 
-func TestAbortedSessionHidesFutureEvents(t *testing.T) {
-	db := newSessionEventsTestDB(t, "session-events-abort")
+func TestTerminalSessionHidesFutureEvents(t *testing.T) {
+	db := newSessionEventsTestDB(t, "session-events-terminal")
 	now := time.Now()
 	endTime := now.Add(-time.Second)
-	if err := db.Create(&models.Session{UserID: models.DefaultUserID, ID: 1, Status: "aborted", StartTime: now.Add(-time.Minute), EndTime: &endTime}).Error; err != nil {
+	if err := db.Create(&models.Session{UserID: models.DefaultUserID, ID: 1, Status: "success", StartTime: now.Add(-time.Minute), EndTime: &endTime}).Error; err != nil {
 		t.Fatal(err)
 	}
 	for sequence, availableAt := range []time.Time{endTime.Add(-time.Second), endTime.Add(time.Second)} {
@@ -186,6 +185,6 @@ func TestAbortedSessionHidesFutureEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(events) != 1 {
-		t.Fatalf("中止后的可见事件数 = %d，期望 1", len(events))
+		t.Fatalf("终局后的可见事件数 = %d，期望 1", len(events))
 	}
 }

@@ -31,7 +31,7 @@ export function useSessionStream(sessionId: Ref<number>, onRefresh: () => void) 
   function appendEvent(event: SessionEvent) {
     const previousMax = maxEventID
     mergeEvents([event])
-    if (event.eventType === 'run_settled' || event.eventType === 'session_finished' || event.eventType === 'session_aborted' || event.eventType === 'session_failed') {
+    if (event.eventType === 'run_settled' || event.eventType === 'session_finished' || event.eventType === 'session_failed') {
       onRefresh()
       void loadSession()
     }
@@ -72,7 +72,7 @@ export function useSessionStream(sessionId: Ref<number>, onRefresh: () => void) 
   }
 
   function scheduleReconnect() {
-    if (stopped || reconnectTimer !== undefined || ['finished', 'aborted', 'failed'].includes(session.value?.status ?? '')) return
+    if (stopped || reconnectTimer !== undefined || ['success', 'incapacitated', 'failed'].includes(session.value?.status ?? '')) return
     closeStream()
     const delay = Math.min(1000 * (2 ** reconnectAttempt), 30000)
     reconnectAttempt += 1
@@ -89,7 +89,7 @@ export function useSessionStream(sessionId: Ref<number>, onRefresh: () => void) 
 
   function connectStream() {
     closeStream()
-    if (stopped || !sessionId.value || ['finished', 'aborted', 'failed'].includes(session.value?.status ?? '')) return
+    if (stopped || !sessionId.value || ['success', 'incapacitated', 'failed'].includes(session.value?.status ?? '')) return
     const generation = streamGeneration
     eventSource = new EventSource(`/api/session/${sessionId.value}/events/stream?afterId=${maxEventID}`)
     eventSource.onopen = () => {
@@ -113,7 +113,7 @@ export function useSessionStream(sessionId: Ref<number>, onRefresh: () => void) 
     })
     eventSource.onerror = () => {
       if (generation !== streamGeneration || stopped) return
-      if (['finished', 'aborted', 'failed'].includes(session.value?.status ?? '')) closeStream()
+      if (['success', 'incapacitated', 'failed'].includes(session.value?.status ?? '')) closeStream()
       else scheduleReconnect()
     }
   }

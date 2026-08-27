@@ -24,6 +24,9 @@ var (
 	activeSessionWorkers sync.Map
 	sessionWorkerQueue   = make(chan sessionWorkerTask, sessionWorkerQueueSize)
 	sessionWorkerPool    sync.Once
+	// sessionSchedulerStop 是调度循环的停止信号；StartSessionScheduler 创建，StopSessionScheduler 关闭。
+	sessionSchedulerStop    chan struct{}
+	sessionSchedulerStopOwn sync.Once
 )
 
 var ErrSessionLeaseLost = errors.New("行动调度 lease 已失效")
@@ -79,14 +82,28 @@ func runSessionWorker(task sessionWorkerTask) {
 // StartSessionScheduler 启动后台调度器，并恢复数据库中的未完成行动。
 func StartSessionScheduler(db *gorm.DB) {
 	startSessionWorkerPool()
+	sessionSchedulerStop = make(chan struct{})
 	dispatchPendingSessions(db)
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			dispatchPendingSessions(db)
+		for {
+			select {
+			case <-sessionSchedulerStop:
+				return
+			case <-ticker.C:
+				dispatchPendingSessions(db)
+			}
 		}
 	}()
+}
+
+// StopSessionScheduler 停止调度循环；已入队的 worker 任务会继续执行完毕。
+func StopSessionScheduler() {
+	if sessionSchedulerStop == nil {
+		return
+	}
+	sessionSchedulerStopOwn.Do(func() { close(sessionSchedulerStop) })
 }
 
 func dispatchPendingSessions(db *gorm.DB) {
@@ -97,7 +114,7 @@ func dispatchPendingSessions(db *gorm.DB) {
 	now := time.Now()
 	if err := db.Table("sessions").
 		Select("id, user_id").
-		Where("status IN ? AND next_run_at <= ? AND (lease_until IS NULL OR lease_until <= ?)", []string{"running", "waiting_injury"}, now, now).
+		Where("status = ? AND next_run_at <= ? AND (lease_until IS NULL OR lease_until <= ?)", "running", now, now).
 		Order("next_run_at ASC, id ASC").
 		Limit(sessionDispatchBatchSize).
 		Find(&sessions).Error; err != nil {
@@ -112,7 +129,7 @@ func dispatchPendingSessions(db *gorm.DB) {
 func claimSessionLease(db *gorm.DB, userID, sessionID uint, owner string, now time.Time) bool {
 	leaseUntil := now.Add(30 * time.Second)
 	result := db.Model(&models.Session{}).
-		Where("user_id = ? AND id = ? AND status IN ? AND next_run_at <= ? AND (lease_until IS NULL OR lease_until <= ?)", userID, sessionID, []string{"running", "waiting_injury"}, now, now).
+		Where("user_id = ? AND id = ? AND status = ? AND next_run_at <= ? AND (lease_until IS NULL OR lease_until <= ?)", userID, sessionID, "running", now, now).
 		Updates(map[string]interface{}{"lease_owner": owner, "lease_until": leaseUntil, "heartbeat_at": now})
 	return result.Error == nil && result.RowsAffected == 1
 }

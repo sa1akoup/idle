@@ -1,5 +1,5 @@
 // 应用工作区状态：集中加载全局数据、处理用户操作并维护功能视图。
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api, { getApiError, isUnauthorized, setUnauthorizedHandler } from '../api'
 import type {
@@ -11,15 +11,18 @@ import type {
   Consumable,
   Enemy,
   GameMap,
+  HideoutSnapshot,
   Headset,
   Helmet,
   InventoryItem,
+  ItemInstance,
   MapGraph,
   MapNode,
   Merchant,
   NavKey,
   Player,
   PlayerLoadout,
+  RecoveryView,
   SaveLoadoutRequest,
   Session,
   StorageCapacity,
@@ -41,6 +44,7 @@ export function useAppWorkspace() {
   const purchasingId = ref<string | null>(null)
   const sellingId = ref<string | null>(null)
   const repairingId = ref<number | null>(null)
+  const upgradingFacilityId = ref<string | null>(null)
   
   const player = ref<Player | null>(null)
   const loadout = ref<PlayerLoadout | null>(null)
@@ -52,6 +56,7 @@ export function useAppWorkspace() {
   const ammos = ref<Ammo[]>([])
   const armors = ref<Armor[]>([])
   const armorInstances = ref<ArmorInstance[]>([])
+  const itemInstances = ref<ItemInstance[]>([])
   const consumables = ref<Consumable[]>([])
   const chestRigs = ref<ChestRig[]>([])
   const backpacks = ref<Backpack[]>([])
@@ -60,8 +65,13 @@ export function useAppWorkspace() {
   const merchants = ref<Merchant[]>([])
   const inventory = ref<InventoryItem[]>([])
   const storageCapacity = ref<StorageCapacity | null>(null)
+  const hideout = ref<HideoutSnapshot | null>(null)
+  const recovery = ref<RecoveryView | null>(null)
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<number | null>(null)
+  let recoveryPollTimer: ReturnType<typeof setTimeout> | undefined
+  let recoveryRefreshInFlight = false
+  let workspaceStopped = false
   
   const viewTitles: Record<NavKey, string> = {
     explore: '探索部署', live: '实时行动', map: '区域地图', character: '玩家角色', inventory: '本地仓库',
@@ -70,13 +80,50 @@ export function useAppWorkspace() {
   
   const cash = computed(() => inventory.value.find((item) => item.itemId === 'cash')?.quantity ?? 0)
   const latestSession = computed(() => sessions.value[0] ?? null)
-  const activeSession = computed(() => sessions.value.find((item) => item.status === 'running' || item.status === 'waiting_injury') ?? null)
+  const activeSession = computed(() => sessions.value.find((item) => item.status === 'running') ?? null)
   
   setUnauthorizedHandler(() => {
+    clearRecoveryPoll()
     user.value = null
     player.value = null
     loadout.value = null
+    hideout.value = null
+    recovery.value = null
   })
+
+  function clearRecoveryPoll() {
+    if (recoveryPollTimer !== undefined) {
+      clearTimeout(recoveryPollTimer)
+      recoveryPollTimer = undefined
+    }
+  }
+
+  function scheduleRecoveryPoll() {
+    clearRecoveryPoll()
+    if (workspaceStopped || recovery.value?.plan.status !== 'running') return
+    recoveryPollTimer = setTimeout(() => {
+      recoveryPollTimer = undefined
+      void refreshRecoveryState(true)
+    }, 5000)
+  }
+
+  async function refreshRecoveryState(silent = true) {
+    if (workspaceStopped || recoveryRefreshInFlight) return
+    recoveryRefreshInFlight = true
+    try {
+      const [recoveryRes, playerRes] = await Promise.all([
+        api.get<RecoveryView | null>('/recovery/current'), api.get<Player>('/player'),
+      ])
+      if (workspaceStopped) return
+      recovery.value = recoveryRes.data
+      player.value = playerRes.data
+    } catch (error) {
+      if (!silent) ElMessage.error(getApiError(error, '恢复状态刷新失败'))
+    } finally {
+      recoveryRefreshInFlight = false
+      scheduleRecoveryPoll()
+    }
+  }
   
   async function loadAll() {
     loading.value = true
@@ -84,15 +131,17 @@ export function useAppWorkspace() {
     try {
       const [
         playerRes, mapsRes, enemiesRes, weaponsRes, ammosRes, armorsRes,
-        armorInstancesRes, consumablesRes, chestRigsRes, backpacksRes, helmetsRes, headsetsRes,
-        inventoryRes, storageCapacityRes, sessionsRes, loadoutRes, merchantsRes,
+        armorInstancesRes, itemInstancesRes, consumablesRes, chestRigsRes, backpacksRes, helmetsRes, headsetsRes,
+        inventoryRes, storageCapacityRes, hideoutRes, recoveryRes, sessionsRes, loadoutRes, merchantsRes,
       ] = await Promise.all([
         api.get<Player>('/player'), api.get<GameMap[]>('/maps'),
         api.get<Enemy[]>('/enemies'), api.get<Weapon[]>('/weapons'), api.get<Ammo[]>('/ammos'), api.get<Armor[]>('/armors'),
-        api.get<ArmorInstance[]>('/armor-instances'), api.get<Consumable[]>('/consumables'),
+        api.get<ArmorInstance[]>('/armor-instances'), api.get<ItemInstance[]>('/item-instances'), api.get<Consumable[]>('/consumables'),
         api.get<ChestRig[]>('/chestrigs'), api.get<Backpack[]>('/backpacks'), api.get<Helmet[]>('/helmets'), api.get<Headset[]>('/headsets'),
         api.get<InventoryItem[]>('/inventory'),
         api.get<StorageCapacity>('/inventory/capacity'),
+        api.get<HideoutSnapshot>('/hideout'),
+        api.get<RecoveryView | null>('/recovery/current'),
         api.get<Session[]>('/sessions'), api.get<PlayerLoadout>('/loadout'),
         api.get<Merchant[]>('/merchants'),
       ])
@@ -106,6 +155,7 @@ export function useAppWorkspace() {
       ammos.value = ammosRes.data
       armors.value = armorsRes.data
       armorInstances.value = armorInstancesRes.data
+      itemInstances.value = itemInstancesRes.data
       consumables.value = consumablesRes.data
       chestRigs.value = chestRigsRes.data
       backpacks.value = backpacksRes.data
@@ -113,8 +163,11 @@ export function useAppWorkspace() {
       headsets.value = headsetsRes.data
       inventory.value = inventoryRes.data
       storageCapacity.value = storageCapacityRes.data
+      hideout.value = hideoutRes.data
+      recovery.value = recoveryRes.data
+      scheduleRecoveryPoll()
       sessions.value = sessionsRes.data
-      activeSessionId.value = sessions.value.find((item) => item.status === 'running' || item.status === 'waiting_injury')?.id ?? null
+      activeSessionId.value = sessions.value.find((item) => item.status === 'running')?.id ?? null
       loadout.value = loadoutRes.data
       merchants.value = merchantsRes.data
     } catch (error) {
@@ -126,19 +179,25 @@ export function useAppWorkspace() {
   
   async function refreshSessions() {
     try {
-      const [sessionRes, playerRes, inventoryRes, storageCapacityRes, loadoutRes, armorInstancesRes] = await Promise.all([
+      const [sessionRes, playerRes, inventoryRes, storageCapacityRes, hideoutRes, recoveryRes, loadoutRes, armorInstancesRes, itemInstancesRes] = await Promise.all([
         api.get<Session[]>('/sessions'), api.get<Player>('/player'), api.get<InventoryItem[]>('/inventory'),
         api.get<StorageCapacity>('/inventory/capacity'),
-        api.get<PlayerLoadout>('/loadout'), api.get<ArmorInstance[]>('/armor-instances'),
+        api.get<HideoutSnapshot>('/hideout'),
+        api.get<RecoveryView | null>('/recovery/current'),
+        api.get<PlayerLoadout>('/loadout'), api.get<ArmorInstance[]>('/armor-instances'), api.get<ItemInstance[]>('/item-instances'),
       ])
       sessions.value = sessionRes.data
-      const nextActiveSession = sessions.value.find((item) => item.status === 'running' || item.status === 'waiting_injury')
+      const nextActiveSession = sessions.value.find((item) => item.status === 'running')
       if (nextActiveSession) activeSessionId.value = nextActiveSession.id
       player.value = playerRes.data
       inventory.value = inventoryRes.data
       storageCapacity.value = storageCapacityRes.data
+      hideout.value = hideoutRes.data
+      recovery.value = recoveryRes.data
+      scheduleRecoveryPoll()
       loadout.value = loadoutRes.data
       armorInstances.value = armorInstancesRes.data
+      itemInstances.value = itemInstancesRes.data
     } catch (error) {
       ElMessage.error(getApiError(error, '行动状态刷新失败'))
     }
@@ -161,12 +220,14 @@ export function useAppWorkspace() {
     purchasingId.value = itemId
     try {
       await api.post('/merchant/purchase', { merchantId, itemId, quantity }, { headers: { 'Idempotency-Key': crypto.randomUUID() } })
-      const [inventoryRes, capacityRes, armorInstancesRes] = await Promise.all([
-        api.get<InventoryItem[]>('/inventory'), api.get<StorageCapacity>('/inventory/capacity'), api.get<ArmorInstance[]>('/armor-instances'),
+      const [inventoryRes, capacityRes, armorInstancesRes, itemInstancesRes, hideoutRes] = await Promise.all([
+        api.get<InventoryItem[]>('/inventory'), api.get<StorageCapacity>('/inventory/capacity'), api.get<ArmorInstance[]>('/armor-instances'), api.get<ItemInstance[]>('/item-instances'), api.get<HideoutSnapshot>('/hideout'),
       ])
       inventory.value = inventoryRes.data
       storageCapacity.value = capacityRes.data
       armorInstances.value = armorInstancesRes.data
+      itemInstances.value = itemInstancesRes.data
+      hideout.value = hideoutRes.data
       ElMessage.success('商品已存入仓库')
     } catch (error) {
       ElMessage.error(getApiError(error, '购买失败'))
@@ -179,11 +240,13 @@ export function useAppWorkspace() {
     sellingId.value = itemId
     try {
       const { data } = await api.post<{ total: number }>('/merchant/sell', { merchantId, itemId, quantity }, { headers: { 'Idempotency-Key': crypto.randomUUID() } })
-      const [inventoryRes, capacityRes] = await Promise.all([
-        api.get<InventoryItem[]>('/inventory'), api.get<StorageCapacity>('/inventory/capacity'),
+      const [inventoryRes, capacityRes, itemInstancesRes, hideoutRes] = await Promise.all([
+        api.get<InventoryItem[]>('/inventory'), api.get<StorageCapacity>('/inventory/capacity'), api.get<ItemInstance[]>('/item-instances'), api.get<HideoutSnapshot>('/hideout'),
       ])
       inventory.value = inventoryRes.data
       storageCapacity.value = capacityRes.data
+      itemInstances.value = itemInstancesRes.data
+      hideout.value = hideoutRes.data
       ElMessage.success(`已出售，获得 ￥${data.total}`)
     } catch (error) {
       ElMessage.error(getApiError(error, '出售失败'))
@@ -208,14 +271,76 @@ export function useAppWorkspace() {
   async function repairArmor(id: number) {
     repairingId.value = id
     try {
-      await api.post('/armor/repair', { id })
-      const { data } = await api.get<ArmorInstance[]>('/armor-instances')
-      armorInstances.value = data
-      ElMessage.success('护甲翻修完成')
+      await api.post('/hideout/repair', { armorInstanceId: id })
+      const [armorInstancesRes, hideoutRes, capacityRes] = await Promise.all([
+        api.get<ArmorInstance[]>('/armor-instances'), api.get<HideoutSnapshot>('/hideout'), api.get<StorageCapacity>('/inventory/capacity'),
+      ])
+      armorInstances.value = armorInstancesRes.data
+      hideout.value = hideoutRes.data
+      storageCapacity.value = capacityRes.data
+      ElMessage.success('护甲已加入维修队列')
     } catch (error) {
       ElMessage.error(getApiError(error, '护甲维修失败'))
     } finally {
       repairingId.value = null
+    }
+  }
+
+  async function upgradeFacility(facilityId: string) {
+    upgradingFacilityId.value = facilityId
+    try {
+      await api.post(`/hideout/facilities/${facilityId}/upgrade`)
+      const [inventoryRes, capacityRes, hideoutRes] = await Promise.all([
+        api.get<InventoryItem[]>('/inventory'), api.get<StorageCapacity>('/inventory/capacity'), api.get<HideoutSnapshot>('/hideout'),
+      ])
+      inventory.value = inventoryRes.data
+      storageCapacity.value = capacityRes.data
+      hideout.value = hideoutRes.data
+      ElMessage.success('设施升级已开始')
+    } catch (error) {
+      ElMessage.error(getApiError(error, '设施升级失败'))
+    } finally {
+      upgradingFacilityId.value = null
+    }
+  }
+
+  async function refreshHideoutResources() {
+    const [hideoutRes, itemInstancesRes, inventoryRes, capacityRes] = await Promise.all([
+      api.get<HideoutSnapshot>('/hideout'), api.get<ItemInstance[]>('/item-instances'), api.get<InventoryItem[]>('/inventory'), api.get<StorageCapacity>('/inventory/capacity'),
+    ])
+    hideout.value = hideoutRes.data
+    itemInstances.value = itemInstancesRes.data
+    inventory.value = inventoryRes.data
+    storageCapacity.value = capacityRes.data
+  }
+
+  async function toggleGenerator(enabled: boolean) {
+    try {
+      await api.post('/hideout/generator/toggle', { enabled })
+      await refreshHideoutResources()
+      ElMessage.success(enabled ? '发电机已启动' : '发电机已关闭')
+    } catch (error) {
+      ElMessage.error(getApiError(error, '发电机状态更新失败'))
+    }
+  }
+
+  async function loadGeneratorFuel(instanceId: number) {
+    try {
+      await api.post('/hideout/generator/fuel/load', null, { params: { instanceId } })
+      await refreshHideoutResources()
+      ElMessage.success('燃料已装入发电机')
+    } catch (error) {
+      ElMessage.error(getApiError(error, '装载燃料失败'))
+    }
+  }
+
+  async function unloadGeneratorFuel(instanceId: number) {
+    try {
+      await api.post('/hideout/generator/fuel/unload', null, { params: { instanceId } })
+      await refreshHideoutResources()
+      ElMessage.success('燃料已取回仓库')
+    } catch (error) {
+      ElMessage.error(getApiError(error, '卸载燃料失败'))
     }
   }
   
@@ -250,6 +375,9 @@ export function useAppWorkspace() {
       await api.post('/auth/logout')
       user.value = null
       player.value = null
+      hideout.value = null
+      recovery.value = null
+      clearRecoveryPoll()
     } catch (error) {
       ElMessage.error(getApiError(error, '退出登录失败'))
     }
@@ -257,13 +385,18 @@ export function useAppWorkspace() {
   
   onMounted(initialize)
 
+  onUnmounted(() => {
+    workspaceStopped = true
+    clearRecoveryPoll()
+  })
+
   return {
     activeView, user, authChecking, authError, mobileOpen, loading, loadError,
-    savingPlayer, savingLoadout, purchasingId, sellingId, repairingId,
-    player, loadout, maps, mapGraphs, nodes, enemies, weapons, ammos, armors, armorInstances,
+    savingPlayer, savingLoadout, purchasingId, sellingId, repairingId, upgradingFacilityId,
+    player, loadout, maps, mapGraphs, nodes, enemies, weapons, ammos, armors, armorInstances, itemInstances,
     consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
-    storageCapacity, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
+    storageCapacity, hideout, recovery, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
     loadAll, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,
-    repairArmor, handleSessionCreated, handleAuthenticated, logout,
+    repairArmor, upgradeFacility, toggleGenerator, loadGeneratorFuel, unloadGeneratorFuel, handleSessionCreated, handleAuthenticated, logout,
   }
 }

@@ -30,6 +30,10 @@ func inventoryUsage(db *gorm.DB, userIDs ...uint) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	allocatedInstances, err := loadoutAllocatedInstanceIDs(db, userID)
+	if err != nil {
+		return 0, err
+	}
 	stock := make(map[string]int, len(rows))
 	kinds := make(map[string]string, len(rows))
 	for _, row := range rows {
@@ -54,6 +58,15 @@ func inventoryUsage(db *gorm.DB, userIDs ...uint) (int, error) {
 			deduct = quantity
 		}
 		used += quantity - deduct
+	}
+	var instances []models.ItemInstance
+	if err := db.Where("user_id = ? AND location_type = ? AND status = ?", userID, "inventory", "normal").Find(&instances).Error; err != nil {
+		return 0, fmt.Errorf("计算耐久物品容量: %w", err)
+	}
+	for _, instance := range instances {
+		if _, allocated := allocatedInstances[instance.ID]; !allocated {
+			used++
+		}
 	}
 	return used, nil
 }
@@ -92,6 +105,70 @@ func loadoutAllocatedItems(db *gorm.DB, userID uint) (map[string]int, error) {
 		add(consumables)
 	}
 	return alloc, nil
+}
+
+func loadoutAllocatedInstanceIDs(db *gorm.DB, userID uint) (map[uint]struct{}, error) {
+	loadout, err := GetPlayerLoadoutForUser(db, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return map[uint]struct{}{}, nil
+		}
+		return nil, err
+	}
+	allocated := make(map[uint]struct{})
+	type loadoutItems struct {
+		ids  []string
+		refs []models.LoadoutItemRef
+	}
+	sets := []loadoutItems{
+		{ids: loadout.Consumables, refs: loadout.ConsumableRefs},
+		{ids: loadout.PresetConsumables, refs: loadout.PresetConsumableRefs},
+		{ids: loadout.Preset2Consumables, refs: loadout.Preset2ConsumableRefs},
+		{ids: loadout.Preset3Consumables, refs: loadout.Preset3ConsumableRefs},
+	}
+	for _, set := range sets {
+		if len(set.refs) > 0 {
+			for _, ref := range set.refs {
+				if ref.InstanceID > 0 {
+					allocated[ref.InstanceID] = struct{}{}
+				}
+			}
+			continue
+		}
+		for _, itemID := range set.ids {
+			var use models.ItemUseDef
+			if err := db.Where("item_id = ?", itemID).First(&use).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return nil, fmt.Errorf("读取补给效果 %s: %w", itemID, err)
+			}
+			if !use.InstanceRequired {
+				continue
+			}
+			var instance models.ItemInstance
+			query := db.Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ? AND current_durability > 0", userID, itemID, "inventory", "normal")
+			if ids := allocatedIDs(allocated); len(ids) > 0 {
+				query = query.Where("id NOT IN ?", ids)
+			}
+			if err := query.Order("current_durability asc, id asc").First(&instance).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return nil, fmt.Errorf("读取补给实例 %s: %w", itemID, err)
+			}
+			allocated[instance.ID] = struct{}{}
+		}
+	}
+	return allocated, nil
+}
+
+func allocatedIDs(allocated map[uint]struct{}) []uint {
+	ids := make([]uint, 0, len(allocated))
+	for id := range allocated {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // presetEquipOf 返回第 N 套（1-3）预设新增装备（胸挂/背包/头盔/耳机）清单。

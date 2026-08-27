@@ -18,7 +18,6 @@ import (
 const (
 	sessionEventRunSettled      = "run_settled"
 	sessionEventSessionFinished = "session_finished"
-	sessionEventSessionAborted  = "session_aborted"
 	sessionEventSessionFailed   = "session_failed"
 	sessionEventLootExtracted   = "loot_extracted"
 	sessionEventLootStored      = "loot_stored"

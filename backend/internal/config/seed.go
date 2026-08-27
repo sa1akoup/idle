@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"time"
 
 	"idle/internal/models"
 
@@ -31,6 +32,9 @@ func Seed(db *gorm.DB) error {
 	if err := seedMaterials(db); err != nil {
 		return err
 	}
+	if err := seedSurvivalDefinitions(db); err != nil {
+		return err
+	}
 	if err := seedMap(db); err != nil {
 		return err
 	}
@@ -49,7 +53,13 @@ func Seed(db *gorm.DB) error {
 	if err := seedMerchantStates(db); err != nil {
 		return err
 	}
+	if err := seedHideout(db); err != nil {
+		return err
+	}
 	if err := seedLoadout(db); err != nil {
+		return err
+	}
+	if err := seedSurvivalForUser(db, models.DefaultUserID); err != nil {
 		return err
 	}
 	return nil
@@ -67,7 +77,7 @@ func seedPlayerForUser(db *gorm.DB, userID uint) error {
 		Stealth: 45, Perception: 50, Negotiation: 40, Luck: 45,
 		Survival: 55, Resist: 50, Engineering: 45, Medical: 40,
 		MeleeProf: 35, PistolProf: 45, SMGProf: 35, ShotgunProf: 30, RifleProf: 40, SniperProf: 25,
-		Trait: "适应：未知区域中的首次判定更加稳定", Injury: "none",
+		Trait: "适应：未知区域中的首次判定更加稳定", HP: 100, Energy: 100, Hydration: 100, NeedsUpdatedAt: time.Now(),
 	}
 	return db.Where("user_id = ?", userID).FirstOrCreate(&player).Error
 }

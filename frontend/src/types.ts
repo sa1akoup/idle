@@ -43,10 +43,11 @@ export interface Player {
   rifleProf: number
   sniperProf: number
   trait: string
-  fatigue: number
+  hp: number
+  energy: number
+  hydration: number
+  needsUpdatedAt: string
   stress: number
-  injury: 'none' | 'light' | 'heavy' | 'lethal' | ''
-  injuryUntil: string | null
   createdAt: string
 }
 
@@ -175,6 +176,109 @@ export interface StorageCapacity {
   used: number
 }
 
+export interface HideoutUpgrade {
+  level: number
+  originalCost: number
+  originalCurrency: string
+  originalSeconds: number
+  cost: number
+  durationSec: number
+  materialId: string
+  materialName: string
+  materialQuantity: number
+  effectsJson: string
+  requirements: HideoutRequirement[]
+  canStart: boolean
+}
+
+export interface HideoutRequirement {
+  requirementType: string
+  referenceId: string
+  label: string
+  quantity: number
+  requiredValue: number
+  currentValue: number
+  satisfied: boolean
+}
+
+export interface HideoutFacility {
+  id: string
+  name: string
+  category: string
+  description: string
+  iconKey: string
+  level: number
+  maxLevel: number
+  state: 'ready' | 'upgrading'
+  storageBonus: number
+  recoverySpeedPercent: number
+  repairSpeedPercent: number
+  intelBonusPercent: number
+  hpRecoveryPerHour: number
+  energyRecoveryPerHour: number
+  hydrationRecoveryPerHour: number
+  repairKitDiscountPercent: number
+  fuelConsumptionReductionPercent: number
+  physicalSkillGrowthPercent: number
+  stressRecoveryPerHour: number
+  fuelSlotCount: number
+  requiresPower: boolean
+  effectsJson: string
+  nextUpgrade: HideoutUpgrade | null
+}
+
+export interface HideoutJob {
+  id: number
+  facilityId: string
+  jobType: 'upgrade' | 'repair' | 'craft' | 'training' | 'scav_case'
+  targetLevel: number
+  targetRef: string
+  armorInstanceId: number | null
+  startedAt: string
+  completeAt: string
+  status: 'running' | 'completed'
+}
+
+export interface HideoutBonuses {
+  storageBonus: number
+  recoverySpeedPercent: number
+  repairSpeedPercent: number
+  intelBonusPercent: number
+  hpRecoveryPerHour: number
+  energyRecoveryPerHour: number
+  hydrationRecoveryPerHour: number
+  repairKitDiscountPercent: number
+  fuelConsumptionReductionPercent: number
+  physicalSkillGrowthPercent: number
+  stressRecoveryPerHour: number
+}
+
+export interface GeneratorFuel {
+  instanceId: number
+  itemId: string
+  currentDurability: number
+  maxDurability: number
+  fuelSeconds: number
+}
+
+export interface GeneratorView {
+  enabled: boolean
+  fuelSlots: number
+  fuelRemainingSeconds: number
+  fuelConsumptionFactor: number
+  updatedAt: string
+  fuels: GeneratorFuel[]
+}
+
+export interface HideoutSnapshot {
+  facilities: HideoutFacility[]
+  jobs: HideoutJob[]
+  bonuses: HideoutBonuses
+  storageCapacity: StorageCapacity
+  repairCost: number
+  generator: GeneratorView | null
+}
+
 export interface ArmorInstance {
   id: number
   armorId: string
@@ -184,15 +288,62 @@ export interface ArmorInstance {
   status: 'normal' | 'repairing' | 'broken'
 }
 
+export interface ItemInstance {
+  id: number
+  itemId: string
+  name?: string
+  kind?: string
+  category?: string
+  price?: number
+  weight?: number
+  slots?: number
+  merchantCategory?: string
+  repRequirement?: number
+  currentDurability: number
+  maxDurability: number
+  status: 'normal' | 'depleted' | 'locked'
+  locationType: string
+  locationRef: string
+  raidExtract: boolean
+}
+
+export interface RecoveryTask {
+  id: number
+  recoveryPlanId: number
+  resourceType: 'hp' | 'energy' | 'hydration' | string
+  currentValue: number
+  targetValue: number
+  ratePerHour: number
+  status: string
+  actualMethod: string
+}
+
+export interface RecoveryView {
+  plan: { id: number; status: string }
+  tasks: RecoveryTask[]
+}
+
 export interface Consumable {
   id: string
   name: string
+  kind: 'consumable' | 'loot'
+  category: string
   desc: string
   price: number
   weight: number
   slots: number
   merchantCategory: string
   repRequirement: number
+  hpRecovery: number
+  energyRecovery: number
+  hydrationRecovery: number
+  repairValue: number
+  fuelSeconds: number
+  maxDurability: number
+  useDurability: number
+  instanceRequired: boolean
+  usableInSession: boolean
+  usableInHideout: boolean
 }
 
 export interface LootItem {
@@ -316,5 +467,8 @@ export type {
   SessionRun,
   SessionDetail,
   StartSessionRequest,
+  RecoveryChoice,
+  RecoveryMethod,
+  RecoveryPolicy,
 } from './types_inventory'
 export { presetOf } from './types_inventory'

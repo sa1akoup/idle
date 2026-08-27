@@ -16,11 +16,11 @@ import { useAppWorkspace } from './composables/useAppWorkspace'
 const {
   activeView, user, authChecking, authError, mobileOpen, loading, loadError,
   savingPlayer, savingLoadout, purchasingId, sellingId, repairingId,
-  player, loadout, maps, mapGraphs, enemies, weapons, ammos, armors, armorInstances,
+  player, loadout, maps, mapGraphs, enemies, weapons, ammos, armors, armorInstances, itemInstances,
   consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
-  storageCapacity, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
+  storageCapacity, hideout, recovery, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
   loadAll, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,
-  repairArmor, handleSessionCreated, handleAuthenticated, logout,
+  repairArmor, upgradeFacility, toggleGenerator, loadGeneratorFuel, unloadGeneratorFuel, upgradingFacilityId, handleSessionCreated, handleAuthenticated, logout,
 } = useAppWorkspace()
 </script>
 
@@ -57,7 +57,7 @@ const {
         <template v-else-if="player">
           <ExploreView
             v-if="activeView === 'explore' && loadout"
-            :player="player" :loadout="loadout" :maps="maps" :weapons="weapons" :ammos="ammos" :armors="armors" :consumables="consumables" :inventory="inventory"
+            :player="player" :loadout="loadout" :maps="maps" :weapons="weapons" :ammos="ammos" :armors="armors" :consumables="consumables" :inventory="inventory" :recovery="recovery"
             @created="handleSessionCreated"
           />
           <MapView v-else-if="activeView === 'map'" :maps="maps" :map-graphs="mapGraphs" :enemies="enemies" />
@@ -68,17 +68,18 @@ const {
             :saving-name="savingPlayer" :saving-loadout="savingLoadout"
             @save-name="savePlayerName" @save-loadout="saveLoadout"
           />
-          <InventoryView v-else-if="activeView === 'inventory'" :inventory="inventory" :loadout="loadout" :storage-capacity="storageCapacity" />
+          <InventoryView v-else-if="activeView === 'inventory'" :inventory="inventory" :item-instances="itemInstances" :loadout="loadout" :storage-capacity="storageCapacity" />
           <MerchantView
             v-else-if="activeView === 'merchant'"
-            :merchants="merchants" :inventory="inventory"
+            :merchants="merchants" :inventory="inventory" :item-instances="itemInstances"
             :purchasing-id="purchasingId" :selling-id="sellingId"
             @purchase="purchaseItem" @sell="sellItem"
           />
           <HideoutView
             v-else-if="activeView === 'hideout'"
-            :player="player" :armors="armors" :armor-instances="armorInstances" :repairing-id="repairingId" :storage-capacity="storageCapacity"
-            @repair="repairArmor"
+            :player="player" :armors="armors" :armor-instances="armorInstances" :item-instances="itemInstances" :consumables="consumables" :repairing-id="repairingId" :storage-capacity="storageCapacity"
+            :hideout="hideout" :upgrading-facility-id="upgradingFacilityId"
+            @repair="repairArmor" @upgrade="upgradeFacility" @toggle-generator="toggleGenerator" @load-generator-fuel="loadGeneratorFuel" @unload-generator-fuel="unloadGeneratorFuel"
           />
           <LiveSessionView
             v-else-if="activeView === 'live' && activeSessionId"

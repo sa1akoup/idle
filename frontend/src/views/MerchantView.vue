@@ -3,11 +3,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { Refresh, Sell } from '@element-plus/icons-vue'
 import api, { getApiError } from '../api'
-import type { InventoryItem, Merchant, MerchantCatalogItem } from '../types'
+import type { InventoryItem, ItemInstance, Merchant, MerchantCatalogItem } from '../types'
 
 const props = defineProps<{
   merchants: Merchant[]
   inventory: InventoryItem[]
+  itemInstances: ItemInstance[]
   purchasingId: string | null
   sellingId: string | null
 }>()
@@ -56,6 +57,12 @@ const sellable = computed(() => {
     e.quantity += i.quantity
     map.set(i.itemId, e)
   }
+  for (const instance of props.itemInstances) {
+    if (instance.locationType !== 'inventory' || instance.status !== 'normal' || instance.currentDurability <= 0 || instance.merchantCategory !== cat) continue
+    const e = map.get(instance.itemId) ?? { itemId: instance.itemId, name: instance.name ?? instance.itemId, price: instance.price ?? 0, quantity: 0 }
+    e.quantity += 1
+    map.set(instance.itemId, e)
+  }
   return [...map.values()]
 })
 
@@ -70,6 +77,7 @@ function qtyFor(itemId: string): number {
 }
 function ownedQty(itemId: string): number {
   return props.inventory.filter((i) => i.itemId === itemId && i.quantity > 0).reduce((s, i) => s + i.quantity, 0)
+    + props.itemInstances.filter((i) => i.itemId === itemId && i.locationType === 'inventory' && i.status === 'normal' && i.currentDurability > 0).length
 }
 function buyQuantity(item: MerchantCatalogItem): number {
   const quantity = buyQty.value[item.id]

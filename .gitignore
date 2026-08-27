@@ -16,3 +16,8 @@ frontend/.env*
 .DS_Store
 .idea/
 .vscode/
+.zcode/
+
+# 手工验证输出快照（本地调试，不入库）
+/session_full_flow.txt
+/session_user_broadcast.txt

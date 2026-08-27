@@ -117,19 +117,19 @@ func SavePlayerLoadoutForUser(db *gorm.DB, userID uint, req SaveLoadoutReq) (*mo
 		updates := models.PlayerLoadout{
 			WeaponID: req.WeaponID, ArmorID: req.ArmorID,
 			ChestRigID: req.ChestRigID, BackpackID: req.BackpackID, HelmetID: req.HelmetID, HeadsetID: req.HeadsetID,
-			Consumables:    req.Consumables,
+			Consumables: req.Consumables, ConsumableRefs: []models.LoadoutItemRef{},
 			PresetWeaponID: req.PresetWeaponID, PresetArmorID: req.PresetArmorID,
 			PresetChestRigID: req.PresetChestRigID, PresetBackpackID: req.PresetBackpackID,
 			PresetHelmetID: req.PresetHelmetID, PresetHeadsetID: req.PresetHeadsetID,
-			PresetName: req.PresetName, PresetConsumables: req.PresetConsumables, PresetAmmoID: req.PresetAmmoID, PresetAmmoRounds: req.PresetAmmoRounds,
+			PresetName: req.PresetName, PresetConsumables: req.PresetConsumables, PresetConsumableRefs: []models.LoadoutItemRef{}, PresetAmmoID: req.PresetAmmoID, PresetAmmoRounds: req.PresetAmmoRounds,
 			Preset2WeaponID: req.Preset2WeaponID, Preset2ArmorID: req.Preset2ArmorID,
 			Preset2ChestRigID: req.Preset2ChestRigID, Preset2BackpackID: req.Preset2BackpackID,
 			Preset2HelmetID: req.Preset2HelmetID, Preset2HeadsetID: req.Preset2HeadsetID,
-			Preset2Name: req.Preset2Name, Preset2Consumables: req.Preset2Consumables, Preset2AmmoID: req.Preset2AmmoID, Preset2AmmoRounds: req.Preset2AmmoRounds,
+			Preset2Name: req.Preset2Name, Preset2Consumables: req.Preset2Consumables, Preset2ConsumableRefs: []models.LoadoutItemRef{}, Preset2AmmoID: req.Preset2AmmoID, Preset2AmmoRounds: req.Preset2AmmoRounds,
 			Preset3WeaponID: req.Preset3WeaponID, Preset3ArmorID: req.Preset3ArmorID,
 			Preset3ChestRigID: req.Preset3ChestRigID, Preset3BackpackID: req.Preset3BackpackID,
 			Preset3HelmetID: req.Preset3HelmetID, Preset3HeadsetID: req.Preset3HeadsetID,
-			Preset3Name: req.Preset3Name, Preset3Consumables: req.Preset3Consumables, Preset3AmmoID: req.Preset3AmmoID, Preset3AmmoRounds: req.Preset3AmmoRounds,
+			Preset3Name: req.Preset3Name, Preset3Consumables: req.Preset3Consumables, Preset3ConsumableRefs: []models.LoadoutItemRef{}, Preset3AmmoID: req.Preset3AmmoID, Preset3AmmoRounds: req.Preset3AmmoRounds,
 		}
 		var player models.Character
 		if err := tx.Where("user_id = ?", userID).First(&player).Error; err != nil {
@@ -137,10 +137,10 @@ func SavePlayerLoadoutForUser(db *gorm.DB, userID uint, req SaveLoadoutReq) (*mo
 		}
 		if err := tx.Model(&models.PlayerLoadout{}).
 			Where("user_id = ? AND character_id = ?", userID, player.ID).
-			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables",
-				"PresetWeaponID", "PresetArmorID", "PresetChestRigID", "PresetBackpackID", "PresetHelmetID", "PresetHeadsetID", "PresetName", "PresetConsumables", "PresetAmmoID", "PresetAmmoRounds",
-				"Preset2WeaponID", "Preset2ArmorID", "Preset2ChestRigID", "Preset2BackpackID", "Preset2HelmetID", "Preset2HeadsetID", "Preset2Name", "Preset2Consumables", "Preset2AmmoID", "Preset2AmmoRounds",
-				"Preset3WeaponID", "Preset3ArmorID", "Preset3ChestRigID", "Preset3BackpackID", "Preset3HelmetID", "Preset3HeadsetID", "Preset3Name", "Preset3Consumables", "Preset3AmmoID", "Preset3AmmoRounds").
+			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs",
+				"PresetWeaponID", "PresetArmorID", "PresetChestRigID", "PresetBackpackID", "PresetHelmetID", "PresetHeadsetID", "PresetName", "PresetConsumables", "PresetConsumableRefs", "PresetAmmoID", "PresetAmmoRounds",
+				"Preset2WeaponID", "Preset2ArmorID", "Preset2ChestRigID", "Preset2BackpackID", "Preset2HelmetID", "Preset2HeadsetID", "Preset2Name", "Preset2Consumables", "Preset2ConsumableRefs", "Preset2AmmoID", "Preset2AmmoRounds",
+				"Preset3WeaponID", "Preset3ArmorID", "Preset3ChestRigID", "Preset3BackpackID", "Preset3HelmetID", "Preset3HeadsetID", "Preset3Name", "Preset3Consumables", "Preset3ConsumableRefs", "Preset3AmmoID", "Preset3AmmoRounds").
 			Updates(&updates).Error; err != nil {
 			return fmt.Errorf("保存角色装备配置: %w", err)
 		}
@@ -263,8 +263,25 @@ func validateLoadoutCatalog(db *gorm.DB, weaponID, armorID string, consumables [
 		if err := db.Model(&models.ConsumableDef{}).Where("id = ?", itemID).Count(&count).Error; err != nil {
 			return fmt.Errorf("读取补给: %w", err)
 		}
-		if count != 1 {
-			return fmt.Errorf("补给 %s 不存在", itemID)
+		if count == 1 {
+			continue
+		}
+		var loot models.LootItemDef
+		if err := db.Where("id = ?", itemID).First(&loot).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("补给 %s 不存在", itemID)
+			}
+			return fmt.Errorf("读取补给 %s: %w", itemID, err)
+		}
+		var use models.ItemUseDef
+		if err := db.Where("item_id = ?", itemID).First(&use).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("补给 %s 未配置使用效果", itemID)
+			}
+			return fmt.Errorf("读取补给效果 %s: %w", itemID, err)
+		}
+		if !use.UsableInSession {
+			return fmt.Errorf("补给 %s 不能带入行动", loot.Name)
 		}
 	}
 	return nil
@@ -276,7 +293,6 @@ func validateOwnedLoadout(db *gorm.DB, weaponID, armorID string, consumables []s
 
 func validateOwnedLoadoutForUser(db *gorm.DB, userID uint, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
 	ids := []string{weaponID, armorID}
-	ids = append(ids, consumables...)
 	for _, id := range []string{chestRigID, backpackID, helmetID, headsetID} {
 		if id != "" {
 			ids = append(ids, id)
@@ -289,6 +305,30 @@ func validateOwnedLoadoutForUser(db *gorm.DB, userID uint, weaponID, armorID str
 				return fmt.Errorf("仓库中缺少装备 %s", itemID)
 			}
 			return fmt.Errorf("读取装备库存 %s: %w", itemID, err)
+		}
+	}
+	for _, itemID := range consumables {
+		var use models.ItemUseDef
+		if err := db.Where("item_id = ?", itemID).First(&use).Error; err == nil && use.InstanceRequired {
+			var instanceCount int64
+			if err := db.Model(&models.ItemInstance{}).
+				Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ? AND current_durability > 0", userID, itemID, "inventory", "normal").
+				Count(&instanceCount).Error; err != nil {
+				return fmt.Errorf("读取补给实例 %s: %w", itemID, err)
+			}
+			if instanceCount == 0 {
+				return fmt.Errorf("仓库中缺少可用补给 %s", itemID)
+			}
+			continue
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("读取补给效果 %s: %w", itemID, err)
+		}
+		var inventory models.Inventory
+		if err := db.Where("user_id = ? AND item_id = ? AND quantity > 0", userID, itemID).First(&inventory).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("仓库中缺少补给 %s", itemID)
+			}
+			return fmt.Errorf("读取补给库存 %s: %w", itemID, err)
 		}
 	}
 	var armorInstance models.ArmorInstance
@@ -339,9 +379,9 @@ func ReplaceLostLoadoutForUser(db *gorm.DB, userID uint, presetIndex int) (int, 
 			return fmt.Errorf("移除丢失护甲: %w", err)
 		}
 
-		cleared := models.PlayerLoadout{Consumables: []string{}}
+		cleared := models.PlayerLoadout{Consumables: []string{}, ConsumableRefs: []models.LoadoutItemRef{}}
 		if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadout.ID).
-			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables").
+			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs").
 			Updates(&cleared).Error; err != nil {
 			return fmt.Errorf("清空丢失装备: %w", err)
 		}
@@ -388,10 +428,10 @@ func ReplaceLostLoadoutForUser(db *gorm.DB, userID uint, presetIndex int) (int, 
 		updates := models.PlayerLoadout{
 			WeaponID: presetWeaponID, ArmorID: presetArmorID,
 			ChestRigID: presetEquip[0], BackpackID: presetEquip[1], HelmetID: presetEquip[2], HeadsetID: presetEquip[3],
-			Consumables: presetConsumables,
+			Consumables: presetConsumables, ConsumableRefs: []models.LoadoutItemRef{},
 		}
 		if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, lostLoadout.ID).
-			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables").
+			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs").
 			Updates(&updates).Error; err != nil {
 			return fmt.Errorf("启用补购装备: %w", err)
 		}

@@ -40,7 +40,7 @@ func TestExtractionEncounterIsResolvedAfterArrival(t *testing.T) {
 		RunIndex:    1,
 		Style:       ActionStyleBalanced,
 		State: EngineState{
-			Character:       CharacterState{Name: "撤离测试角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50},
+			Character:       CharacterState{Name: "撤离测试角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, HP: 100, Energy: 100, Hydration: 100},
 			Loadout:         LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
 			ArmorDurability: 100,
 			Carry:           CarryState{TotalSlots: 20, UsedSlots: 2, TotalWeight: 100, UsedWeight: 10},

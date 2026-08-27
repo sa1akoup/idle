@@ -1,6 +1,21 @@
 // 仓库、装备预设与 Session 类型：拆分高频业务数据，保持 types.ts 的统一导出入口。
 import type { ActionStyle, LootSummary } from './types'
 
+export type RecoveryMethod = 'inventory' | 'hideout' | 'merchant'
+
+export interface RecoveryChoice {
+  targetPercent: number
+  primaryMethod: RecoveryMethod
+  fallbackMethod: RecoveryMethod | 'none'
+}
+
+export interface RecoveryPolicy {
+  hp: RecoveryChoice
+  energy: RecoveryChoice
+  hydration: RecoveryChoice
+  merchantEnable: boolean
+}
+
 export interface InventoryItem {
   id: number
   itemId: string
@@ -31,6 +46,7 @@ export interface MerchantCatalogItem {
   id: string
   name: string
   kind: string
+  category: string
   detail: string
   basePrice: number
   price: number
@@ -38,6 +54,13 @@ export interface MerchantCatalogItem {
   weight: number
   slots: number
   repRequirement: number
+  hpRecovery: number
+  energyRecovery: number
+  hydrationRecovery: number
+  repairValue: number
+  fuelSeconds: number
+  maxDurability: number
+  instanceRequired: boolean
 }
 
 export interface PlayerLoadout {
@@ -154,7 +177,7 @@ export interface Session {
   ammoId: string
   ammoRounds: number
   consumables: string
-  status: 'running' | 'waiting_injury' | 'finished' | 'aborted' | 'failed'
+  status: 'running' | 'success' | 'incapacitated' | 'failed'
   seed: number
   startTime: string
   endTime: string | null
@@ -199,7 +222,6 @@ export type SessionEventType =
   | 'ammo_refilled'
   | 'run_settled'
   | 'session_finished'
-  | 'session_aborted'
   | 'session_failed'
 
 export interface SessionEvent {
@@ -225,7 +247,12 @@ export interface SessionRunRaw {
   durationSec: number
   heat: number
   ammoUsed: number
-  injury: string
+  startHp: number
+  endHp: number
+  startEnergy: number
+  endEnergy: number
+  startHydration: number
+  endHydration: number
   loot: string
   storedLoot: string
   overflowLoot: string
@@ -248,6 +275,7 @@ export interface StartSessionRequest {
   mapId: string
   style: ActionStyle
   recoveryPreset: number
+  recoveryPolicy: RecoveryPolicy
   ammoId: string
   ammoRounds: number
 }

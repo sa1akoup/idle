@@ -33,7 +33,7 @@ func lockUserResourcesTx(tx *gorm.DB, userID uint) error {
 func activeSessionsForUser(tx *gorm.DB, userID uint) ([]models.Session, error) {
 	var sessions []models.Session
 	query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id = ? AND status IN ?", userID, []string{"running", "waiting_injury"})
+		Where("user_id = ? AND status = ?", userID, "running")
 	if err := query.Find(&sessions).Error; err != nil {
 		return nil, fmt.Errorf("读取活跃行动资源: %w", err)
 	}
@@ -118,36 +118,4 @@ func splitSessionConsumables(value string) []string {
 		}
 	}
 	return result
-}
-
-// RepairArmorForUser 在事务内完成护甲状态读取、活跃行动检查和维修更新。
-func RepairArmorForUser(db *gorm.DB, userID, armorInstanceID uint) (int, error) {
-	newMax := 0
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := lockUserResourcesTx(tx, userID); err != nil {
-			return err
-		}
-		var inst models.ArmorInstance
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND id = ?", userID, armorInstanceID).First(&inst).Error; err != nil {
-			return err
-		}
-		if err := ensureArmorRepairAllowed(tx, userID, inst.ArmorID); err != nil {
-			return err
-		}
-		if inst.RepairCount >= 1 {
-			return fmt.Errorf("已达维修上限，报废")
-		}
-		if inst.CurDurability > 0 {
-			return fmt.Errorf("仅归零护甲可维修")
-		}
-		newMax = inst.MaxDurability / 2
-		if err := tx.Model(&models.ArmorInstance{}).Where("user_id = ? AND id = ?", userID, inst.ID).Updates(map[string]interface{}{
-			"max_durability": newMax, "cur_durability": newMax, "repair_count": inst.RepairCount + 1, "status": "normal",
-		}).Error; err != nil {
-			return fmt.Errorf("护甲维修失败: %w", err)
-		}
-		return nil
-	})
-	return newMax, err
 }

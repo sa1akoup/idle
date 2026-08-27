@@ -34,8 +34,8 @@ const {
       </div>
       <div class="character-state">
         <span>当前状态</span>
-        <strong :class="player.injury && player.injury !== 'none' ? 'text-danger' : 'text-success'">
-          {{ player.injury && player.injury !== 'none' ? player.injury : '状态正常' }}
+        <strong :class="player.hp <= 0 || player.energy <= 0 || player.hydration <= 0 ? 'text-danger' : 'text-success'">
+          {{ player.hp <= 0 ? '生命恢复中' : player.energy <= 0 ? '能量恢复中' : player.hydration <= 0 ? '饮水恢复中' : '状态正常' }}
         </strong>
       </div>
     </header>
@@ -148,7 +148,7 @@ const {
       <div class="loadout-actions"><span>预设补购受现金限制，且不计入仓库容量</span><el-button type="primary" :loading="savingLoadout" @click="submitLoadout">保存装备配置</el-button></div>
     </section>
 
-    <div class="trait-band"><span>角色特质</span><strong>{{ player.trait }}</strong><p>疲劳 {{ player.fatigue }} · 压力 {{ player.stress }}</p></div>
+    <div class="trait-band"><span>角色资源</span><strong>HP {{ Math.round(player.hp) }} · 能量 {{ Math.round(player.energy) }} · 饮水 {{ Math.round(player.hydration) }}</strong><p>压力 {{ player.stress }} · 角色特质：{{ player.trait }}</p></div>
 
     <el-dialog v-model="pickerOpen" :title="pickerTitle" width="440px">
       <div class="slot-picker-list">

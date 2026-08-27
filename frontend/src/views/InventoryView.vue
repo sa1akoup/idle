@@ -2,11 +2,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Box, Coin, Goods, Suitcase } from '@element-plus/icons-vue'
-import type { InventoryItem, PlayerLoadout, StorageCapacity } from '../types'
+import type { InventoryItem, ItemInstance, PlayerLoadout, StorageCapacity } from '../types'
 
-const props = defineProps<{ inventory: InventoryItem[]; loadout: PlayerLoadout | null; storageCapacity: StorageCapacity | null }>()
+const props = defineProps<{ inventory: InventoryItem[]; itemInstances: ItemInstance[]; loadout: PlayerLoadout | null; storageCapacity: StorageCapacity | null }>()
 const nonCashItems = computed(() => props.inventory.filter((item) => item.itemId !== 'cash'))
-const totalUnits = computed(() => nonCashItems.value.reduce((sum, item) => sum + item.quantity, 0))
+const inventoryInstances = computed(() => props.itemInstances.filter((item) => item.locationType === 'inventory'))
+const totalUnits = computed(() => nonCashItems.value.reduce((sum, item) => sum + item.quantity, 0) + inventoryInstances.value.length)
 const equippedIds = computed(() => {
   if (!props.loadout) return new Set<string>()
   return new Set([
@@ -37,7 +38,7 @@ function ammoSlots(quantity: number): number {
     </div>
 
     <section class="inventory-table surface-panel">
-      <div class="panel-heading"><div><span>STASH</span><h2>物资清单</h2></div><small>{{ inventory.length }} 类物资</small></div>
+      <div class="panel-heading"><div><span>STASH</span><h2>物资清单</h2></div><small>{{ inventory.length + inventoryInstances.length }} 类物资</small></div>
       <div class="data-list-header inventory-header"><span>物资</span><span>类型</span><span>数量</span><span>重量/格数</span><span>状态</span><span>估值</span></div>
       <div v-for="item in inventory" :key="item.id" class="data-list-row inventory-row">
         <div class="item-name"><span class="item-icon"><el-icon><Coin v-if="item.itemId === 'cash'" /><Box v-else /></el-icon></span><div><strong>{{ item.name }}</strong><small>{{ item.itemId }}</small></div></div>
@@ -45,6 +46,13 @@ function ammoSlots(quantity: number): number {
         <span class="text-muted">{{ item.kind === 'ammo' ? `${ammoSlots(item.quantity)} 格 · 每格最多 999 发` : `${item.weight}kg / ${item.slots}格` }}</span>
         <span v-if="equippedIds.has(item.itemId)" class="equipped-label"><el-icon><Suitcase /></el-icon>已装备</span><span v-else class="text-muted">仓库存放</span>
         <strong>￥{{ (item.quantity * item.price).toLocaleString() }}</strong>
+      </div>
+      <div v-for="instance in inventoryInstances" :key="`instance-${instance.id}`" class="data-list-row inventory-row">
+        <div class="item-name"><span class="item-icon"><el-icon><Box /></el-icon></span><div><strong>{{ instance.name ?? instance.itemId }}</strong><small>{{ instance.itemId }} · 实例 #{{ instance.id }}</small></div></div>
+        <span>{{ instance.category ? lootCategoryNames[instance.category] ?? instance.kind ?? '耐久物品' : instance.kind ?? '耐久物品' }}</span><b>× 1</b>
+        <span class="text-muted">{{ instance.weight ?? 0 }}kg / {{ instance.slots ?? 0 }}格</span>
+        <span :class="instance.status === 'normal' ? 'text-muted' : 'text-danger'">耐久 {{ Math.round(instance.currentDurability) }} / {{ Math.round(instance.maxDurability) }}</span>
+        <strong>￥{{ (instance.price ?? 0).toLocaleString() }}</strong>
       </div>
     </section>
   </section>

@@ -14,8 +14,11 @@ type simulatedRun struct {
 	heat                    int
 	ammoUsed                int
 	ammoRounds              int
+	playerHP                float64
+	energy                  float64
+	hydration               float64
 	playerStress            float64
-	injury                  string
+	carriedItems            []CarriedItem
 	finished                bool
 	skipResourceConsumption bool
 	armorDurability         int
@@ -68,16 +71,19 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	freeSlots := input.State.Carry.TotalSlots - input.State.Carry.UsedSlots
 	freeWeight := input.State.Carry.TotalWeight - input.State.Carry.UsedWeight
 	rng := rand.New(rand.NewSource(sessionRunSeed(input.SessionSeed, input.RunIndex)))
-	outcome, err := simulateSingleRun(snapshot, input.State.Character, weapon, armor, input.State.ArmorDurability, ammo, input.State.Ammo.Rounds, input.State.Consumables, snapshot.Nodes, rng, style, freeSlots, freeWeight, input.RunIndex)
+	outcome, err := simulateSingleRun(snapshot, input.State.Character, weapon, armor, input.State.ArmorDurability, ammo, input.State.Ammo.Rounds, input.State.Consumables, input.State.CarriedItems, snapshot.ItemUseDefs, snapshot.Nodes, rng, style, freeSlots, freeWeight, input.RunIndex)
 	if err != nil {
 		return RunResult{}, err
 	}
 
 	nextState := cloneEngineState(input.State)
 	nextState.ArmorDurability = outcome.armorDurability
+	nextState.Character.HP = outcome.playerHP
+	nextState.Character.Energy = outcome.energy
+	nextState.Character.Hydration = outcome.hydration
 	nextState.Character.Stress = int(math.Round(outcome.playerStress))
-	nextState.Character.Injury = outcome.injury
-	if outcome.result == "success" || outcome.result == "partial" {
+	nextState.CarriedItems = CloneCarriedItems(outcome.carriedItems)
+	if outcome.result == "success" {
 		increaseWeaponProf(&nextState.Character, weapon.Category)
 	}
 	remaining := subtractItemStacks(nextState.Consumables, outcome.consumedItems)
@@ -90,7 +96,12 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 		DurationSec:             outcome.durationSec,
 		Heat:                    outcome.heat,
 		AmmoUsed:                outcome.ammoUsed,
-		Injury:                  outcome.injury,
+		StartHP:                 input.State.Character.HP,
+		EndHP:                   outcome.playerHP,
+		StartEnergy:             input.State.Character.Energy,
+		EndEnergy:               outcome.energy,
+		StartHydration:          input.State.Character.Hydration,
+		EndHydration:            outcome.hydration,
 		Loot:                    cloneLoot(outcome.loot),
 		ExtractedLoot:           cloneLoot(outcome.extractedLoot),
 		ConsumedItems:           itemCountsToStacks(outcome.consumedItems),
@@ -114,6 +125,7 @@ func SimulateRunVersion(version string, snapshot ScenarioSnapshot, input RunInpu
 
 func cloneEngineState(state EngineState) EngineState {
 	state.Consumables = cloneItemStacks(state.Consumables)
+	state.CarriedItems = CloneCarriedItems(state.CarriedItems)
 	return state
 }
 

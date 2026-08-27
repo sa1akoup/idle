@@ -80,14 +80,27 @@ type Character struct {
 
 	Trait string `json:"trait"`
 
-	// 状态
-	Fatigue     int        `json:"fatigue"`
-	Stress      int        `json:"stress"`
-	Injury      string     `json:"injury"` // none/light/heavy/lethal
-	InjuryUntil *time.Time `json:"injuryUntil"`
+	// 持久化生存资源。HP 使用 Strength 计算动态上限，Energy/Hydration 上限为 100。
+	HP             float64   `json:"hp"`
+	Energy         float64   `json:"energy"`
+	Hydration      float64   `json:"hydration"`
+	NeedsUpdatedAt time.Time `json:"needsUpdatedAt"`
+	Stress         int       `json:"stress"`
 	// ResourceVersion 用于在事务开始时获取该用户的资源行锁。
 	ResourceVersion int64     `gorm:"not null;default:0" json:"-"`
 	CreatedAt       time.Time `json:"createdAt"`
+}
+
+// FacilityRequirement 是设施升级时的单项前置条件。
+type FacilityRequirement struct {
+	ID              uint    `gorm:"primaryKey" json:"id"`
+	FacilityID      string  `gorm:"index;not null" json:"facilityId"`
+	Level           int     `gorm:"index;not null" json:"level"`
+	RequirementType string  `gorm:"not null" json:"requirementType"` // item/facility/trader/skill
+	ReferenceID     string  `gorm:"not null" json:"referenceId"`
+	Quantity        int     `json:"quantity"`
+	RequiredValue   float64 `json:"requiredValue"`
+	SortOrder       int     `json:"sortOrder"`
 }
 
 // EffectiveSkill 计算有效子技能

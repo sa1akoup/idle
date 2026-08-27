@@ -1,11 +1,10 @@
-// Session 单局结算：在一个事务内完成资源消耗、掉落、恢复、下一局计划和事件落库。
+// Session 单局结算：保存资源快照，并在终局时按结果归还或丢失携行物品。
 package service
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -20,13 +19,14 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 	if err != nil {
 		return fmt.Errorf("序列化单局输入状态: %w", err)
 	}
-	storedLoot, overflowLoot := []engine.LootDrop(nil), []engine.LootDrop(nil)
+	var storedLoot, overflowLoot []engine.LootDrop
 	var nextPlan RunPlan
 	var ammoRefill *ammoRefillResult
-	finishReason := ""
-	finishDetail := ""
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, s.userID); err != nil {
+			return err
+		}
+		if err := settleDueHideoutJobsTx(tx, s.userID, time.Now()); err != nil {
 			return err
 		}
 		var existing models.SessionRun
@@ -34,163 +34,97 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 			if existing.NextState == "" {
 				return fmt.Errorf("第%d局已结算但缺少后续状态", runIndex)
 			}
-			if err := json.Unmarshal([]byte(existing.NextState), state); err != nil {
-				return fmt.Errorf("恢复第%d局结算状态: %w", runIndex, err)
-			}
-			return nil
+			return json.Unmarshal([]byte(existing.NextState), state)
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("检查单局幂等状态: %w", err)
 		}
+
 		stateAfter := result.NextState
-		if !result.SkipResourceConsumption {
-			if err := consumeEngineResources(tx, s.userID, result); err != nil {
-				return err
-			}
-		}
-		// 正常撤离先同步剩余补给，失能局保留整套当前携行，随后由丢装逻辑统一扣除。
 		if result.Result != "incapacitated" {
-			if err := syncLoadoutConsumables(tx, s.userID, sess.CharacterID, stateAfter.Consumables); err != nil {
-				return err
-			}
+			result.Result = "success"
 		}
-		var err error
-		storedLoot, overflowLoot, err = fitEngineLootToStorage(tx, s.userID, result.ExtractedLoot)
+		stateAfter.Consumables = itemStacksFromCarriedItems(stateAfter.CarriedItems)
+		storedLoot, overflowLoot, err = s.storeSuccessfulLootTx(tx, snapshot, result)
 		if err != nil {
 			return err
 		}
-		for _, drop := range storedLoot {
-			item, err := snapshotCatalogItem(snapshot, drop.ItemID)
-			if err != nil {
-				return err
-			}
-			if err := addInventoryItem(tx, s.userID, item, drop.Quantity, true); err != nil {
-				return err
-			}
+		if err := settleSessionArmorTx(tx, s.userID, stateAfter, result.Result == "incapacitated"); err != nil {
+			return err
 		}
-
-		var armorInstance models.ArmorInstance
-		if stateAfter.Loadout.ArmorID != "" {
-			if err := tx.Where("user_id = ? AND armor_id = ? AND status = ?", s.userID, stateAfter.Loadout.ArmorID, "normal").Order("id asc").First(&armorInstance).Error; err != nil {
-				return fmt.Errorf("读取结算护甲: %w", err)
-			}
-		}
-		if result.Result != "incapacitated" && armorInstance.ID != 0 {
-			armorStatus := "normal"
-			if stateAfter.ArmorDurability <= 0 {
-				armorStatus = "broken"
-				result.Finished = true
-				finishReason = "run_finished"
-				finishDetail = "armor_broken"
-				result.Report = appendEngineReport(result.Report, ">> 护甲耐久归零，行动结束，需先维修护甲")
-			}
-			if err := tx.Model(&models.ArmorInstance{}).Where("user_id = ? AND id = ?", s.userID, armorInstance.ID).Updates(map[string]interface{}{"cur_durability": maxInt(stateAfter.ArmorDurability, 0), "status": armorStatus}).Error; err != nil {
-				return fmt.Errorf("保存护甲耐久: %w", err)
-			}
-		}
-
-		// 先落库压力与熟练度，失能补购完成后再统一写入最终伤势。
-		baseCharacter := stateAfter.Character
-		baseCharacter.Injury = "none"
-		if err := updateCharacterFromEngine(tx, s.userID, sess.CharacterID, baseCharacter, nil); err != nil {
+		if err := updateCharacterFromEngine(tx, s.userID, sess.CharacterID, stateAfter.Character); err != nil {
 			return err
 		}
 
+		status := "running"
+		terminalReason := ""
 		if result.Result == "incapacitated" {
-			// Session 携弹已在启动时移出仓库，失能时剩余弹药随当前携行一并丢失。
-			stateAfter.Ammo = engine.CarriedAmmo{}
-			operationKey := fmt.Sprintf("session:%d:run:%d:recovery", sess.ID, runIndex)
-			operation, replay, err := claimEconomicOperation(tx, s.userID, operationKey, "session_recovery")
-			if err != nil {
-				return err
-			} else if !replay {
-				if err := replaceLostLoadoutTx(tx, s.userID, sess.RecoveryPreset, snapshot, state.Loadout, state.Consumables); err != nil {
-					if !errors.Is(err, ErrPurchaseUnavailable) {
-						return fmt.Errorf("处理失能丢装: %w", err)
-					}
-					finishReason = "resource_unavailable"
-					finishDetail = classifyResourceUnavailable(err, "loadout_unavailable")
-					operation.ResultJSON = `{"ok":false}`
-					result.Report = appendEngineReport(result.Report, fmt.Sprintf(">> 携行装备已丢失，按预设 %d 补购失败：%s", sess.RecoveryPreset, err))
-					result.Finished = true
-					stateAfter.Loadout = engine.LoadoutState{}
-					stateAfter.ArmorDurability = 0
-					stateAfter.Consumables = nil
-					stateAfter.Carry.UsedSlots = 0
-					stateAfter.Carry.UsedWeight = 0
-				} else {
-					result.Finished = false
-					var character models.Character
-					if err := tx.Where("user_id = ? AND id = ?", s.userID, sess.CharacterID).First(&character).Error; err != nil {
-						return fmt.Errorf("读取补购后的角色: %w", err)
-					}
-					loadout, err := GetPlayerLoadoutForUser(tx, s.userID)
-					if err != nil {
-						return err
-					}
-					preset := snapshot.RecoveryPresets[sess.RecoveryPreset]
-					recoveredAmmo, recoveryRefill, ammoErr := reservePresetAmmoTx(tx, s.userID, snapshot, preset)
-					if ammoErr != nil && !errors.Is(ammoErr, ErrPurchaseUnavailable) {
-						return ammoErr
-					}
-					if ammoErr != nil {
-						finishReason = "resource_unavailable"
-						finishDetail = classifyResourceUnavailable(ammoErr, "ammo_unavailable")
-						result.Finished = true
-						operation.ResultJSON = `{"ok":false}`
-						result.Report = appendEngineReport(result.Report, fmt.Sprintf(">> 预设装备补购完成，但弹药补给失败，行动结束：%s", ammoErr))
-					} else {
-						ammoRefill = recoveryRefill
-						result.Report = appendEngineReport(result.Report, fmt.Sprintf(">> 携行装备已丢失，按预设 %d 补购完成，准备继续探索", sess.RecoveryPreset))
-					}
-					stateAfter, err = buildEngineState(tx, s.userID, character, loadout, recoveredAmmo)
-					if err != nil {
-						return err
-					}
-					stateAfter.Character.Injury = result.Injury
-				}
-				if operation.ResultJSON == "{}" {
-					operation.ResultJSON = `{"ok":true}`
-				}
-				if err := tx.Save(operation).Error; err != nil {
-					return fmt.Errorf("保存失能补购结果: %w", err)
-				}
+			status = "incapacitated"
+			terminalReason = "hp_zero"
+		} else if !runEndAt.Before(deadline) || stateAfter.Character.Energy <= 0 || stateAfter.Character.Hydration <= 0 || stateAfter.ArmorDurability <= 0 || result.Finished {
+			status = "success"
+			switch {
+			case !runEndAt.Before(deadline):
+				terminalReason = "offline_limit"
+			case stateAfter.Character.Energy <= 0 || stateAfter.Character.Hydration <= 0:
+				terminalReason = "resource_depleted"
+			case stateAfter.ArmorDurability <= 0:
+				terminalReason = "armor_broken"
+			default:
+				terminalReason = "run_complete"
 			}
 		}
-		if !result.Finished && runEndAt.Before(deadline) {
+
+		if status == "running" {
 			candidate := stateAfter
-			refill, refillErr := ensureSessionAmmoTx(tx, s.userID, snapshot, &candidate)
-			if refillErr != nil && !errors.Is(refillErr, ErrPurchaseUnavailable) {
-				return refillErr
-			}
-			if refillErr != nil {
-				finishReason = "resource_unavailable"
-				finishDetail = classifyResourceUnavailable(refillErr, "ammo_unavailable")
-				result.Finished = true
-				result.Report = appendEngineReport(result.Report, fmt.Sprintf(">> 弹药耗尽且自动补给失败，行动结束：%s", refillErr))
+			ammoRefill, err = ensureSessionAmmoBeforeNextRun(tx, s.userID, snapshot, &candidate)
+			if err != nil {
+				if !errors.Is(err, ErrPurchaseUnavailable) {
+					return err
+				}
+				status = "success"
+				terminalReason = "ammo_unavailable"
 			} else {
 				stateAfter = candidate
-				ammoRefill = refill
-				if refill != nil {
-					result.Report = appendEngineReport(result.Report, fmt.Sprintf(">> N%d 弹药耗尽，自动补充 %d 发 N%d 弹药，花费 ￥%d", refill.FromLevel, refill.Rounds, refill.ToLevel, refill.TotalPrice))
+				nextRunStartAt := runEndAt
+				var nextRunAt time.Time
+				nextPlan, nextRunAt, err = planEngineRun(sess.EngineVersion, snapshot, sess.Seed, runIndex+1, sess.Style, stateAfter, nextRunStartAt)
+				if err != nil {
+					return fmt.Errorf("规划第%d局探索: %w", runIndex+1, err)
 				}
+				sess.CurrentRunStartedAt = &nextRunStartAt
+				sess.NextRunAt = &nextRunAt
 			}
 		}
-		injuryUntil := (*time.Time)(nil)
-		if result.Injury != "none" && !result.Finished && runEndAt.Before(deadline) {
-			until := runEndAt.Add(time.Duration(injuryWaitSeconds(result.Injury)) * time.Second)
-			injuryUntil = &until
-			stateAfter.Character.Injury = result.Injury
-		} else {
-			stateAfter.Character.Injury = "none"
-		}
-		if err := updateCharacterFromEngine(tx, s.userID, sess.CharacterID, stateAfter.Character, injuryUntil); err != nil {
-			return err
+
+		if status != "running" {
+			if result.Result == "incapacitated" {
+				if err := discardSessionLoadoutTx(tx, s.userID, state.Loadout, stateAfter.CarriedItems); err != nil {
+					return err
+				}
+				stateAfter.Ammo = engine.CarriedAmmo{}
+				stateAfter.Loadout = engine.LoadoutState{}
+				stateAfter.CarriedItems = nil
+				stateAfter.Consumables = nil
+				stateAfter.Carry.UsedSlots = 0
+				stateAfter.Carry.UsedWeight = 0
+			} else {
+				if err := syncLoadoutConsumablesFromCarriedItemsTx(tx, s.userID, sess.CharacterID, stateAfter.CarriedItems); err != nil {
+					return err
+				}
+				if err := returnCarriedAmmoTx(tx, s.userID, snapshot, &stateAfter); err != nil {
+					return err
+				}
+				if err := returnCarriedItemsTx(tx, s.userID, snapshot, stateAfter.CarriedItems); err != nil {
+					return err
+				}
+				stateAfter.CarriedItems = nil
+				stateAfter.Consumables = nil
+			}
+			if err := createRecoveryPlanTx(tx, s.userID, sess.ID, stateAfter.Character, sess.RecoveryPolicyJSON); err != nil {
+				return err
+			}
 		}
 
-		stateAfter.Consumables = engine.CloneItemStacks(stateAfter.Consumables)
-		if err := syncLoadoutConsumables(tx, s.userID, sess.CharacterID, stateAfter.Consumables); err != nil {
-			return err
-		}
 		encodedState, err := json.Marshal(stateAfter)
 		if err != nil {
 			return fmt.Errorf("序列化单局后状态: %w", err)
@@ -203,14 +137,11 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		if err != nil {
 			return err
 		}
-		report := result.Report
-		if len(storedLoot) > 0 {
-			report = appendEngineReport(report, fmt.Sprintf(">> 实际带回 %d 件物品", lootQuantityEngine(storedLoot)))
+		overflowJSON, err := encodeEngineLoot(overflowLoot, snapshot)
+		if err != nil {
+			return err
 		}
-		if lootQuantityEngine(overflowLoot) > 0 {
-			report = appendEngineReport(report, fmt.Sprintf(">> 基地仓库空间不足，放弃 %d 件物品", lootQuantityEngine(overflowLoot)))
-		}
-		reportJSON, err := encodeEngineReport(report)
+		reportJSON, err := encodeEngineReport(result.Report)
 		if err != nil {
 			return err
 		}
@@ -218,88 +149,96 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		if err != nil {
 			return fmt.Errorf("序列化单局消耗: %w", err)
 		}
-		overflowJSON, err := encodeEngineLoot(overflowLoot, snapshot)
+		itemChangesJSON, err := json.Marshal(result.NextState.CarriedItems)
 		if err != nil {
-			return err
+			return fmt.Errorf("序列化物品实例变化: %w", err)
 		}
-		run := models.SessionRun{UserID: s.userID, SessionID: sess.ID, RunIndex: runIndex, Result: result.Result, DurationMin: int((result.DurationSec + 59) / 60), DurationSec: result.DurationSec, Heat: result.Heat, AmmoUsed: result.AmmoUsed, Injury: result.Injury, Loot: lootJSON, StoredLoot: storedLootJSON, OverflowLoot: overflowJSON, Consumed: string(consumedJSON), InputState: string(inputStateJSON), NextState: string(encodedState), Report: reportJSON}
+		run := models.SessionRun{
+			UserID: s.userID, SessionID: sess.ID, RunIndex: runIndex, Result: result.Result,
+			DurationMin: int((result.DurationSec + 59) / 60), DurationSec: result.DurationSec,
+			Heat: result.Heat, AmmoUsed: result.AmmoUsed,
+			StartHP: result.StartHP, EndHP: result.EndHP, StartEnergy: result.StartEnergy, EndEnergy: result.EndEnergy,
+			StartHydration: result.StartHydration, EndHydration: result.EndHydration,
+			Loot: lootJSON, StoredLoot: storedLootJSON, OverflowLoot: overflowJSON,
+			Consumed: string(consumedJSON), ItemInstanceChanges: string(itemChangesJSON),
+			InputState: string(inputStateJSON), NextState: string(encodedState), Report: reportJSON,
+		}
 		if err := tx.Create(&run).Error; err != nil {
 			return fmt.Errorf("保存单局记录: %w", err)
 		}
+
 		sess.ElapsedSec += result.DurationSec
 		sess.ElapsedMin = int(sess.ElapsedSec / 60)
 		sess.TotalRuns = runIndex
-		nextRunAt := runEndAt
-		var currentRunStartedAt *time.Time
-		status := "running"
-		if result.Injury != "none" && !result.Finished && runEndAt.Before(deadline) {
-			nextRunAt = runEndAt.Add(time.Duration(injuryWaitSeconds(result.Injury)) * time.Second)
-			status = "waiting_injury"
-		}
-		if result.Finished || !runEndAt.Before(deadline) {
-			status = "finished"
-		}
-		if status != "finished" {
-			weapon, ok := snapshot.Weapons[stateAfter.Loadout.WeaponID]
-			if !ok {
-				return fmt.Errorf("下一局武器 %s 不在场景快照中", stateAfter.Loadout.WeaponID)
-			}
-			if weapon.AmmoPerRound > 0 && stateAfter.Ammo.Rounds < weapon.AmmoPerRound {
-				status = "finished"
-				if finishReason == "" {
-					finishReason = "resource_unavailable"
-					finishDetail = "ammo_unavailable"
-				}
-			}
-		}
-		if status == "finished" && finishReason == "" {
-			if !runEndAt.Before(deadline) {
-				finishReason = "offline_limit"
-			} else {
-				finishReason = "run_finished"
-			}
-		}
-		if status == "running" {
-			nextRunStartAt := runEndAt
-			var plannedNextRunAt time.Time
-			nextPlan, plannedNextRunAt, err = planEngineRun(sess.EngineVersion, snapshot, sess.Seed, runIndex+1, sess.Style, stateAfter, nextRunStartAt)
-			if err != nil {
-				return fmt.Errorf("规划第%d局探索: %w", runIndex+1, err)
-			}
-			currentRunStartedAt = &nextRunStartAt
-			nextRunAt = plannedNextRunAt
-		}
-		if status == "finished" {
-			if err := returnCarriedAmmoTx(tx, s.userID, snapshot, &stateAfter); err != nil {
-				return err
-			}
-			encodedState, err = json.Marshal(stateAfter)
-			if err != nil {
-				return fmt.Errorf("序列化行动终态: %w", err)
-			}
-			if err := tx.Model(&models.SessionRun{}).Where("user_id = ? AND id = ?", s.userID, run.ID).
-				Update("next_state", string(encodedState)).Error; err != nil {
-				return fmt.Errorf("保存单局终态弹药: %w", err)
-			}
-		}
+		sess.StateJSON = string(encodedState)
 		sess.WeaponID = stateAfter.Loadout.WeaponID
 		sess.ArmorID = stateAfter.Loadout.ArmorID
+		sess.ArmorInstanceID = stateAfter.Loadout.ArmorInstanceID
 		sess.AmmoID = stateAfter.Ammo.ID
 		sess.AmmoRounds = stateAfter.Ammo.Rounds
 		sess.Consumables = stringsFromStacks(stateAfter.Consumables)
-		sess.StateJSON = string(encodedState)
-		sess.CurrentRunStartedAt = currentRunStartedAt
-		sess.NextRunAt = &nextRunAt
-		sess.Status = status
-		now := time.Now()
 		sess.LastProcessedAt = &runEndAt
-		pendingRunIndex := 0
-		pendingRunResult := "{}"
-		pendingRunHash := ""
+		now := time.Now()
+		updates := map[string]interface{}{
+			"status": status, "terminal_reason": terminalReason, "elapsed_sec": sess.ElapsedSec, "elapsed_min": sess.ElapsedMin,
+			"total_runs": sess.TotalRuns, "weapon_id": sess.WeaponID, "armor_id": sess.ArmorID,
+			"armor_instance_id": sess.ArmorInstanceID,
+			"ammo_id":           sess.AmmoID, "ammo_rounds": sess.AmmoRounds, "consumables": sess.Consumables,
+			"state_json": sess.StateJSON, "last_processed_at": runEndAt, "heartbeat_at": now,
+		}
 		if status == "running" {
-			pendingRunIndex = nextPlan.RunIndex
-			pendingRunResult, pendingRunHash, err = marshalPendingRun(nextPlan.RunIndex, nextPlan.Input, nextPlan.Result)
+			pendingResult, pendingHash, err := marshalPendingRun(nextPlan.RunIndex, nextPlan.Input, nextPlan.Result)
 			if err != nil {
+				return err
+			}
+			sess.Status = "running"
+			sess.PendingRunIndex = nextPlan.RunIndex
+			sess.PendingRunResult = pendingResult
+			sess.PendingRunHash = pendingHash
+			updates["current_run_started_at"] = sess.CurrentRunStartedAt
+			updates["next_run_at"] = sess.NextRunAt
+			updates["pending_run_index"] = sess.PendingRunIndex
+			updates["pending_run_result"] = pendingResult
+			updates["pending_run_hash"] = pendingHash
+		} else {
+			sess.Status = status
+			sess.TerminalReason = terminalReason
+			sess.EndTime = &now
+			sess.CurrentRunStartedAt = nil
+			sess.NextRunAt = nil
+			sess.PendingRunIndex = 0
+			sess.PendingRunResult = "{}"
+			sess.PendingRunHash = ""
+			updates["end_time"] = now
+			updates["current_run_started_at"] = nil
+			updates["next_run_at"] = nil
+			updates["pending_run_index"] = 0
+			updates["pending_run_result"] = "{}"
+			updates["pending_run_hash"] = ""
+		}
+		query := tx.Model(&models.Session{}).Where("user_id = ? AND id = ? AND status = ?", s.userID, sess.ID, "running")
+		if s.leaseOwner != "" {
+			query = query.Where("lease_owner = ? AND lease_until > ?", s.leaseOwner, now)
+		}
+		updateResult := query.Updates(updates)
+		if updateResult.Error != nil {
+			return fmt.Errorf("保存行动调度进度: %w", updateResult.Error)
+		}
+		if updateResult.RowsAffected != 1 {
+			return ErrSessionLeaseLost
+		}
+		if status == "running" {
+			if err := appendPlannedSessionEvents(tx, s.userID, sess.ID, nextPlan, *sess.CurrentRunStartedAt); err != nil {
+				return err
+			}
+		}
+		if ammoRefill != nil {
+			if err := appendSessionEventTx(tx, s.userID, sess.ID, runIndex, sessionEventAmmoRefilled, result.DurationSec, now, "", ammoRefill.ToAmmoID, map[string]interface{}{
+				"fromAmmoId": ammoRefill.FromAmmoID, "toAmmoId": ammoRefill.ToAmmoID,
+				"fromLevel": ammoRefill.FromLevel, "toLevel": ammoRefill.ToLevel,
+				"rounds": ammoRefill.Rounds, "unitPrice": ammoRefill.UnitPrice,
+				"totalPrice": ammoRefill.TotalPrice, "source": ammoRefill.Source,
+			}); err != nil {
 				return err
 			}
 		}
@@ -312,76 +251,99 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, overflowLoot, sessionEventLootOverflow, result.DurationSec, now); err != nil {
 			return err
 		}
-		if ammoRefill != nil {
-			if err := appendSessionEventTx(tx, s.userID, sess.ID, runIndex, sessionEventAmmoRefilled, result.DurationSec, now, "", ammoRefill.ToAmmoID, map[string]interface{}{
-				"fromAmmoId": ammoRefill.FromAmmoID, "toAmmoId": ammoRefill.ToAmmoID,
-				"fromLevel": ammoRefill.FromLevel, "toLevel": ammoRefill.ToLevel,
-				"rounds": ammoRefill.Rounds, "unitPrice": ammoRefill.UnitPrice,
-				"totalPrice": ammoRefill.TotalPrice, "source": ammoRefill.Source,
-			}); err != nil {
-				return err
-			}
-		}
 		if err := appendSessionEventTx(tx, s.userID, sess.ID, runIndex, sessionEventRunSettled, result.DurationSec, now, "", "", map[string]interface{}{
-			"result": result.Result, "status": status, "durationSec": result.DurationSec,
-			"heat": result.Heat, "ammoUsed": result.AmmoUsed, "injury": result.Injury,
+			"result": result.Result, "status": status, "durationSec": result.DurationSec, "heat": result.Heat, "ammoUsed": result.AmmoUsed,
 		}); err != nil {
 			return err
 		}
-		if status == "finished" {
+		if status != "running" {
 			if err := appendSessionEventTx(tx, s.userID, sess.ID, runIndex, sessionEventSessionFinished, result.DurationSec, now, "", "", map[string]interface{}{
-				"status": "finished", "result": result.Result, "reason": finishReason, "detail": finishDetail,
+				"status": status, "result": result.Result, "reason": terminalReason,
 			}); err != nil {
 				return err
 			}
-		}
-		if status == "running" {
-			if err := appendPlannedSessionEvents(tx, s.userID, sess.ID, nextPlan, *currentRunStartedAt); err != nil {
-				return err
-			}
-		}
-		var nextRunAtValue interface{}
-		if status != "finished" {
-			nextRunAtValue = nextRunAt
-		}
-		updates := map[string]interface{}{
-			"status": status, "end_time": nil, "elapsed_sec": sess.ElapsedSec, "elapsed_min": sess.ElapsedMin, "total_runs": sess.TotalRuns,
-			"weapon_id": sess.WeaponID, "armor_id": sess.ArmorID, "ammo_id": sess.AmmoID, "ammo_rounds": sess.AmmoRounds,
-			"consumables": sess.Consumables, "state_json": sess.StateJSON,
-			"current_run_started_at": currentRunStartedAt, "last_processed_at": runEndAt, "next_run_at": nextRunAtValue, "heartbeat_at": now,
-			"pending_run_index": pendingRunIndex, "pending_run_result": pendingRunResult, "pending_run_hash": pendingRunHash,
-		}
-		if status == "finished" {
-			updates["end_time"] = now
-		}
-		query := tx.Model(&models.Session{}).Where("user_id = ? AND id = ? AND status IN ?", s.userID, sess.ID, []string{"running", "waiting_injury"})
-		if s.leaseOwner != "" {
-			query = query.Where("lease_owner = ? AND lease_until > ?", s.leaseOwner, now)
-		}
-		updateResult := query.Updates(updates)
-		if updateResult.Error != nil {
-			return fmt.Errorf("保存行动调度进度: %w", updateResult.Error)
-		}
-		if updateResult.RowsAffected != 1 {
-			return ErrSessionLeaseLost
-		}
-		sess.PendingRunIndex = pendingRunIndex
-		sess.PendingRunResult = pendingRunResult
-		sess.PendingRunHash = pendingRunHash
-		if status == "finished" {
-			sess.NextRunAt = nil
-		} else {
-			sess.NextRunAt = &nextRunAt
 		}
 		*state = stateAfter
 		return nil
 	}); err != nil {
 		return err
 	}
-	if sess.Status == "waiting_injury" {
-		log.Printf("session %d waiting injury until %s", sess.ID, sess.NextRunAt.Format(time.RFC3339))
-	}
 	return nil
+}
+
+func (s *SessionService) storeSuccessfulLootTx(tx *gorm.DB, snapshot engine.ScenarioSnapshot, result engine.RunResult) ([]engine.LootDrop, []engine.LootDrop, error) {
+	if result.Result == "incapacitated" || len(result.ExtractedLoot) == 0 {
+		return nil, nil, nil
+	}
+	stored, overflow, err := fitEngineLootToStorage(tx, s.userID, result.ExtractedLoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, drop := range stored {
+		item, err := snapshotCatalogItem(snapshot, drop.ItemID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := addInventoryItem(tx, s.userID, item, drop.Quantity, true); err != nil {
+			return nil, nil, err
+		}
+	}
+	return stored, overflow, nil
+}
+
+func settleSessionArmorTx(tx *gorm.DB, userID uint, state engine.EngineState, incapacitated bool) error {
+	if state.Loadout.ArmorID == "" && state.Loadout.ArmorInstanceID == 0 {
+		return nil
+	}
+	var armor models.ArmorInstance
+	query := tx.Where("user_id = ? AND status IN ?", userID, []string{"normal", "broken"})
+	if state.Loadout.ArmorInstanceID > 0 {
+		query = query.Where("id = ?", state.Loadout.ArmorInstanceID)
+	} else {
+		query = query.Where("armor_id = ?", state.Loadout.ArmorID).Order("id asc")
+	}
+	err := query.First(&armor).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("读取结算护甲: %w", err)
+	}
+	if incapacitated {
+		return tx.Delete(&armor).Error
+	}
+	status := "normal"
+	if state.ArmorDurability <= 0 {
+		status = "broken"
+	}
+	return tx.Model(&models.ArmorInstance{}).Where("user_id = ? AND id = ?", userID, armor.ID).Updates(map[string]interface{}{
+		"cur_durability": maxInt(state.ArmorDurability, 0), "status": status,
+	}).Error
+}
+
+func discardSessionLoadoutTx(tx *gorm.DB, userID uint, loadout engine.LoadoutState, carriedItems []engine.CarriedItem) error {
+	ids := []string{loadout.WeaponID, loadout.ArmorID, loadout.ChestRigID, loadout.BackpackID, loadout.HelmetID, loadout.HeadsetID}
+	for _, itemID := range ids {
+		if itemID == "" {
+			continue
+		}
+		if err := removeInventoryItem(tx, userID, itemID, 1); err != nil {
+			return err
+		}
+	}
+	if err := discardCarriedItemsTx(tx, userID, carriedItems); err != nil {
+		return err
+	}
+	if err := discardSessionItemInstancesTx(tx, userID); err != nil {
+		return fmt.Errorf("清理失能携行实例: %w", err)
+	}
+	return tx.Model(&models.PlayerLoadout{}).Where("user_id = ?", userID).Updates(map[string]interface{}{
+		"weapon_id": "", "armor_id": "", "chest_rig_id": "", "backpack_id": "", "helmet_id": "", "headset_id": "", "consumables": "[]", "consumable_refs": "[]",
+	}).Error
+}
+
+func ensureSessionAmmoBeforeNextRun(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) (*ammoRefillResult, error) {
+	return ensureSessionAmmoTx(tx, userID, snapshot, state)
 }
 
 func lootQuantityEngine(loot []engine.LootDrop) int {
@@ -393,7 +355,7 @@ func lootQuantityEngine(loot []engine.LootDrop) int {
 }
 
 func stringsFromStacks(stacks []engine.ItemStack) string {
-	ids := make([]string, 0, len(stacks))
+	ids := make([]string, 0)
 	for _, stack := range stacks {
 		for i := 0; i < stack.Quantity; i++ {
 			ids = append(ids, stack.ItemID)

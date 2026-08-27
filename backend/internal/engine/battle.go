@@ -175,8 +175,10 @@ func buildPlayerActor(character CharacterState, weapon Weapon, armor Armor, armo
 	stealthEff := effectiveSkill(character.Stealth, character.Agility)
 	resistEff := effectiveSkill(character.Resist, character.Strength)
 	attrControl := calcWeaponAttrControl(weapon.Category, character, percepEff, resistEff)
+	maxHP := calcMaxHP(character.Strength)
+	hp := clamp(character.HP, 0, maxHP)
 	return BattleActor{
-		Name: character.Name, MaxHP: calcMaxHP(character.Strength), HP: calcMaxHP(character.Strength),
+		Name: character.Name, MaxHP: maxHP, HP: hp,
 		Stress: float64(character.Stress), StressThreshold: calcStressThreshold(resistEff), Weapon: weapon, Armor: armor,
 		ArmorDurability: float64(armorDurability), ArmorMaxDur: float64(armor.MaxDurability),
 		Evasion: calcEvasion(float64(character.Agility), float64(armor.Mobility)), Mobility: float64(armor.Mobility),

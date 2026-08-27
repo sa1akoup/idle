@@ -55,7 +55,6 @@ function eventTitle(event: SessionEvent): string {
     case 'ammo_refilled': return textOf(event, 'source') === 'preset_warehouse' ? '预设弹药已装入' : '弹药自动补给'
     case 'run_settled': return `第 ${event.runIndex} 局已结算`
     case 'session_finished': return '行动完成'
-    case 'session_aborted': return '行动已中止'
     case 'session_failed': return '行动执行失败'
     default: return event.eventType
   }
@@ -98,7 +97,6 @@ function eventSummary(event: SessionEvent): string {
     }
     case 'run_settled': return `结果：${textOf(event, 'result', '未知')} · 热度 ${numberOf(event, 'heat')} · 弹药 ${numberOf(event, 'ammoUsed')}`
     case 'session_finished': return '后续调度已停止，结果已保存'
-    case 'session_aborted': return '用户中止了当前行动，未结算的未来事件不会继续显示'
     case 'session_failed': return '后台执行失败，请查看服务日志'
     default: return ''
   }
@@ -109,7 +107,7 @@ function eventClass(event: SessionEvent): string {
   if (event.eventType.startsWith('extraction_')) return 'success'
   if (event.eventType.startsWith('loot_') || event.eventType.startsWith('container_') || event.eventType === 'ammo_refilled') return 'loot'
   if (event.eventType === 'session_finished' || event.eventType === 'run_settled') return 'success'
-  if (event.eventType === 'session_aborted' || event.eventType === 'session_failed') return 'danger'
+  if (event.eventType === 'session_failed') return 'danger'
   return 'normal'
 }
 </script>

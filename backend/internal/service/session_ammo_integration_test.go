@@ -1,4 +1,4 @@
-// Session 弹药集成测试：覆盖启动预留、持久化携弹状态和中止后的精确返还。
+// Session 弹药集成测试：覆盖启动预留、持久化携弹状态和技术异常后的精确返还。
 package service
 
 import (
@@ -65,12 +65,12 @@ func TestSessionReservesAndReturnsCarriedAmmo(t *testing.T) {
 	}
 	waitSessionWorker(t, sess.ID)
 
-	if err := service.Abort(sess.ID); err != nil {
-		t.Fatalf("中止 Session: %v", err)
+	if err := service.failSession(sess.ID, fmt.Errorf("test cleanup")); err != nil {
+		t.Fatalf("异常归还 Session: %v", err)
 	}
-	// 重复中止必须保持幂等，不能再次返还弹药。
-	if err := service.Abort(sess.ID); err != nil {
-		t.Fatalf("重复中止 Session: %v", err)
+	// 重复异常处理必须保持幂等，不能再次返还弹药。
+	if err := service.failSession(sess.ID, fmt.Errorf("重复 test cleanup")); err != nil {
+		t.Fatalf("重复异常归还 Session: %v", err)
 	}
 	returned, err := ammoInventoryQuantity(db, models.DefaultUserID, ammoID)
 	if err != nil {
@@ -83,8 +83,8 @@ func TestSessionReservesAndReturnsCarriedAmmo(t *testing.T) {
 	if err := db.First(&stored, "id = ? AND user_id = ?", sess.ID, models.DefaultUserID).Error; err != nil {
 		t.Fatalf("读取中止 Session: %v", err)
 	}
-	if stored.Status != "aborted" || stored.AmmoID != "" || stored.AmmoRounds != 0 {
-		t.Fatalf("中止 Session 字段异常: status=%s id=%s rounds=%d", stored.Status, stored.AmmoID, stored.AmmoRounds)
+	if stored.Status != "failed" || stored.AmmoID != "" || stored.AmmoRounds != 0 {
+		t.Fatalf("异常归还 Session 字段异常: status=%s id=%s rounds=%d", stored.Status, stored.AmmoID, stored.AmmoRounds)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestSessionSettlementRefillsAmmoAndWritesEvent(t *testing.T) {
 	// 模拟本局消耗到不足一次攻击，结算层应返还剩弹并按快照购买 N2。
 	state.Ammo.Rounds = 2
 	result := engine.RunResult{
-		Result: "success", DurationSec: 1, AmmoUsed: 58, Injury: "none",
+		Result: "success", DurationSec: 1, AmmoUsed: 58,
 		NextState: state, SkipResourceConsumption: true,
 	}
 	runEndAt := time.Now()
@@ -200,14 +200,14 @@ func TestSessionSettlementAmmoPurchaseFailureReturnsCarriedAmmoOnce(t *testing.T
 
 	runEndAt := time.Now()
 	result := engine.RunResult{
-		Result: "success", DurationSec: 1, AmmoUsed: 58, Injury: "none",
+		Result: "success", DurationSec: 1, AmmoUsed: 58,
 		NextState: state, SkipResourceConsumption: true,
 	}
 	if err := service.settleEngineRun(sess, &state, snapshot, result, 1, runEndAt, runEndAt.Add(time.Hour)); err != nil {
 		t.Fatalf("现金不足时结算 Session: %v", err)
 	}
-	if sess.Status != "finished" {
-		t.Fatalf("补给失败后的 Session 状态 = %s，期望 finished", sess.Status)
+	if sess.Status != "success" {
+		t.Fatalf("补给失败后的 Session 状态 = %s，期望 success", sess.Status)
 	}
 	assertAmmoQuantity(t, db, models.DefaultUserID, "ammo_762x39_n4", 122)
 	assertAmmoQuantity(t, db, models.DefaultUserID, "cash", 0)

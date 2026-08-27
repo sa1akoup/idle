@@ -6,6 +6,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"idle/internal/models"
 
@@ -140,6 +141,9 @@ func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, e
 	if len(items) == 0 {
 		return 0, nil
 	}
+	if err := settleDueHideoutJobsTx(tx, userID, time.Now()); err != nil {
+		return 0, err
+	}
 
 	used, err := inventoryUsage(tx, userID)
 	if err != nil {
@@ -149,8 +153,12 @@ func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, e
 	if err != nil {
 		return 0, err
 	}
-	if used+additionalCapacity > models.InventoryCapacity {
-		return 0, fmt.Errorf("%w：仓库空间不足，还需 %d 个空位", ErrPurchaseUnavailable, used+additionalCapacity-models.InventoryCapacity)
+	capacity, err := storageCapacityForUser(tx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if used+additionalCapacity > capacity {
+		return 0, fmt.Errorf("%w：仓库空间不足，还需 %d 个空位", ErrPurchaseUnavailable, used+additionalCapacity-capacity)
 	}
 
 	totalPrice := 0
@@ -228,15 +236,40 @@ func GetStorageCapacity(db *gorm.DB) (*StorageCapacity, error) {
 
 // GetStorageCapacityForUser 返回指定用户仓库容量与扣除装备配置后的实际占用。
 func GetStorageCapacityForUser(db *gorm.DB, userID uint) (*StorageCapacity, error) {
+	if err := settleDueHideoutJobsForUser(db, userID); err != nil {
+		return nil, err
+	}
 	used, err := inventoryUsage(db, userID)
 	if err != nil {
 		return nil, err
 	}
-	return &StorageCapacity{Capacity: models.InventoryCapacity, Used: used}, nil
+	capacity, err := storageCapacityForUser(db, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &StorageCapacity{Capacity: capacity, Used: used}, nil
 }
 
 // addInventoryItem 按 (itemID, raidExtract) 新增或累加库存。
 func addInventoryItem(tx *gorm.DB, userID uint, item catalogItem, quantity int, raidExtract bool) error {
+	var useDef models.ItemUseDef
+	if err := tx.Where("item_id = ?", item.ID).First(&useDef).Error; err == nil && useDef.InstanceRequired {
+		maxDurability := useDef.MaxDurability
+		if maxDurability <= 0 {
+			maxDurability = 100
+		}
+		for i := 0; i < quantity; i++ {
+			if err := tx.Create(&models.ItemInstance{
+				UserID: userID, ItemID: item.ID, CurrentDurability: maxDurability, MaxDurability: maxDurability,
+				Status: "normal", LocationType: "inventory", RaidExtract: raidExtract,
+			}).Error; err != nil {
+				return fmt.Errorf("新增物品实例 %s: %w", item.Name, err)
+			}
+		}
+		return nil
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("读取物品效果 %s: %w", item.ID, err)
+	}
 	var inventory models.Inventory
 	err := tx.Where("user_id = ? AND item_id = ? AND raid_extract = ?", userID, item.ID, raidExtract).First(&inventory).Error
 	switch {
@@ -267,7 +300,15 @@ func addInventoryItem(tx *gorm.DB, userID uint, item catalogItem, quantity int, 
 
 // removeInventoryItem 从该物品的总库存中扣除数量（优先扣局内带出），用于失能丢装。
 func removeInventoryItem(tx *gorm.DB, userID uint, itemID string, quantity int) error {
-	for _, raid := range []bool{true, false} {
+	return removeInventoryItemFromSource(tx, userID, itemID, quantity, nil)
+}
+
+func removeInventoryItemFromSource(tx *gorm.DB, userID uint, itemID string, quantity int, source *bool) error {
+	sources := []bool{true, false}
+	if source != nil {
+		sources = []bool{*source}
+	}
+	for _, raid := range sources {
 		if quantity <= 0 {
 			break
 		}

@@ -147,7 +147,9 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
   }
   const pickerList = computed(() => {
     if (pickerKind.value === 'consumable') {
-      return props.consumables.map((c) => ({ id: c.id, name: c.name, detail: `${c.desc} · ${c.weight}kg` }))
+      return props.consumables
+        .filter((c) => c.usableInSession)
+        .map((c) => ({ id: c.id, name: c.name, detail: `${c.desc} · ${c.weight}kg` }))
     }
     return pickerContext.value === 'current' ? currentOptions(pickerKey.value) : slotOptions(pickerKey.value)
   })

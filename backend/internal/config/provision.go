@@ -21,5 +21,11 @@ func ProvisionUser(db *gorm.DB, userID uint) error {
 			return err
 		}
 	}
-	return seedMerchantStatesForUser(db, userID)
+	if err := seedSurvivalForUser(db, userID); err != nil {
+		return err
+	}
+	if err := seedMerchantStatesForUser(db, userID); err != nil {
+		return err
+	}
+	return seedHideoutForUser(db, userID)
 }

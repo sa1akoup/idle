@@ -43,9 +43,9 @@ func (h *Handler) ListArmorInstances(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 func (h *Handler) ListConsumables(c *gin.Context) {
-	var list []models.ConsumableDef
-	if err := h.db.Find(&list).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "补给数据读取失败"})
+	list, err := service.ListUsableItems(h.db)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -115,6 +115,26 @@ func (h *Handler) ListInventory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, list)
+}
+
+// ListItemInstances 返回仓库中的通用耐久物品实例。
+func (h *Handler) ListItemInstances(c *gin.Context) {
+	list, err := service.ListItemInstancesForUser(h.db, userID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+// GetCurrentRecovery 返回当前自动恢复计划，读取时会先结算已经过的时间。
+func (h *Handler) GetCurrentRecovery(c *gin.Context) {
+	recovery, err := service.GetCurrentRecoveryForUser(h.db, userID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, recovery)
 }
 
 func (h *Handler) GetInventoryCapacity(c *gin.Context) {

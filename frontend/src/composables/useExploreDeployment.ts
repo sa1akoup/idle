@@ -11,6 +11,9 @@ import type {
   InventoryItem,
   Player,
   PlayerLoadout,
+  RecoveryMethod,
+  RecoveryPolicy,
+  RecoveryView,
   Session,
   StartSessionRequest,
   Weapon,
@@ -26,6 +29,7 @@ export interface ExploreProps {
   armors: Armor[]
   consumables: Consumable[]
   inventory: InventoryItem[]
+  recovery: RecoveryView | null
 }
 
 export type ExploreEmit = (event: 'created', session: Session) => void
@@ -44,9 +48,27 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
   const selectedPreset = ref(1)
   const selectedAmmoId = ref('')
   const selectedAmmoRounds = ref(0)
+  const selectedHPRecoveryMethod = ref<RecoveryMethod>('inventory')
+  const selectedEnergyRecoveryMethod = ref<RecoveryMethod>('inventory')
+  const selectedHydrationRecoveryMethod = ref<RecoveryMethod>('inventory')
   const starting = ref(false)
+
+  const recoveryMethods: Array<{ value: RecoveryMethod; label: string }> = [
+    { value: 'inventory', label: '优先使用库存' },
+    { value: 'hideout', label: '藏身处等待' },
+    { value: 'merchant', label: '商人购买' },
+  ]
+
+  const recoveryPending = computed(() => Boolean(
+    props.recovery?.plan.status === 'running'
+    && props.recovery.tasks.some((task) => task.status !== 'completed' && task.currentValue < task.targetValue - 0.000001),
+  ))
   
-  const currentWeapon = computed(() => props.weapons.find((item) => item.id === props.loadout.weaponId))
+  const selectedPresetSlot = computed(() => presetOf(props.loadout, selectedPreset.value))
+  const currentWeapon = computed(() => props.weapons.find((item) => item.id === props.loadout.weaponId)
+    ?? props.weapons.find((item) => item.id === selectedPresetSlot.value.weaponId))
+  const deploymentArmor = computed(() => props.armors.find((item) => item.id === props.loadout.armorId)
+    ?? props.armors.find((item) => item.id === selectedPresetSlot.value.armorId))
   const compatibleOwnedAmmos = computed(() => {
     const caliberId = currentWeapon.value?.caliberId
     if (!caliberId) return []
@@ -96,8 +118,28 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
   }
   
   const selectedPresetSummary = computed(() => presetSummary(selectedPreset.value))
+
+  function recoveryMethodLabel(method: RecoveryMethod): string {
+    return recoveryMethods.find((item) => item.value === method)?.label ?? method
+  }
+
+  function fallbackMethodFor(method: RecoveryMethod): RecoveryMethod | 'none' {
+    if (method === 'inventory') return 'hideout'
+    if (method === 'hideout') return 'none'
+    return 'hideout'
+  }
+
+  function buildRecoveryPolicy(): RecoveryPolicy {
+    return {
+      hp: { targetPercent: 100, primaryMethod: selectedHPRecoveryMethod.value, fallbackMethod: fallbackMethodFor(selectedHPRecoveryMethod.value) },
+      energy: { targetPercent: 80, primaryMethod: selectedEnergyRecoveryMethod.value, fallbackMethod: fallbackMethodFor(selectedEnergyRecoveryMethod.value) },
+      hydration: { targetPercent: 80, primaryMethod: selectedHydrationRecoveryMethod.value, fallbackMethod: fallbackMethodFor(selectedHydrationRecoveryMethod.value) },
+      merchantEnable: true,
+    }
+  }
+
   const canSubmit = computed(() => {
-    const preset = presetOf(props.loadout, selectedPreset.value)
+    const preset = selectedPresetSlot.value
     const weapon = currentWeapon.value
     const hasCompatibleAmmo = !weapon || weapon.ammoPerRound <= 0 || Boolean(
       selectedAmmoId.value
@@ -105,7 +147,7 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
       && selectedAmmoRounds.value <= selectedAmmoStock.value,
     )
     return Boolean(
-      selectedMap.value && props.loadout.weaponId && props.loadout.armorId
+      selectedMap.value && ((props.loadout.weaponId && props.loadout.armorId) || (preset.weaponId && preset.armorId))
       && preset.weaponId && preset.armorId && hasCompatibleAmmo,
     )
   })
@@ -115,8 +157,9 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
       mapId: selectedMap.value,
       style: selectedStyle.value,
       recoveryPreset: selectedPreset.value,
-      ammoId: selectedAmmoId.value,
-      ammoRounds: selectedAmmoRounds.value,
+      recoveryPolicy: buildRecoveryPolicy(),
+      ammoId: selectedAmmoId.value || selectedPresetSlot.value.ammoId,
+      ammoRounds: selectedAmmoRounds.value || selectedPresetSlot.value.ammoRounds,
     }
   }
   
@@ -135,7 +178,8 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
 
   return {
     styles, selectedMap, selectedStyle, selectedPreset, selectedAmmoId, selectedAmmoRounds, starting,
-    currentWeapon, compatibleOwnedAmmos, ammoInventoryQuantity, selectedAmmoStock,
-    presetSummary, selectedPresetSummary, canSubmit, startSession,
+    recoveryMethods, selectedHPRecoveryMethod, selectedEnergyRecoveryMethod, selectedHydrationRecoveryMethod,
+    currentWeapon, deploymentArmor, recoveryPending, compatibleOwnedAmmos, ammoInventoryQuantity, selectedAmmoStock,
+    presetSummary, selectedPresetSummary, recoveryMethodLabel, canSubmit, startSession,
   }
 }

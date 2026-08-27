@@ -1,4 +1,4 @@
-// 探索会话服务：负责创建、查询和中止 Session，具体模拟由纯引擎 worker 执行。
+// 探索会话服务：负责创建、查询和后台推进 Session，具体模拟由纯引擎 worker 执行。
 package service
 
 import (
@@ -29,20 +29,21 @@ func NewSessionServiceWithLease(db *gorm.DB, userID uint, leaseOwner string) *Se
 	return &SessionService{db: db, userID: userID, leaseOwner: leaseOwner}
 }
 
-// StartReq 启动挂机会话的请求：地图、行动风格与失能后的预设装备序号。
+// StartReq 启动挂机会话的请求：地图、行动风格、恢复策略与失能后的预设装备序号。
 type StartReq struct {
-	MapID          string   `json:"mapId"`
-	Style          string   `json:"style"`
-	RecoveryPreset int      `json:"recoveryPreset"`
-	AmmoID         string   `json:"ammoId"`
-	AmmoRounds     int      `json:"ammoRounds"`
-	WeaponID       string   `json:"-"`
-	ArmorID        string   `json:"-"`
-	ChestRigID     string   `json:"-"`
-	BackpackID     string   `json:"-"`
-	HelmetID       string   `json:"-"`
-	HeadsetID      string   `json:"-"`
-	Consumables    []string `json:"-"`
+	MapID          string          `json:"mapId"`
+	Style          string          `json:"style"`
+	RecoveryPreset int             `json:"recoveryPreset"`
+	RecoveryPolicy *RecoveryPolicy `json:"recoveryPolicy"`
+	AmmoID         string          `json:"ammoId"`
+	AmmoRounds     int             `json:"ammoRounds"`
+	WeaponID       string          `json:"-"`
+	ArmorID        string          `json:"-"`
+	ChestRigID     string          `json:"-"`
+	BackpackID     string          `json:"-"`
+	HelmetID       string          `json:"-"`
+	HeadsetID      string          `json:"-"`
+	Consumables    []string        `json:"-"`
 }
 
 const defaultOfflineLimitMin = 1440
@@ -57,15 +58,25 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 	if req.RecoveryPreset < 1 || req.RecoveryPreset > 3 {
 		return nil, fmt.Errorf("失败预设装备序号需为 1-3")
 	}
+	recoveryPolicyJSON, err := recoveryPolicyJSONForStart(req.RecoveryPolicy)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	var sess models.Session
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, s.userID); err != nil {
 			return err
 		}
+		if err := settleRecoveryForUserTx(tx, s.userID); err != nil {
+			return err
+		}
+		if err := ensureRecoveryReadyForStartTx(tx, s.userID); err != nil {
+			return err
+		}
 		// 事务内重新检查活跃 Session，确保启动与出售/换装使用同一把用户资源锁。
 		var running int64
-		if err := tx.Model(&models.Session{}).Where("user_id = ? AND status IN ?", s.userID, []string{"running", "waiting_injury"}).Count(&running).Error; err != nil {
+		if err := tx.Model(&models.Session{}).Where("user_id = ? AND status = ?", s.userID, "running").Count(&running).Error; err != nil {
 			return fmt.Errorf("读取行动状态: %w", err)
 		}
 		if running > 0 {
@@ -76,15 +87,29 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 		if err := tx.Where("user_id = ?", s.userID).First(&txCharacter).Error; err != nil {
 			return fmt.Errorf("读取玩家角色: %w", err)
 		}
-		if txCharacter.Injury != "" && txCharacter.Injury != "none" && txCharacter.InjuryUntil != nil && now.Before(*txCharacter.InjuryUntil) {
-			return fmt.Errorf("角色伤势恢复中，剩余 %v", time.Until(*txCharacter.InjuryUntil).Round(time.Second))
+		if txCharacter.HP <= 0 || txCharacter.Energy <= 0 || txCharacter.Hydration <= 0 {
+			return fmt.Errorf("角色正在恢复中，请等待生命、能量和饮水恢复")
 		}
 		txLoadout, err := GetPlayerLoadoutForUser(tx, s.userID)
 		if err != nil {
 			return err
 		}
+		if isEmptyCurrentLoadout(txLoadout) {
+			if err := restoreLostLoadoutForStartTx(tx, s.userID, txLoadout, req.RecoveryPreset); err != nil {
+				return err
+			}
+			txLoadout, err = GetPlayerLoadoutForUser(tx, s.userID)
+			if err != nil {
+				return err
+			}
+		}
 		if err := validateOwnedLoadoutForUser(tx, s.userID, txLoadout.WeaponID, txLoadout.ArmorID, txLoadout.Consumables, txLoadout.ChestRigID, txLoadout.BackpackID, txLoadout.HelmetID, txLoadout.HeadsetID); err != nil {
 			return err
+		}
+		if req.AmmoID == "" && req.AmmoRounds == 0 {
+			req.AmmoID, req.AmmoRounds = PresetAmmoOf(txLoadout, req.RecoveryPreset)
+		} else if req.AmmoID == "" || req.AmmoRounds <= 0 {
+			return fmt.Errorf("携弹配置不完整")
 		}
 		presetWeaponID, presetArmorID, _ := PresetOf(txLoadout, req.RecoveryPreset)
 		if presetWeaponID == "" || presetArmorID == "" {
@@ -98,15 +123,18 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 		if err != nil {
 			return fmt.Errorf("配置探索弹药: %w", err)
 		}
+		seed := now.UnixNano()
 		state, err := buildEngineState(tx, s.userID, txCharacter, txLoadout, carriedAmmo)
 		if err != nil {
+			return err
+		}
+		if err := reserveCarriedItemsTx(tx, s.userID, state.CarriedItems, fmt.Sprintf("session-seed:%d", seed)); err != nil {
 			return err
 		}
 		stateJSON, err := json.Marshal(state)
 		if err != nil {
 			return fmt.Errorf("序列化探索初始状态: %w", err)
 		}
-		seed := now.UnixNano()
 		plan, nextRunAt, err := planEngineRun(engine.EngineVersion, snapshot, seed, 1, req.Style, state, now)
 		if err != nil {
 			return fmt.Errorf("规划首局探索: %w", err)
@@ -117,8 +145,8 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 		}
 		sess = models.Session{
 			UserID: s.userID, CharacterID: txCharacter.ID, MapID: req.MapID, Style: req.Style, RecoveryPreset: req.RecoveryPreset,
-			WeaponID: txLoadout.WeaponID, ArmorID: txLoadout.ArmorID, AmmoID: carriedAmmo.ID, AmmoRounds: carriedAmmo.Rounds,
-			Consumables: strings.Join(txLoadout.Consumables, ","), Status: "running",
+			WeaponID: txLoadout.WeaponID, ArmorID: txLoadout.ArmorID, ArmorInstanceID: state.Loadout.ArmorInstanceID, AmmoID: carriedAmmo.ID, AmmoRounds: carriedAmmo.Rounds,
+			Consumables: stringsFromStacks(state.Consumables), Status: "running", RecoveryPolicyJSON: recoveryPolicyJSON,
 			Seed: seed, StartTime: now, OfflineLimitMin: defaultOfflineLimitMin, OfflineLimitSec: int64(defaultOfflineLimitMin) * 60,
 			ElapsedMin: 0, ElapsedSec: 0, CurrentRunStartedAt: &now, NextRunAt: &nextRunAt, LastProcessedAt: nil, EngineVersion: engine.EngineVersion,
 			ScenarioSnapshot: snapshotJSON, ScenarioHash: snapshotHash, InitialStateJSON: string(stateJSON), StateJSON: string(stateJSON),
@@ -136,6 +164,29 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 	}
 	dispatchSessionWorker(s.db, s.userID, sess.ID)
 	return &sess, nil
+}
+
+func isEmptyCurrentLoadout(loadout *models.PlayerLoadout) bool {
+	return loadout.WeaponID == "" && loadout.ArmorID == "" && loadout.ChestRigID == "" && loadout.BackpackID == "" &&
+		loadout.HelmetID == "" && loadout.HeadsetID == "" && len(loadout.Consumables) == 0 && len(loadout.ConsumableRefs) == 0
+}
+
+func restoreLostLoadoutForStartTx(tx *gorm.DB, userID uint, loadout *models.PlayerLoadout, presetIndex int) error {
+	var previous models.Session
+	if err := tx.Where("user_id = ? AND status = ?", userID, "incapacitated").Order("id desc").First(&previous).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil
+		}
+		return fmt.Errorf("读取失能行动: %w", err)
+	}
+	var snapshot engine.ScenarioSnapshot
+	if err := json.Unmarshal([]byte(previous.ScenarioSnapshot), &snapshot); err != nil {
+		return fmt.Errorf("读取失能行动补购快照: %w", err)
+	}
+	if err := purchaseRecoveryPresetTx(tx, userID, presetIndex, snapshot, loadout.ID); err != nil {
+		return fmt.Errorf("自动补购失能预设: %w", err)
+	}
+	return nil
 }
 
 func (s *SessionService) runSession(id uint) {
@@ -162,15 +213,15 @@ func (s *SessionService) failSession(id uint, cause error) error {
 		if err := tx.Where("user_id = ? AND id = ?", s.userID, id).First(&sess).Error; err != nil {
 			return err
 		}
-		if sess.Status != "running" && sess.Status != "waiting_injury" {
+		if sess.Status != "running" {
 			return nil
 		}
-		query := tx.Model(&models.Session{}).Where("user_id = ? AND id = ? AND status IN ?", s.userID, id, []string{"running", "waiting_injury"})
+		query := tx.Model(&models.Session{}).Where("user_id = ? AND id = ? AND status = ?", s.userID, id, "running")
 		if s.leaseOwner != "" {
 			query = query.Where("lease_owner = ? AND lease_until > ?", s.leaseOwner, now)
 		}
 		result := query.Updates(map[string]interface{}{
-			"status": "failed", "end_time": now, "current_run_started_at": nil, "next_run_at": nil,
+			"status": "failed", "terminal_reason": "internal_error", "end_time": now, "current_run_started_at": nil, "next_run_at": nil,
 			"pending_run_index": 0, "pending_run_result": "{}", "pending_run_hash": "", "heartbeat_at": now,
 		})
 		if result.Error != nil {
@@ -183,7 +234,31 @@ func (s *SessionService) failSession(id uint, cause error) error {
 		if err != nil {
 			return err
 		}
+		// 技术异常只归还最后一次已持久化状态，游戏内失能才执行丢装。
+		if err := settleSessionArmorTx(tx, s.userID, state, false); err != nil {
+			return err
+		}
+		if err := syncLoadoutConsumablesFromCarriedItemsTx(tx, s.userID, sess.CharacterID, state.CarriedItems); err != nil {
+			return err
+		}
 		if err := returnCarriedAmmoTx(tx, s.userID, snapshot, &state); err != nil {
+			return err
+		}
+		if err := returnCarriedItemsTx(tx, s.userID, snapshot, state.CarriedItems); err != nil {
+			return err
+		}
+		if err := discardSessionItemInstancesTx(tx, s.userID); err != nil {
+			return fmt.Errorf("清理异常 Session 实例: %w", err)
+		}
+		state.Ammo = engine.CarriedAmmo{}
+		state.CarriedItems = nil
+		state.Consumables = nil
+		state.Carry.UsedSlots = 0
+		state.Carry.UsedWeight = 0
+		if err := updateCharacterFromEngine(tx, s.userID, sess.CharacterID, state.Character); err != nil {
+			return err
+		}
+		if err := createRecoveryPlanTx(tx, s.userID, sess.ID, state.Character, sess.RecoveryPolicyJSON); err != nil {
 			return err
 		}
 		encodedState, err := json.Marshal(state)
@@ -191,7 +266,7 @@ func (s *SessionService) failSession(id uint, cause error) error {
 			return fmt.Errorf("序列化失败 Session 状态: %w", err)
 		}
 		if err := tx.Model(&models.Session{}).Where("user_id = ? AND id = ?", s.userID, id).
-			Updates(map[string]interface{}{"state_json": string(encodedState), "ammo_id": "", "ammo_rounds": 0}).Error; err != nil {
+			Updates(map[string]interface{}{"state_json": string(encodedState), "weapon_id": state.Loadout.WeaponID, "armor_id": state.Loadout.ArmorID, "armor_instance_id": state.Loadout.ArmorInstanceID, "ammo_id": "", "ammo_rounds": 0, "consumables": ""}).Error; err != nil {
 			return fmt.Errorf("保存失败 Session 弹药状态: %w", err)
 		}
 		runIndex := sess.PendingRunIndex
@@ -223,57 +298,6 @@ func (s *SessionService) ListSessions() ([]models.Session, error) {
 	var list []models.Session
 	err := s.db.Where("user_id = ?", s.userID).Order("id desc").Limit(20).Find(&list).Error
 	return list, err
-}
-
-func (s *SessionService) Abort(id uint) error {
-	now := time.Now()
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := lockUserResourcesTx(tx, s.userID); err != nil {
-			return err
-		}
-		var sess models.Session
-		if err := tx.Where("user_id = ? AND id = ?", s.userID, id).First(&sess).Error; err != nil {
-			return err
-		}
-		if sess.Status != "running" && sess.Status != "waiting_injury" {
-			return nil
-		}
-		result := tx.Model(&models.Session{}).Where("user_id = ? AND id = ? AND status IN ?", s.userID, id, []string{"running", "waiting_injury"}).Updates(map[string]interface{}{
-			"status": "aborted", "end_time": now, "current_run_started_at": nil, "next_run_at": nil,
-			"pending_run_index": 0, "pending_run_result": "{}", "pending_run_hash": "",
-		})
-		if result.Error != nil {
-			return fmt.Errorf("中止行动: %w", result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return nil
-		}
-		snapshot, state, err := decodeSessionAmmoState(sess)
-		if err != nil {
-			return err
-		}
-		if err := returnCarriedAmmoTx(tx, s.userID, snapshot, &state); err != nil {
-			return err
-		}
-		encodedState, err := json.Marshal(state)
-		if err != nil {
-			return fmt.Errorf("序列化中止 Session 状态: %w", err)
-		}
-		if err := tx.Model(&models.Session{}).Where("user_id = ? AND id = ?", s.userID, id).
-			Updates(map[string]interface{}{"state_json": string(encodedState), "ammo_id": "", "ammo_rounds": 0}).Error; err != nil {
-			return fmt.Errorf("保存中止 Session 弹药状态: %w", err)
-		}
-		runIndex := sess.PendingRunIndex
-		if runIndex <= 0 {
-			runIndex = sess.TotalRuns
-		}
-		if runIndex <= 0 {
-			runIndex = 1
-		}
-		return appendSessionEventTx(tx, s.userID, id, runIndex, sessionEventSessionAborted, sess.ElapsedSec, now, "", "", map[string]interface{}{
-			"status": "aborted", "reason": "user_abort",
-		})
-	})
 }
 
 func splitIDs(value string) []string {

@@ -1,9 +1,7 @@
 <!-- 实时行动页：通过 SSE 播放在线事件，断线后从数据库事件游标继续。 -->
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
-import { ElMessage } from 'element-plus'
-import { DataLine, MapLocation, Timer, VideoPlay, Warning } from '@element-plus/icons-vue'
-import api, { getApiError } from '../api'
+import { computed, toRef } from 'vue'
+import { DataLine, MapLocation, Timer, VideoPlay } from '@element-plus/icons-vue'
 import MapGraphCanvas from '../components/MapGraphCanvas.vue'
 import SessionTimeline from '../components/SessionTimeline.vue'
 import { useSessionStream } from '../composables/useSessionStream'
@@ -21,8 +19,7 @@ const emit = defineEmits<{
   openLogs: []
 }>()
 
-const aborting = ref(false)
-const { session, events, loading, errorMessage, now, loadSession, reconnectNow } = useSessionStream(toRef(props, 'sessionId'), () => emit('refresh'))
+const { session, events, loading, errorMessage, now, reconnectNow } = useSessionStream(toRef(props, 'sessionId'), () => emit('refresh'))
 
 const routePlannedEvent = computed(() => [...events.value].reverse().find((event) => event.eventType === 'route_planned') ?? null)
 const currentRunIndex = computed(() => routePlannedEvent.value?.runIndex || [...events.value].reverse().find((event) => event.eventType === 'node_entered')?.runIndex || (session.value?.totalRuns || 0) + 1)
@@ -54,7 +51,7 @@ const latestBattleMetrics = computed(() => {
   return [...events.value].reverse().find((event) => event.eventType.startsWith('battle_') && event.id >= battleSpotlight.value!.id) ?? null
 })
 const progressPercent = computed(() => {
-  if (!session.value?.currentRunStartedAt || !session.value.nextRunAt) return session.value?.status === 'finished' ? 100 : 0
+  if (!session.value?.currentRunStartedAt || !session.value.nextRunAt) return session.value?.status !== 'running' ? 100 : 0
   const start = Date.parse(session.value.currentRunStartedAt)
   const end = Date.parse(session.value.nextRunAt)
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0
@@ -93,7 +90,7 @@ function healthPercent(event: SessionEvent | null, currentKey: string, maxKey: s
 }
 
 function statusLabel(status: Session['status']): string {
-  return ({ running: '行动中', waiting_injury: '伤势恢复中', finished: '已完成', aborted: '已中止', failed: '执行失败' } as Record<string, string>)[status] || status
+  return ({ running: '行动中', success: '撤离成功', incapacitated: '失能', failed: '执行失败' } as Record<string, string>)[status] || status
 }
 
 function formatDuration(seconds: number): string {
@@ -112,20 +109,6 @@ function currentNodeName(): string {
   return currentGraph.value?.nodes.find((node) => node.id === currentNodeEvent.value?.nodeId)?.name || '等待第一个节点'
 }
 
-async function abortSession() {
-  aborting.value = true
-  try {
-    await api.post(`/session/${props.sessionId}/abort`)
-    ElMessage.success('已提交中止信号')
-    await loadSession()
-    emit('refresh')
-  } catch (error) {
-    ElMessage.error(getApiError(error, '中止行动失败'))
-  } finally {
-    aborting.value = false
-  }
-}
-
 </script>
 
 <template>
@@ -137,7 +120,7 @@ async function abortSession() {
         <p>{{ session ? `${mapName(session.mapId)} · ${statusLabel(session.status)}` : '正在连接行动事件流' }}</p>
       </div>
       <div v-if="session" class="live-status-badge">
-        <span class="status-dot" :class="{ warning: session.status === 'waiting_injury' }" />
+        <span class="status-dot" :class="{ warning: session.status === 'incapacitated' }" />
         <strong>{{ statusLabel(session.status) }}</strong>
         <small>{{ events.length }} 条事件</small>
       </div>
@@ -151,8 +134,7 @@ async function abortSession() {
           <div><span>当前节点</span><strong>{{ currentNodeName() }}</strong></div>
           <div><span>游戏时间</span><strong>{{ formatDuration(liveElapsedSec) }}</strong></div>
           <div><span>局次</span><strong>{{ session.totalRuns + (session.status === 'running' ? 1 : 0) }}</strong></div>
-          <el-button v-if="session.status === 'running' || session.status === 'waiting_injury'" type="danger" plain :loading="aborting" @click="abortSession">中止行动</el-button>
-          <el-button v-else @click="emit('openLogs')">查看历史</el-button>
+          <el-button v-if="session.status !== 'running'" @click="emit('openLogs')">查看历史</el-button>
         </div>
         <el-progress :percentage="progressPercent" :show-text="false" />
         <div class="live-progress__foot"><span>{{ session.currentRunStartedAt ? '当前局推进中，事件会按时间轴逐条出现' : '等待下一局调度' }}</span><b>{{ Math.round(progressPercent) }}%</b></div>
@@ -190,6 +172,8 @@ async function abortSession() {
             <div class="panel-heading"><div><span>03</span><h2><el-icon><DataLine /></el-icon>行动数据</h2></div><small>当前可见状态</small></div>
             <div class="metric-grid">
               <div><span>生命</span><strong>{{ metricText('playerHp') }}</strong></div>
+              <div><span>能量</span><strong>{{ Math.round(player.energy) }}</strong></div>
+              <div><span>饮水</span><strong>{{ Math.round(player.hydration) }}</strong></div>
               <div><span>压力</span><strong>{{ metricText('playerStress') }}</strong></div>
               <div><span>热度</span><strong>{{ metricText('heat') }}</strong></div>
               <div><span>弹药</span><strong>{{ metricText('playerAmmo') }}</strong></div>
@@ -198,7 +182,6 @@ async function abortSession() {
             <div class="live-operator"><el-icon><Timer /></el-icon><div><span>行动员</span><strong>{{ player.name }}</strong></div><i class="status-dot" /></div>
           </section>
 
-          <section v-if="session.status === 'waiting_injury'" class="live-notice surface-panel"><el-icon><Warning /></el-icon><div><strong>伤势恢复中</strong><span>恢复完成后会自动安排下一局</span></div></section>
         </aside>
       </div>
     </template>

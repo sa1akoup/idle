@@ -16,6 +16,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// sseWriteTimeout 是单次响应写的最大阻塞时长；客户端半开连接时，写操作在截止时间后必然失败并释放 goroutine。
+const sseWriteTimeout = 10 * time.Second
+
+func isTerminalSessionStatus(status string) bool {
+	switch status {
+	case "success", "incapacitated", "failed":
+		return true
+	}
+	return false
+}
+
 func parseSessionEventCursor(c *gin.Context) (uint, error) {
 	value := c.Query("afterId")
 	if value == "" {
@@ -99,16 +110,23 @@ func (h *Handler) StreamSessionEvents(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
+	rw := http.NewResponseController(c.Writer)
 	pollTicker := time.NewTicker(time.Second)
 	heartbeatTicker := time.NewTicker(20 * time.Second)
 	defer pollTicker.Stop()
 	defer heartbeatTicker.Stop()
 
+	var state struct {
+		Status  string     `json:"status"`
+		EndTime *time.Time `json:"endTime"`
+	}
+	pollCount := 0
 	for {
 		events, err := service.ListSessionEvents(h.db, userID(c), sessionID, cursor)
 		if err != nil {
 			return
 		}
+		_ = rw.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
 		for _, event := range events {
 			if err := writeSessionEvent(c, event); err != nil {
 				return
@@ -116,19 +134,23 @@ func (h *Handler) StreamSessionEvents(c *gin.Context) {
 			cursor = event.ID
 		}
 
-		var state struct {
-			Status  string     `json:"status"`
-			EndTime *time.Time `json:"endTime"`
+		// 首轮和有新事件后立即读取会话状态；空闲等待时降频为每 5 个轮询周期一次，
+		// 避免每个连接每秒固定产生两条数据库查询。
+		if pollCount == 0 || len(events) > 0 || pollCount%5 == 4 {
+			state.Status = ""
+			if err := h.db.Model(&models.Session{}).Select("status, end_time").Where("user_id = ? AND id = ?", userID(c), sessionID).First(&state).Error; err != nil {
+				return
+			}
 		}
-		if err := h.db.Model(&models.Session{}).Select("status, end_time").Where("user_id = ? AND id = ?", userID(c), sessionID).First(&state).Error; err != nil {
-			return
-		}
-		if len(events) == 0 && (state.Status == "finished" || state.Status == "aborted" || state.Status == "failed") {
+		pollCount++
+		if len(events) == 0 && isTerminalSessionStatus(state.Status) {
 			endPayload, marshalErr := json.Marshal(map[string]string{"status": state.Status})
 			if marshalErr != nil {
 				return
 			}
-			_, _ = fmt.Fprintf(c.Writer, "event: stream_end\ndata: %s\n\n", endPayload)
+			if _, err := fmt.Fprintf(c.Writer, "event: stream_end\ndata: %s\n\n", endPayload); err != nil {
+				return
+			}
 			c.Writer.Flush()
 			return
 		}

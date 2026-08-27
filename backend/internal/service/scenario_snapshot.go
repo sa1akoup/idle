@@ -85,6 +85,10 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 	if err := db.Order("id asc").Find(&consumables).Error; err != nil {
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取消耗品目录: %w", err)
 	}
+	var itemUseDefs []models.ItemUseDef
+	if err := db.Order("item_id asc").Find(&itemUseDefs).Error; err != nil {
+		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取物品效果目录: %w", err)
+	}
 	var chestRigs []models.ChestRigDef
 	if err := db.Order("id asc").Find(&chestRigs).Error; err != nil {
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取胸挂目录: %w", err)
@@ -128,6 +132,7 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		Containers:               make(map[string]engine.Container, len(containerDefs)),
 		LootItems:                make(map[string]engine.LootItem, len(lootDefs)),
 		Items:                    make(map[string]engine.ItemDefinition),
+		ItemUseDefs:              make(map[string]engine.ItemUseDefinition, len(itemUseDefs)),
 		Weapons:                  make(map[string]engine.Weapon, len(weapons)),
 		Ammos:                    make(map[string]engine.Ammo, len(ammos)),
 		AmmoSupplies:             make(map[string]engine.AmmoSupply, len(ammos)),
@@ -223,6 +228,13 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		}
 		item.Kind = "consumable"
 		snapshot.Items[item.ID] = item
+	}
+	for _, definition := range itemUseDefs {
+		item := engine.ItemUseDefinition{}
+		if err := convertJSON(definition, &item); err != nil {
+			return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("转换物品效果 %s: %w", definition.ItemID, err)
+		}
+		snapshot.ItemUseDefs[item.ItemID] = item
 	}
 	for _, definition := range chestRigs {
 		item := engine.ItemDefinition{}

@@ -27,7 +27,7 @@ func newAmmunitionTestDB(t *testing.T) *gorm.DB {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&models.Inventory{}, &models.AmmoDef{}, &models.PlayerLoadout{}); err != nil {
+	if err := db.AutoMigrate(&models.Inventory{}, &models.AmmoDef{}, &models.PlayerLoadout{}, &models.ItemUseDef{}, &models.ItemInstance{}); err != nil {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}
 	return db

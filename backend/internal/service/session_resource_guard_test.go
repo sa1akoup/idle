@@ -31,10 +31,16 @@ func TestActiveSessionBlocksArmorRepair(t *testing.T) {
 	if err := db.Create(&armor).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&models.Session{UserID: models.DefaultUserID, ArmorID: "armor", Status: "waiting_injury"}).Error; err != nil {
+	if err := db.Create(&models.Session{UserID: models.DefaultUserID, ArmorID: "armor", Status: "running"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RepairArmorForUser(db, models.DefaultUserID, armor.ID); !errors.Is(err, ErrActiveSessionResourceLocked) {
+	if err := db.Create(&models.HideoutFacility{UserID: models.DefaultUserID, FacilityID: "workbench", Level: 1, State: "ready"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.FacilityLevelDef{FacilityID: "workbench", Level: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := QueueArmorRepairForUser(db, models.DefaultUserID, armor.ID); !errors.Is(err, ErrActiveSessionResourceLocked) {
 		t.Fatalf("维修活跃行动护甲错误 = %v，期望 ErrActiveSessionResourceLocked", err)
 	}
 }
@@ -200,7 +206,7 @@ func TestSessionStartAndSellCurrentWeaponAreSerialized(t *testing.T) {
 			t.Fatalf("Session 启动成功后出售当前武器错误 = %v，期望资源锁错误", sellErr)
 		}
 		waitSessionWorker(t, started.ID)
-		if err := service.Abort(started.ID); err != nil {
+		if err := service.failSession(started.ID, errors.New("test cleanup")); err != nil {
 			t.Fatalf("清理并发测试 Session: %v", err)
 		}
 	} else if sellErr != nil {
@@ -220,6 +226,12 @@ func TestSessionStartAndRepairCurrentArmorAreSerialized(t *testing.T) {
 	}
 	var armor models.ArmorInstance
 	if err := db.Where("user_id = ? AND armor_id = ?", models.DefaultUserID, "light_01").First(&armor).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemInstance{
+		UserID: models.DefaultUserID, ItemID: "weapon_repair_kit_used",
+		MaxDurability: 100, CurrentDurability: 100, Status: "normal", LocationType: "inventory",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	sqlDB, err := db.DB()
@@ -247,7 +259,7 @@ func TestSessionStartAndRepairCurrentArmorAreSerialized(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		_, repairErr = RepairArmorForUser(db, models.DefaultUserID, armor.ID)
+		repairErr = QueueArmorRepairForUser(db, models.DefaultUserID, armor.ID)
 	}()
 	close(start)
 	wg.Wait()
@@ -257,7 +269,7 @@ func TestSessionStartAndRepairCurrentArmorAreSerialized(t *testing.T) {
 	}
 	if startErr == nil {
 		waitSessionWorker(t, started.ID)
-		if err := service.Abort(started.ID); err != nil {
+		if err := service.failSession(started.ID, errors.New("test cleanup")); err != nil {
 			t.Fatalf("清理并发测试 Session: %v", err)
 		}
 	}

@@ -1,0 +1,52 @@
+-- 藏身处系统：设施定义、等级收益、玩家状态与持久化作业队列。
+CREATE TABLE facility_defs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    icon_key TEXT,
+    max_level INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE facility_level_defs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    facility_id TEXT NOT NULL,
+    level INTEGER NOT NULL,
+    upgrade_cost INTEGER NOT NULL DEFAULT 0,
+    upgrade_seconds INTEGER NOT NULL DEFAULT 0,
+    material_id TEXT,
+    material_name TEXT,
+    material_quantity INTEGER NOT NULL DEFAULT 0,
+    storage_bonus INTEGER NOT NULL DEFAULT 0,
+    recovery_speed_percent INTEGER NOT NULL DEFAULT 0,
+    repair_speed_percent INTEGER NOT NULL DEFAULT 0,
+    intel_bonus_percent INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE hideout_facilities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    facility_id TEXT NOT NULL,
+    level INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'ready',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE facility_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    facility_id TEXT NOT NULL,
+    job_type TEXT NOT NULL,
+    target_level INTEGER NOT NULL DEFAULT 0,
+    armor_instance_id INTEGER,
+    started_at TIMESTAMP NOT NULL,
+    complete_at TIMESTAMP NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_facility_level_defs_facility_level ON facility_level_defs (facility_id, level);
+CREATE UNIQUE INDEX idx_hideout_facility_user ON hideout_facilities (user_id, facility_id);
+CREATE INDEX idx_facility_jobs_due ON facility_jobs (user_id, status, complete_at);
+CREATE INDEX idx_facility_jobs_facility ON facility_jobs (user_id, facility_id, status);

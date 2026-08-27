@@ -48,12 +48,17 @@ func replaceLostLoadoutTx(tx *gorm.DB, userID uint, presetIndex int, snapshot en
 	} else if err := tx.Delete(&armorInstance).Error; err != nil {
 		return fmt.Errorf("移除丢失护甲: %w", err)
 	}
-	cleared := models.PlayerLoadout{Consumables: []string{}}
+	cleared := models.PlayerLoadout{Consumables: []string{}, ConsumableRefs: []models.LoadoutItemRef{}}
 	if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadout.ID).
-		Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables").Updates(&cleared).Error; err != nil {
+		Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs").Updates(&cleared).Error; err != nil {
 		return fmt.Errorf("清空丢失装备: %w", err)
 	}
 
+	return purchaseRecoveryPresetTx(tx, userID, presetIndex, snapshot, loadout.ID)
+}
+
+// purchaseRecoveryPresetTx 只购买并启用已经保存过价格快照的失能预设。
+func purchaseRecoveryPresetTx(tx *gorm.DB, userID uint, presetIndex int, snapshot engine.ScenarioSnapshot, loadoutID uint) error {
 	preset, ok := snapshot.RecoveryPresets[presetIndex]
 	if !ok || len(preset.Items) == 0 {
 		return fmt.Errorf("%w：预设装备 %d 没有固定补购配置", ErrPurchaseUnavailable, presetIndex)
@@ -78,10 +83,10 @@ func replaceLostLoadoutTx(tx *gorm.DB, userID uint, presetIndex int, snapshot en
 	updates := models.PlayerLoadout{
 		WeaponID: preset.Loadout.WeaponID, ArmorID: preset.Loadout.ArmorID,
 		ChestRigID: preset.Loadout.ChestRigID, BackpackID: preset.Loadout.BackpackID, HelmetID: preset.Loadout.HelmetID, HeadsetID: preset.Loadout.HeadsetID,
-		Consumables: loadoutConsumableIDs(preset.Consumables),
+		Consumables: loadoutConsumableIDs(preset.Consumables), ConsumableRefs: []models.LoadoutItemRef{},
 	}
-	if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadout.ID).
-		Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables").Updates(&updates).Error; err != nil {
+	if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadoutID).
+		Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs").Updates(&updates).Error; err != nil {
 		return fmt.Errorf("启用补购装备: %w", err)
 	}
 	return nil

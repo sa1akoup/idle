@@ -14,16 +14,24 @@ import (
 
 // MerchantCatalogItem 商人商品，价格已按商人好感度计算。
 type MerchantCatalogItem struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Detail    string `json:"detail"`
-	BasePrice int    `json:"basePrice"`
-	Price     int    `json:"price"`
-	SellPrice int    `json:"sellPrice"`
-	Weight    int    `json:"weight"`
-	Slots     int    `json:"slots"`
-	RepReq    int    `json:"repRequirement"`
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	Kind              string  `json:"kind"`
+	Category          string  `json:"category"`
+	Detail            string  `json:"detail"`
+	BasePrice         int     `json:"basePrice"`
+	Price             int     `json:"price"`
+	SellPrice         int     `json:"sellPrice"`
+	Weight            int     `json:"weight"`
+	Slots             int     `json:"slots"`
+	RepReq            int     `json:"repRequirement"`
+	HPRecovery        float64 `json:"hpRecovery"`
+	EnergyRecovery    float64 `json:"energyRecovery"`
+	HydrationRecovery float64 `json:"hydrationRecovery"`
+	RepairValue       float64 `json:"repairValue"`
+	FuelSeconds       int64   `json:"fuelSeconds"`
+	MaxDurability     float64 `json:"maxDurability"`
+	InstanceRequired  bool    `json:"instanceRequired"`
 }
 
 var ErrMerchantUnavailable = errors.New("商人商品不可用")
@@ -143,15 +151,44 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 		})
 	}
 
+	var itemUses []models.ItemUseDef
+	if err := db.Find(&itemUses).Error; err != nil {
+		return nil, err
+	}
+	useByID := make(map[string]models.ItemUseDef, len(itemUses))
+	for _, use := range itemUses {
+		useByID[use.ItemID] = use
+	}
+
 	var consumables []models.ConsumableDef
 	if err := db.Where("merchant_category = ?", merchant.Category).Find(&consumables).Error; err != nil {
 		return nil, err
 	}
 	for _, consumable := range consumables {
+		use := useByID[consumable.ID]
 		items = append(items, MerchantCatalogItem{
-			ID: consumable.ID, Name: consumable.Name, Kind: "consumable", Detail: consumable.Desc,
+			ID: consumable.ID, Name: consumable.Name, Kind: "consumable", Detail: usableItemDetail(consumable.Desc, use),
 			BasePrice: consumable.Price, Price: roundPrice(consumable.Price, buyPrice), SellPrice: roundPrice(consumable.Price, sellPrice),
 			Weight: consumable.Weight, Slots: consumable.Slots, RepReq: consumable.RepRequirement,
+			HPRecovery: use.HPRecovery, EnergyRecovery: use.EnergyRecovery, HydrationRecovery: use.HydrationRecovery,
+			RepairValue: use.RepairValue, FuelSeconds: use.FuelSeconds, MaxDurability: use.MaxDurability, InstanceRequired: use.InstanceRequired,
+		})
+	}
+	var lootItems []models.LootItemDef
+	if err := db.Where("merchant_category = ?", merchant.Category).Order("id asc").Find(&lootItems).Error; err != nil {
+		return nil, err
+	}
+	for _, loot := range lootItems {
+		use, ok := useByID[loot.ID]
+		if !ok || (!use.UsableInSession && !use.UsableInHideout && use.RepairValue <= 0 && use.FuelSeconds <= 0) {
+			continue
+		}
+		items = append(items, MerchantCatalogItem{
+			ID: loot.ID, Name: loot.Name, Kind: "loot", Category: loot.Category, Detail: usableItemDetail(loot.Desc, use),
+			BasePrice: loot.Price, Price: roundPrice(loot.Price, buyPrice), SellPrice: roundPrice(loot.Price, sellPrice),
+			Weight: loot.Weight, Slots: loot.Slots, RepReq: loot.RepRequirement,
+			HPRecovery: use.HPRecovery, EnergyRecovery: use.EnergyRecovery, HydrationRecovery: use.HydrationRecovery,
+			RepairValue: use.RepairValue, FuelSeconds: use.FuelSeconds, MaxDurability: use.MaxDurability, InstanceRequired: use.InstanceRequired,
 		})
 	}
 
@@ -208,6 +245,26 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 	}
 
 	return items, nil
+}
+
+func usableItemDetail(desc string, use models.ItemUseDef) string {
+	detail := desc
+	if use.HPRecovery > 0 {
+		detail += fmt.Sprintf(" · HP +%.0f", use.HPRecovery)
+	}
+	if use.EnergyRecovery > 0 {
+		detail += fmt.Sprintf(" · 能量 +%.0f", use.EnergyRecovery)
+	}
+	if use.HydrationRecovery > 0 {
+		detail += fmt.Sprintf(" · 饮水 +%.0f", use.HydrationRecovery)
+	}
+	if use.RepairValue > 0 {
+		detail += fmt.Sprintf(" · 维修值 %.0f", use.RepairValue)
+	}
+	if use.FuelSeconds > 0 {
+		detail += fmt.Sprintf(" · 燃料 %d 分钟", use.FuelSeconds/60)
+	}
+	return detail
 }
 
 // applyMerchantPrice 根据商品归属商人计算实际购买价，并校验商人状态与好感度解锁。
@@ -342,6 +399,47 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 		}
 		if err := ensureItemNotInActiveSession(tx, userID, itemID); err != nil {
 			return err
+		}
+
+		var useDef models.ItemUseDef
+		if err := tx.Where("item_id = ?", itemID).First(&useDef).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("读取出售物品效果: %w", err)
+		}
+		if useDef.InstanceRequired {
+			var instances []models.ItemInstance
+			if err := tx.Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ? AND current_durability > 0", userID, itemID, "inventory", "normal").
+				Order("current_durability asc, id asc").Limit(quantity).Find(&instances).Error; err != nil {
+				return fmt.Errorf("读取可出售物品实例: %w", err)
+			}
+			if len(instances) < quantity {
+				return fmt.Errorf("%s 可出售数量不足（当前 %d）", itemID, len(instances))
+			}
+			item, err := findCatalogItem(tx, itemID)
+			if err != nil {
+				return err
+			}
+			if item.MerchantCategory != merchant.Category {
+				return fmt.Errorf("该商人不收购此类物品")
+			}
+			price := roundPrice(item.Price, sellMultiplier(merchant.Reputation))
+			total = price * quantity
+			if err := addCash(tx, userID, total); err != nil {
+				return err
+			}
+			for _, instance := range instances {
+				if err := tx.Delete(&instance).Error; err != nil {
+					return fmt.Errorf("删除出售物品实例 %d: %w", instance.ID, err)
+				}
+			}
+			if operation != nil {
+				resultJSON, err := json.Marshal(map[string]int{"total": total})
+				if err != nil {
+					return err
+				}
+				operation.ResultJSON = string(resultJSON)
+				return tx.Save(operation).Error
+			}
+			return nil
 		}
 
 		var sample models.Inventory

@@ -32,11 +32,18 @@ func fitEngineLootToStorage(tx *gorm.DB, userID uint, loot []engine.LootDrop) ([
 	if len(loot) == 0 {
 		return nil, nil, nil
 	}
+	if err := settleDueHideoutJobsTx(tx, userID, time.Now()); err != nil {
+		return nil, nil, err
+	}
 	used, err := inventoryUsage(tx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
-	space := models.InventoryCapacity - used
+	capacity, err := storageCapacityForUser(tx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	space := capacity - used
 	if space < 0 {
 		space = 0
 	}
@@ -62,23 +69,11 @@ func fitEngineLootToStorage(tx *gorm.DB, userID uint, loot []engine.LootDrop) ([
 	return stored, overflow, nil
 }
 
-func consumeEngineResources(tx *gorm.DB, userID uint, result engine.RunResult) error {
-	if result.SkipResourceConsumption {
-		return nil
-	}
-	for _, item := range result.ConsumedItems {
-		if err := removeInventoryItem(tx, userID, item.ItemID, item.Quantity); err != nil {
-			return fmt.Errorf("扣除%s: %w", item.ItemID, err)
-		}
-	}
-	return nil
-}
-
-func updateCharacterFromEngine(tx *gorm.DB, userID uint, characterID uint, state engine.CharacterState, injuryUntil *time.Time) error {
+func updateCharacterFromEngine(tx *gorm.DB, userID uint, characterID uint, state engine.CharacterState) error {
 	updates := map[string]interface{}{
 		"stress": state.Stress, "melee_prof": state.MeleeProf, "pistol_prof": state.PistolProf, "smg_prof": state.SMGProf,
 		"shotgun_prof": state.ShotgunProf, "rifle_prof": state.RifleProf, "sniper_prof": state.SniperProf,
-		"injury": state.Injury, "injury_until": injuryUntil,
+		"hp": state.HP, "energy": state.Energy, "hydration": state.Hydration, "needs_updated_at": time.Now(),
 	}
 	if err := tx.Model(&models.Character{}).Where("user_id = ? AND id = ?", userID, characterID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("保存角色连续状态: %w", err)
@@ -96,11 +91,33 @@ func loadoutConsumableIDs(stacks []engine.ItemStack) []string {
 	return ids
 }
 
-func syncLoadoutConsumables(tx *gorm.DB, userID, characterID uint, stacks []engine.ItemStack) error {
-	ids := loadoutConsumableIDs(stacks)
+// syncLoadoutConsumablesFromCarriedItemsTx 将终局仍携带的普通补给和耐久实例写回当前装备配置。
+func syncLoadoutConsumablesFromCarriedItemsTx(tx *gorm.DB, userID, characterID uint, items []engine.CarriedItem) error {
+	ids := make([]string, 0, len(items))
+	refs := make([]models.LoadoutItemRef, 0, len(items))
+	for _, item := range items {
+		if item.ItemID == "" {
+			continue
+		}
+		if item.InstanceID > 0 {
+			if item.CurrentDurability <= 0 {
+				continue
+			}
+			ids = append(ids, item.ItemID)
+			refs = append(refs, models.LoadoutItemRef{InstanceID: item.InstanceID, ItemID: item.ItemID, Quantity: 1})
+			continue
+		}
+		if item.Quantity <= 0 {
+			continue
+		}
+		for i := 0; i < item.Quantity; i++ {
+			ids = append(ids, item.ItemID)
+		}
+		refs = append(refs, models.LoadoutItemRef{ItemID: item.ItemID, Quantity: item.Quantity})
+	}
 	if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND character_id = ?", userID, characterID).
-		Select("Consumables").Updates(&models.PlayerLoadout{Consumables: ids}).Error; err != nil {
-		return fmt.Errorf("保存连续补给: %w", err)
+		Select("Consumables", "ConsumableRefs").Updates(&models.PlayerLoadout{Consumables: ids, ConsumableRefs: refs}).Error; err != nil {
+		return fmt.Errorf("保存终局补给配置: %w", err)
 	}
 	return nil
 }

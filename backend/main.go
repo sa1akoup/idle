@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"idle/internal/config"
 	"idle/internal/handler"
@@ -90,6 +96,27 @@ func startServer(db *gorm.DB, settings config.Settings) error {
 	h.Register(r)
 	service.StartSessionScheduler(db)
 
+	srv := &http.Server{
+		Addr:              settings.HTTPAddr,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		log.Printf("收到退出信号，开始优雅关停")
+		service.StopSessionScheduler()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("HTTP 服务关停未完成: %v", err)
+		}
+	}()
+
 	log.Printf("Server running at http://localhost%s", settings.HTTPAddr)
-	return r.Run(settings.HTTPAddr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
