@@ -90,6 +90,12 @@ func seedSurvivalDefinitions(db *gorm.DB) error {
 	return nil
 }
 
+// MigrateUserSurvivalData 将指定用户的“实例必需品”聚合库存换算为耐久实例行（幂等）。
+// 供版本化存量数据适配、Seed 与注册路径复用。
+func MigrateUserSurvivalData(db *gorm.DB, userID uint) error {
+	return seedSurvivalForUser(db, userID)
+}
+
 func seedSurvivalForUser(db *gorm.DB, userID uint) error {
 	var defs []models.ItemUseDef
 	if err := db.Where("instance_required = ?", true).Find(&defs).Error; err != nil {
