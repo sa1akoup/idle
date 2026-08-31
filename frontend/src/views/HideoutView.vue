@@ -1,8 +1,8 @@
-<!-- 藏身处页：以模块网格、升级队列和维修台展示玩家的局外养成状态。 -->
+<!-- 藏身处页：左侧模块列表（发电机+各设施），右侧按模块渲染详情；工作台提供制造/维修双标签。 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, type Component } from 'vue'
 import { Box, CircleCheck, Download, FirstAidKit, House, Lock, Monitor, SwitchButton, Timer, Tools, Upload } from '@element-plus/icons-vue'
-import type { Armor, ArmorInstance, Consumable, HideoutFacility, HideoutJob, HideoutRequirement, HideoutSnapshot, HideoutUpgrade, ItemInstance, Player, StorageCapacity } from '../types'
+import type { Armor, ArmorInstance, Consumable, CraftingRecipe, HideoutFacility, HideoutJob, HideoutRequirement, HideoutSnapshot, HideoutUpgrade, ItemInstance, Player, StorageCapacity } from '../types'
 
 const props = defineProps<{
   player: Player
@@ -10,7 +10,9 @@ const props = defineProps<{
   armorInstances: ArmorInstance[]
   itemInstances: ItemInstance[]
   consumables: Consumable[]
+  craftingRecipes: CraftingRecipe[]
   repairingId: number | null
+  craftingId: string | null
   storageCapacity: StorageCapacity | null
   hideout: HideoutSnapshot | null
   upgradingFacilityId: string | null
@@ -22,10 +24,14 @@ const emit = defineEmits<{
   toggleGenerator: [enabled: boolean]
   loadGeneratorFuel: [instanceId: number]
   unloadGeneratorFuel: [instanceId: number]
+  craft: [recipeId: string]
 }>()
 
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | undefined
+
+const activeModule = ref('workbench')
+const workbenchTab = ref<'craft' | 'repair'>('craft')
 
 const facilityIcons: Record<string, Component> = {
   storage: Box,
@@ -41,15 +47,21 @@ const facilityIcons: Record<string, Component> = {
 	hall_of_fame: House,
 }
 
+const facilities = computed(() => props.hideout?.facilities ?? [])
 const activeJobs = computed(() => props.hideout?.jobs ?? [])
 const activeRepairJobs = computed(() => activeJobs.value.filter((job) => job.jobType === 'repair'))
-const facilityCount = computed(() => props.hideout?.facilities.length ?? 0)
-const readyCount = computed(() => props.hideout?.facilities.filter((facility) => facility.level > 0).length ?? 0)
+const facilityCount = computed(() => facilities.value.length)
+const readyCount = computed(() => facilities.value.filter((facility) => facility.level > 0).length)
 const generator = computed(() => props.hideout?.generator ?? null)
 const fuelCandidates = computed(() => props.itemInstances.filter((instance) => {
 	if (instance.locationType !== 'inventory' || instance.status !== 'normal') return false
 	return props.consumables.some((item) => item.id === instance.itemId && item.fuelSeconds > 0)
 }))
+const activeFacility = computed(() => facilities.value.find((facility) => facility.id === activeModule.value) ?? null)
+
+function selectModule(id: string) {
+  activeModule.value = id
+}
 
 function handleGeneratorChange(value: boolean | string | number) {
 	emit('toggleGenerator', Boolean(value))
@@ -74,6 +86,7 @@ function effectText(facility: HideoutFacility): string {
   if (facility.hpRecoveryPerHour > 0) return `生命 +${facility.hpRecoveryPerHour}/小时`
   if (facility.energyRecoveryPerHour > 0) return `能量 +${facility.energyRecoveryPerHour}/小时`
   if (facility.hydrationRecoveryPerHour > 0) return `饮水 +${facility.hydrationRecoveryPerHour}/小时`
+  if (facility.stressRecoveryPerHour > 0) return `压力 −${facility.stressRecoveryPerHour}/小时`
   if (facility.repairKitDiscountPercent > 0) return `维修包消耗 -${facility.repairKitDiscountPercent}%`
   if (facility.repairSpeedPercent > 0) return `维修耗时 -${facility.repairSpeedPercent}%`
   if (facility.fuelConsumptionReductionPercent > 0) return `燃料消耗 -${facility.fuelConsumptionReductionPercent}%`
@@ -92,11 +105,12 @@ function effectText(facility: HideoutFacility): string {
 function nextEffectText(facility: HideoutFacility): string {
   const next = facility.nextUpgrade
   if (!next) return '已达到当前最高等级'
-  if (facility.id === 'storage') return `升级后仓库容量 +${next.level === 2 ? 20 : 40} 格`
-  if (facility.id === 'medstation') return `升级后生命恢复 +${facility.nextUpgrade?.level === 2 ? '82.2' : '173.5'}/小时`
+  if (facility.id === 'storage') return `升级后仓库容量 +${next.level === 2 ? 120 : 240} 格`
+  if (facility.id === 'medstation') return `升级后生命恢复 +${facility.nextUpgrade?.level === 2 ? '75' : '100'}/小时`
   if (facility.id === 'heating') return '升级后能量恢复效率提升'
   if (facility.id === 'water_collector') return '升级后饮水恢复效率提升'
-  if (facility.id === 'workbench') return '升级后维修作业更快完成'
+  if (facility.id === 'rest_area') return '升级后压力恢复效率提升'
+  if (facility.id === 'workbench') return '升级后维修更快、解锁更高等级制造'
 	if (facility.id === 'booze_generator') return '升级后提高月光酒生产能力'
 	if (facility.id === 'bitcoin_farm') return '升级后提高实物比特币生产能力'
 	if (facility.id === 'scav_case') return '升级后提高 Scav 派遣收益'
@@ -179,6 +193,16 @@ function fuelTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`
 }
+
+function materialClass(input: { satisfied: boolean }): string {
+  return input.satisfied ? 'satisfied' : 'missing'
+}
+
+function recipeProgress(recipe: CraftingRecipe): number {
+  if (!recipe.inputs.length) return recipe.canStart ? 100 : 0
+  const satisfied = recipe.inputs.filter((input) => input.satisfied).length
+  return Math.round((satisfied / recipe.inputs.length) * 100)
+}
 </script>
 
 <template>
@@ -219,118 +243,184 @@ function fuelTime(seconds: number): string {
       </div>
     </section>
 
-    <section v-if="generator" class="generator-panel surface-panel">
-      <div class="panel-heading">
-        <div><span>POWER SYSTEM</span><h2>发电机</h2></div>
-		<el-switch :model-value="generator.enabled" :active-icon="SwitchButton" :disabled="!generator.fuels.length" @change="handleGeneratorChange" />
-      </div>
-      <div class="generator-summary">
-        <span>{{ generator.enabled ? '运行中' : '待机' }}</span>
-        <strong>剩余 {{ fuelTime(generator.fuelRemainingSeconds) }}</strong>
-        <small>{{ generator.fuels.length }} / {{ generator.fuelSlots }} 个燃料槽</small>
-      </div>
-      <div class="generator-fuels">
-        <div v-for="fuel in generator.fuels" :key="fuel.instanceId" class="generator-fuel-row">
-          <div><strong>{{ itemName(fuel.itemId) }}</strong><small>实例 #{{ fuel.instanceId }} · {{ fuelTime(fuel.fuelSeconds) }}</small></div>
-          <div class="generator-fuel-row__durability"><span>{{ fuelPercent(fuel.currentDurability, fuel.maxDurability) }}%</span><el-progress :percentage="fuelPercent(fuel.currentDurability, fuel.maxDurability)" :show-text="false" /></div>
-          <el-button :icon="Download" circle title="卸载燃料" @click="emit('unloadGeneratorFuel', fuel.instanceId)" />
-        </div>
-        <div v-for="fuel in fuelCandidates" :key="fuel.id" class="generator-fuel-row generator-fuel-row--available">
-          <div><strong>{{ itemName(fuel.itemId) }}</strong><small>仓库实例 #{{ fuel.id }}</small></div>
-          <span class="generator-fuel-row__durability">{{ fuelPercent(fuel.currentDurability, fuel.maxDurability) }}%</span>
-          <el-button :icon="Upload" circle title="装载燃料" :disabled="generator.fuels.length >= generator.fuelSlots" @click="emit('loadGeneratorFuel', fuel.id)" />
-        </div>
-        <div v-if="!generator.fuels.length && !fuelCandidates.length" class="generator-empty">仓库中暂无可用燃料实例</div>
-      </div>
-    </section>
-
-    <div class="hideout-layout">
-      <section class="facility-board surface-panel">
+    <div class="hideout-shell">
+      <aside class="hideout-module-list surface-panel">
         <div class="panel-heading">
-          <div><span>MODULE GRID / {{ String(facilityCount).padStart(2, '0') }}</span><h2>设施模块</h2></div>
+          <div><span>MODULE LIST / {{ String(facilityCount + 1).padStart(2, '0') }}</span><h2>模块列表</h2></div>
           <el-icon><House /></el-icon>
         </div>
-        <div class="facility-grid">
-          <article
-            v-for="facility in props.hideout?.facilities ?? []"
-            :key="facility.id"
-            class="facility-card"
-            :class="{ locked: facility.level === 0, upgrading: facility.state === 'upgrading' }"
-          >
-            <div class="facility-card__head">
-              <span class="facility-card__icon"><el-icon><component :is="iconFor(facility)" /></el-icon></span>
-              <div>
-                <small>{{ facility.category.toUpperCase() }}</small>
-                <strong>{{ facility.name }}</strong>
+        <button
+          v-if="generator"
+          type="button"
+          class="module-list-item"
+          :class="{ active: activeModule === 'generator' }"
+          @click="selectModule('generator')"
+        >
+          <span class="facility-card__icon"><el-icon><SwitchButton /></el-icon></span>
+          <div class="module-list-item__copy">
+            <small>POWER SYSTEM</small>
+            <strong>发电机</strong>
+            <em>{{ generator.enabled ? '运行中' : '待机' }}</em>
+          </div>
+          <b>{{ generator.fuels.length }}<em>/{{ generator.fuelSlots }}</em></b>
+        </button>
+        <button
+          v-for="facility in facilities"
+          :key="facility.id"
+          type="button"
+          class="module-list-item"
+          :class="{ active: activeModule === facility.id, locked: facility.level === 0, upgrading: facility.state === 'upgrading' }"
+          @click="selectModule(facility.id)"
+        >
+          <span class="facility-card__icon"><el-icon><component :is="iconFor(facility)" /></el-icon></span>
+          <div class="module-list-item__copy">
+            <small>{{ facility.category.toUpperCase() }}</small>
+            <strong>{{ facility.name }}</strong>
+            <em>{{ effectText(facility) }}</em>
+          </div>
+          <b>LV.{{ facility.level }}<em>/{{ facility.maxLevel }}</em></b>
+        </button>
+      </aside>
+
+      <section class="hideout-module-detail surface-panel">
+        <div class="panel-heading">
+          <div><span>MODULE VIEW</span><h2>{{ activeFacility?.name ?? '发电机' }}</h2></div>
+          <el-icon><component :is="activeModule === 'generator' ? SwitchButton : activeFacility ? iconFor(activeFacility) : Lock" /></el-icon>
+        </div>
+
+        <template v-if="activeModule === 'generator' && generator">
+          <div class="generator-summary">
+            <span>{{ generator.enabled ? '运行中' : '待机' }}</span>
+            <strong>剩余 {{ fuelTime(generator.fuelRemainingSeconds) }}</strong>
+            <small>{{ generator.fuels.length }} / {{ generator.fuelSlots }} 个燃料槽</small>
+            <el-switch :model-value="generator.enabled" :active-icon="SwitchButton" :disabled="!generator.fuels.length" @change="handleGeneratorChange" />
+          </div>
+          <div class="generator-fuels">
+            <div v-for="fuel in generator.fuels" :key="fuel.instanceId" class="generator-fuel-row">
+              <div><strong>{{ itemName(fuel.itemId) }}</strong><small>实例 #{{ fuel.instanceId }} · {{ fuelTime(fuel.fuelSeconds) }}</small></div>
+              <div class="generator-fuel-row__durability"><span>{{ fuelPercent(fuel.currentDurability, fuel.maxDurability) }}%</span><el-progress :percentage="fuelPercent(fuel.currentDurability, fuel.maxDurability)" :show-text="false" /></div>
+              <el-button :icon="Download" circle title="卸载燃料" @click="emit('unloadGeneratorFuel', fuel.instanceId)" />
+            </div>
+            <div v-for="fuel in fuelCandidates" :key="fuel.id" class="generator-fuel-row generator-fuel-row--available">
+              <div><strong>{{ itemName(fuel.itemId) }}</strong><small>仓库实例 #{{ fuel.id }}</small></div>
+              <span class="generator-fuel-row__durability">{{ fuelPercent(fuel.currentDurability, fuel.maxDurability) }}%</span>
+              <el-button :icon="Upload" circle title="装载燃料" :disabled="generator.fuels.length >= generator.fuelSlots" @click="emit('loadGeneratorFuel', fuel.id)" />
+            </div>
+            <div v-if="!generator.fuels.length && !fuelCandidates.length" class="generator-empty">仓库中暂无可用燃料实例</div>
+          </div>
+        </template>
+
+        <template v-else-if="activeFacility && activeFacility.id === 'workbench'">
+          <el-tabs v-model="workbenchTab" class="workbench-tabs">
+            <el-tab-pane label="制造" name="craft">
+              <div class="crafting-list">
+                <article
+                  v-for="recipe in props.craftingRecipes"
+                  :key="recipe.id"
+                  class="crafting-row"
+                  :class="{ locked: !recipe.canStart }"
+                >
+                  <div class="crafting-row__head">
+                    <div>
+                      <small>REQ. WORKBENCH LV.{{ recipe.requiredLevel }} · {{ recipe.craftMinutes }} 分钟</small>
+                      <strong>{{ recipe.name }}</strong>
+                    </div>
+                    <el-progress :percentage="recipeProgress(recipe)" :show-text="false" />
+                  </div>
+                  <div class="crafting-row__body">
+                    <div class="crafting-materials">
+                      <span class="crafting-materials__label">材料</span>
+                      <span v-for="input in recipe.inputs" :key="input.itemId" class="crafting-material" :class="materialClass(input)">
+                        {{ input.name }} <b>{{ input.have }} / {{ input.need }}</b>
+                      </span>
+                    </div>
+                    <div class="crafting-output">
+                      <span class="crafting-materials__label">产物</span>
+                      <span class="crafting-output__item" :class="{ instance: recipe.output.instanceRequired }">
+                        {{ recipe.output.name }} ×{{ recipe.output.quantity }}<em v-if="recipe.output.instanceRequired">耐久成品</em>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="crafting-row__foot">
+                    <span v-if="!recipe.canStart">{{ recipe.reason }}</span>
+                    <span v-else>消耗材料后即刻开工</span>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :icon="Tools"
+                      :loading="props.craftingId === recipe.id"
+                      :disabled="!recipe.canStart"
+                      @click="emit('craft', recipe.id)"
+                    >制造</el-button>
+                  </div>
+                </article>
+                <div v-if="!props.craftingRecipes.length" class="crafting-empty">暂无可用配方</div>
               </div>
-              <b>LV.{{ facility.level }}<em>/{{ facility.maxLevel }}</em></b>
-            </div>
-            <p class="facility-card__description">{{ facility.description }}</p>
-            <div class="facility-card__effect">
-              <span>当前效果</span>
-              <strong>{{ effectText(facility) }}</strong>
-            </div>
-            <div v-if="facility.state === 'upgrading'" class="facility-card__progress">
-              <span><b>施工中</b><em>等待模块上线</em></span>
-              <el-progress :percentage="jobProgress(activeJobs.find((job) => job.facilityId === facility.id))" :show-text="false" />
-            </div>
-            <div v-else-if="facility.nextUpgrade" class="facility-card__upgrade">
-              <div>
-                <span>下一阶段 · LV.{{ facility.nextUpgrade.level }}</span>
-                <strong>{{ nextEffectText(facility) }}</strong>
-					<small>￥{{ facility.nextUpgrade.cost }} · {{ Math.ceil(facility.nextUpgrade.durationSec / 60) || 1 }} 分钟</small>
-					<small class="facility-card__requirements">{{ requirementSummary(facility.nextUpgrade) }}</small>
+            </el-tab-pane>
+            <el-tab-pane label="维修队列" name="repair">
+              <div class="repair-bench__meta">维修归零护甲 · 完成后耐久上限减半</div>
+              <div v-if="props.armorInstances.length" class="repair-list">
+                <div v-for="instance in props.armorInstances" :key="instance.id" class="repair-row">
+                  <div class="repair-row__identity"><span class="item-icon"><el-icon><Tools /></el-icon></span><div><strong>{{ armorName(instance) }}</strong><small>维修记录 {{ instance.repairCount }} / 1</small></div></div>
+                  <div class="repair-durability"><span>{{ instance.curDurability }} / {{ instance.maxDurability }}</span><el-progress :percentage="durabilityPercent(instance)" :show-text="false" /></div>
+                  <div class="repair-row__status">
+                    <span v-if="jobForArmor(instance.id)" class="repair-status repairing"><i class="status-dot warning" />{{ armorRemainingTime(instance.id) }}</span>
+                    <span v-else-if="instance.status === 'broken'" class="repair-status broken"><i class="status-dot danger" />待维修</span>
+                    <span v-else class="repair-status"><i class="status-dot" />可用</span>
+                  </div>
+                  <el-button :icon="Tools" :loading="props.repairingId === instance.id" :disabled="!canRepair(instance)" @click="emit('repair', instance.id)">{{ repairButtonText(instance) }}</el-button>
+                </div>
               </div>
-              <el-button
-                :icon="Tools"
-                :loading="props.upgradingFacilityId === facility.id"
-                :disabled="!facility.nextUpgrade.canStart"
-                @click="emit('upgrade', facility.id)"
-              >升级</el-button>
+              <div v-else class="repair-empty"><el-icon><Box /></el-icon><span>暂无护甲实例</span></div>
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+
+        <template v-else-if="activeFacility">
+          <p class="module-detail__description">{{ activeFacility.description }}</p>
+          <div class="module-detail__effect">
+            <span>当前效果</span>
+            <strong>{{ effectText(activeFacility) }}</strong>
+          </div>
+          <div v-if="activeFacility.state === 'upgrading'" class="module-detail__progress">
+            <span><b>施工中</b><em>等待模块上线</em></span>
+            <el-progress :percentage="jobProgress(activeJobs.find((job) => job.facilityId === activeFacility?.id))" :show-text="false" />
+          </div>
+          <div v-else-if="activeFacility.nextUpgrade" class="module-detail__upgrade">
+            <div class="module-detail__upgrade-copy">
+              <span>下一阶段 · LV.{{ activeFacility.nextUpgrade.level }}</span>
+              <strong>{{ nextEffectText(activeFacility) }}</strong>
+              <small>￥{{ activeFacility.nextUpgrade.cost }} · {{ Math.ceil(activeFacility.nextUpgrade.durationSec / 60) || 1 }} 分钟</small>
+              <small class="module-detail__requirements">{{ requirementSummary(activeFacility.nextUpgrade) }}</small>
             </div>
-            <div v-else class="facility-card__max"><el-icon><CircleCheck /></el-icon><span>最高等级模块</span></div>
-          </article>
+            <el-button
+              :icon="Tools"
+              :loading="props.upgradingFacilityId === activeFacility.id"
+              :disabled="!activeFacility.nextUpgrade.canStart"
+              @click="emit('upgrade', activeFacility.id)"
+            >升级</el-button>
+          </div>
+          <div v-else class="module-detail__max"><el-icon><CircleCheck /></el-icon><span>最高等级模块</span></div>
+        </template>
+
+        <div v-if="activeJobs.length" class="module-jobs">
+          <div class="panel-heading">
+            <div><span>ACTIVE QUEUE / {{ String(activeJobs.length).padStart(2, '0') }}</span><h2>作业队列</h2></div>
+            <el-icon><Timer /></el-icon>
+          </div>
+          <div class="job-list">
+            <article v-for="job in activeJobs" :key="job.id" class="job-card">
+              <div class="job-card__head">
+                <span class="job-card__icon"><el-icon><component :is="job.jobType === 'repair' ? Tools : iconFor(facilities.find((item) => item.id === job.facilityId) ?? ({} as HideoutFacility))" /></el-icon></span>
+                <div><small>{{ job.jobType === 'repair' ? 'SERVICE' : job.jobType === 'craft' ? 'CRAFTING' : 'CONSTRUCTION' }}</small><strong>{{ job.jobType === 'repair' ? '护甲维修' : job.jobType === 'craft' ? facilities.find((item) => item.id === job.facilityId)?.name : facilities.find((item) => item.id === job.facilityId)?.name }}{{ job.jobType === 'upgrade' ? ` · LV.${job.targetLevel}` : '' }}</strong></div>
+                <b>{{ remainingTime(job) }}</b>
+              </div>
+              <el-progress :percentage="jobProgress(job)" :show-text="false" />
+              <div class="job-card__foot"><span>{{ Math.round(jobProgress(job)) }}% 已完成</span><em>完成于 {{ new Date(job.completeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</em></div>
+            </article>
+          </div>
         </div>
       </section>
-
-      <aside class="hideout-queue surface-panel">
-        <div class="panel-heading">
-          <div><span>ACTIVE QUEUE / {{ String(activeJobs.length).padStart(2, '0') }}</span><h2>作业队列</h2></div>
-          <el-icon><Timer /></el-icon>
-        </div>
-        <div v-if="activeJobs.length" class="job-list">
-          <article v-for="job in activeJobs" :key="job.id" class="job-card">
-            <div class="job-card__head">
-              <span class="job-card__icon"><el-icon><component :is="job.jobType === 'repair' ? Tools : iconFor(props.hideout?.facilities.find((item) => item.id === job.facilityId) ?? ({} as HideoutFacility))" /></el-icon></span>
-              <div><small>{{ job.jobType === 'repair' ? 'SERVICE' : 'CONSTRUCTION' }}</small><strong>{{ job.jobType === 'repair' ? '护甲维修' : props.hideout?.facilities.find((item) => item.id === job.facilityId)?.name }}{{ job.jobType === 'upgrade' ? ` · LV.${job.targetLevel}` : '' }}</strong></div>
-              <b>{{ remainingTime(job) }}</b>
-            </div>
-            <el-progress :percentage="jobProgress(job)" :show-text="false" />
-            <div class="job-card__foot"><span>{{ Math.round(jobProgress(job)) }}% 已完成</span><em>完成于 {{ new Date(job.completeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</em></div>
-          </article>
-        </div>
-        <div v-else class="queue-empty"><el-icon><Timer /></el-icon><strong>队列空闲</strong><span>选择一个模块开始建设</span></div>
-      </aside>
     </div>
-
-    <section class="repair-bench surface-panel">
-      <div class="panel-heading">
-        <div><span>SERVICE BAY / ARMOR</span><h2>护甲维修台</h2></div>
-        <div class="repair-bench__meta">维修归零护甲 · 完成后耐久上限减半</div>
-      </div>
-      <div v-if="props.armorInstances.length" class="repair-list">
-        <div v-for="instance in props.armorInstances" :key="instance.id" class="repair-row">
-          <div class="repair-row__identity"><span class="item-icon"><el-icon><Tools /></el-icon></span><div><strong>{{ armorName(instance) }}</strong><small>维修记录 {{ instance.repairCount }} / 1</small></div></div>
-          <div class="repair-durability"><span>{{ instance.curDurability }} / {{ instance.maxDurability }}</span><el-progress :percentage="durabilityPercent(instance)" :show-text="false" /></div>
-          <div class="repair-row__status">
-            <span v-if="jobForArmor(instance.id)" class="repair-status repairing"><i class="status-dot warning" />{{ armorRemainingTime(instance.id) }}</span>
-            <span v-else-if="instance.status === 'broken'" class="repair-status broken"><i class="status-dot danger" />待维修</span>
-            <span v-else class="repair-status"><i class="status-dot" />可用</span>
-          </div>
-          <el-button :icon="Tools" :loading="props.repairingId === instance.id" :disabled="!canRepair(instance)" @click="emit('repair', instance.id)">{{ repairButtonText(instance) }}</el-button>
-        </div>
-      </div>
-      <div v-else class="repair-empty"><el-icon><Box /></el-icon><span>暂无护甲实例</span></div>
-    </section>
   </section>
 </template>

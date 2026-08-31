@@ -1,5 +1,5 @@
 // 仓库、装备预设与 Session 类型：拆分高频业务数据，保持 types.ts 的统一导出入口。
-import type { ActionStyle, LootSummary } from './types'
+import type { ActionStyle, LootSummary } from './types_common'
 
 export type RecoveryMethod = 'inventory' | 'hideout' | 'merchant'
 
@@ -46,6 +46,7 @@ export interface MerchantCatalogItem {
   id: string
   name: string
   kind: string
+  buyable: boolean
   category: string
   detail: string
   basePrice: number
@@ -229,7 +230,7 @@ export interface SessionEvent {
   sessionId: number
   runIndex: number
   sequence: number
-  eventType: SessionEventType | string
+  eventType: SessionEventType
   offsetSec: number
   availableAt: string
   nodeId: string

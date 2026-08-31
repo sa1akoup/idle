@@ -21,6 +21,7 @@ watch(graph, (value) => {
 
 const selectedNode = computed(() => graph.value?.nodes.find((node) => node.id === selectedNodeId.value))
 const selectedEnemy = computed(() => props.enemies.find((enemy) => enemy.id === selectedNode.value?.enemyId))
+const enemyThreat = computed(() => selectedEnemy.value ? `${selectedEnemy.value.name} · 阶层 ${['机体','杂鱼','守卫','精锐','BOSS'][selectedEnemy.value.kind === 'grunt' ? 1 : selectedEnemy.value.kind === 'guard' ? 2 : selectedEnemy.value.kind === 'elite' ? 3 : selectedEnemy.value.kind === 'boss' ? 4 : 1]} · HP 基准 ${selectedEnemy.value.hpBase}` : '未知活动')
 const extractionPoints = computed(() => graph.value?.extractionPoints.filter((point) => point.enabled && point.anchorNodeId === selectedNodeId.value) || [])
 const connectedNodes = computed(() => {
   if (!graph.value || !selectedNode.value) return []
@@ -67,7 +68,7 @@ const distanceName = computed(() => ({ close: '近距离', mid: '中距离', far
           <span>撤离点</span>
           <p v-for="point in extractionPoints" :key="point.id">{{ point.name }} · 锚点后 {{ point.travelTime }} 分钟抵达</p>
         </div>
-        <div class="node-detail"><span>主要威胁</span><p>{{ selectedEnemy?.name || '未知活动' }} · HP {{ selectedEnemy?.hp || '--' }}</p></div>
+        <div class="node-detail"><span>主要威胁</span><p>{{ enemyThreat }}</p></div>
         <div class="node-detail"><span>搜索容器</span><div v-if="selectedNode.containers.length" class="loot-list"><span v-for="container in selectedNode.containers" :key="`${container.pool}-${container.id}`" class="loot-chip" :title="`${container.pool} · ${container.tags.join(' / ')} · 搜索风险 ${container.searchRisk} · 耗时 ${container.searchTime} 分钟`">{{ container.pool }} · {{ container.name }} · V{{ container.valueTier }} · W{{ container.weight }}</span></div><p v-else>暂无容器</p></div>
       </aside>
     </div>

@@ -1,6 +1,6 @@
 // 探索部署逻辑：管理地图、风格、预设装备和启动请求。
 import { computed, ref, watchEffect } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import api, { getApiError } from '../api'
 import type {
   ActionStyle,

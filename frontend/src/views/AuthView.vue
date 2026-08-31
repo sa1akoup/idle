@@ -1,7 +1,7 @@
 <!-- 账号入口：登录或注册后进入行动终端。 -->
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import api, { getApiError } from '../api'
 import type { User } from '../types'
 
