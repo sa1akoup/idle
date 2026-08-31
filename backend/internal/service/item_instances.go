@@ -7,6 +7,7 @@ import (
 
 	"idle/internal/engine"
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 )
@@ -164,11 +165,19 @@ func ListItemInstancesForUser(db *gorm.DB, userID uint) ([]ItemInstanceView, err
 	if err := db.Where("user_id = ? AND location_type = ?", userID, "inventory").Order("item_id asc, id asc").Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("读取物品实例: %w", err)
 	}
+	itemIDs := make([]string, 0, len(items))
+	for _, instance := range items {
+		itemIDs = append(itemIDs, instance.ItemID)
+	}
+	catalogItems, err := catalog.New(db).FindByIDs(itemIDs)
+	if err != nil {
+		return nil, fmt.Errorf("读取物品实例目录: %w", err)
+	}
 	result := make([]ItemInstanceView, 0, len(items))
 	for _, instance := range items {
-		item, err := findCatalogItem(db, instance.ItemID)
-		if err != nil {
-			return nil, fmt.Errorf("读取物品实例目录 %s: %w", instance.ItemID, err)
+		item, ok := catalogItems[instance.ItemID]
+		if !ok {
+			return nil, fmt.Errorf("读取物品实例目录 %s: %w", instance.ItemID, catalog.ErrItemNotFound)
 		}
 		result = append(result, ItemInstanceView{
 			ItemInstance:     instance,

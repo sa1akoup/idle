@@ -2,9 +2,11 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -19,6 +21,20 @@ func facilityRequirementViewsTx(db *gorm.DB, userID uint, character models.Chara
 	if err := db.Where("facility_id = ? AND level = ?", facilityID, level).
 		Order("sort_order asc, id asc").Find(&requirements).Error; err != nil {
 		return nil, false, fmt.Errorf("读取设施升级条件: %w", err)
+	}
+	catalogRepo := catalog.New(db)
+	itemIDs := make([]string, 0, len(requirements)+1)
+	for _, requirement := range requirements {
+		if requirement.RequirementType == "item" {
+			itemIDs = append(itemIDs, requirement.ReferenceID)
+		}
+	}
+	if levelDef.MaterialID != "" && levelDef.MaterialQuantity > 0 {
+		itemIDs = append(itemIDs, levelDef.MaterialID)
+	}
+	catalogItems, catalogErr := catalogRepo.FindByIDs(itemIDs)
+	if catalogErr != nil && !errors.Is(catalogErr, catalog.ErrItemNotFound) {
+		return nil, false, fmt.Errorf("读取设施材料目录: %w", catalogErr)
 	}
 	views := make([]HideoutRequirementView, 0, len(requirements)+1)
 	itemViewIndexes := make(map[string]int)
@@ -40,7 +56,7 @@ func facilityRequirementViewsTx(db *gorm.DB, userID uint, character models.Chara
 		views = append(views, HideoutRequirementView{
 			RequirementType: requirement.RequirementType,
 			ReferenceID:     requirement.ReferenceID,
-			Label:           facilityRequirementLabel(db, requirement),
+			Label:           facilityRequirementLabel(db, catalogItems, requirement),
 			Quantity:        quantity,
 			RequiredValue:   required,
 			CurrentValue:    current,
@@ -62,7 +78,7 @@ func facilityRequirementViewsTx(db *gorm.DB, userID uint, character models.Chara
 		views = append(views, HideoutRequirementView{
 			RequirementType: requirement.RequirementType,
 			ReferenceID:     requirement.ReferenceID,
-			Label:           facilityRequirementLabel(db, requirement),
+			Label:           facilityRequirementLabel(db, catalogItems, requirement),
 			Quantity:        requirement.Quantity,
 			RequiredValue:   requirement.RequiredValue,
 			CurrentValue:    current,
@@ -119,11 +135,10 @@ func currentRequirementValueTx(db *gorm.DB, userID uint, character models.Charac
 	}
 }
 
-func facilityRequirementLabel(db *gorm.DB, requirement models.FacilityRequirement) string {
+func facilityRequirementLabel(db *gorm.DB, catalogItems map[string]catalog.Item, requirement models.FacilityRequirement) string {
 	switch requirement.RequirementType {
 	case "item":
-		item, err := findCatalogItem(db, requirement.ReferenceID)
-		if err == nil {
+		if item, ok := catalogItems[requirement.ReferenceID]; ok {
 			return item.Name
 		}
 		return requirement.ReferenceID

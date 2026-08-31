@@ -8,6 +8,7 @@ import (
 
 	"idle/internal/engine"
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 )
@@ -18,7 +19,7 @@ func characterToEngineState(character models.Character) engine.CharacterState {
 		Charisma: character.Charisma, Stealth: character.Stealth, Perception: character.Perception, Negotiation: character.Negotiation,
 		Luck: character.Luck, Survival: character.Survival, Resist: character.Resist, Engineering: character.Engineering, Medical: character.Medical,
 		MeleeProf: character.MeleeProf, PistolProf: character.PistolProf, SMGProf: character.SMGProf, ShotgunProf: character.ShotgunProf,
-		RifleProf: character.RifleProf, SniperProf: character.SniperProf, Trait: character.Trait,
+		RifleProf: character.RifleProf, SniperProf: character.SniperProf,
 		HP: character.HP, Energy: character.Energy, Hydration: character.Hydration, Stress: character.Stress,
 	}
 }
@@ -83,6 +84,7 @@ func attachRecoveryPresets(db *gorm.DB, userID uint, loadout *models.PlayerLoado
 		}
 	}
 	snapshot.RecoveryPresets = make(map[int]engine.RecoveryPreset, 3)
+	catalogRepo := catalog.New(db)
 	for index := 1; index <= 3; index++ {
 		weaponID, armorID, consumables := PresetOf(loadout, index)
 		ammoID, ammoRounds := PresetAmmoOf(loadout, index)
@@ -100,6 +102,10 @@ func attachRecoveryPresets(db *gorm.DB, userID uint, loadout *models.PlayerLoado
 			itemIDs = append(itemIDs, itemID)
 		}
 		sort.Strings(itemIDs)
+		catalogItems, err := catalogRepo.FindByIDs(itemIDs)
+		if err != nil {
+			return fmt.Errorf("读取补购商品目录: %w", err)
+		}
 		preset := engine.RecoveryPreset{
 			Index: index, AmmoID: ammoID, AmmoRounds: ammoRounds,
 			Loadout: engine.LoadoutState{
@@ -109,9 +115,9 @@ func attachRecoveryPresets(db *gorm.DB, userID uint, loadout *models.PlayerLoado
 		}
 		engine.SortItemStacks(preset.Consumables)
 		for _, itemID := range itemIDs {
-			item, err := findCatalogItem(db, itemID)
-			if err != nil {
-				return fmt.Errorf("读取补购商品 %s: %w", itemID, err)
+			item, ok := catalogItems[itemID]
+			if !ok {
+				return fmt.Errorf("读取补购商品 %s: %w", itemID, catalog.ErrItemNotFound)
 			}
 			available := true
 			if err := applyMerchantPriceForUser(db, userID, &item); err != nil {
