@@ -189,10 +189,7 @@ func seedLoot(db *gorm.DB) error {
 
 func upsertLootItems(db *gorm.DB, items []models.LootItemDef) error {
 	for _, item := range items {
-		if err := db.FirstOrCreate(&item, models.LootItemDef{ID: item.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.LootItemDef{}).Where("id = ?", item.ID).Updates(item).Error; err != nil {
+		if err := upsertSeedDef(db, &item, item.ID); err != nil {
 			return err
 		}
 	}

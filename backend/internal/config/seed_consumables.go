@@ -16,10 +16,7 @@ func seedConsumables(db *gorm.DB) error {
 		{ID: "toolkit", Name: "工具包", Desc: "工程事件必需", Price: 300, Weight: 3, Slots: 2, MerchantCategory: "mechanical"},
 	}
 	for _, c := range consumables {
-		if err := db.FirstOrCreate(&c, models.ConsumableDef{ID: c.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.ConsumableDef{}).Where("id=?", c.ID).Updates(c).Error; err != nil {
+		if err := upsertSeedDef(db, &c, c.ID); err != nil {
 			return err
 		}
 	}

@@ -13,7 +13,17 @@ func seedHideout(db *gorm.DB) error {
 	if err := seedHideoutDefinitions(db); err != nil {
 		return err
 	}
-	return seedHideoutForUser(db, models.DefaultUserID)
+
+	var users []models.User
+	if err := db.Select("id").Find(&users).Error; err != nil {
+		return err
+	}
+	for _, user := range users {
+		if err := seedHideoutForUser(db, user.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func seedHideoutDefinitions(db *gorm.DB) error {
@@ -44,8 +54,8 @@ func seedHideoutDefinitions(db *gorm.DB) error {
 
 	levels := []models.FacilityLevelDef{
 		{FacilityID: "storage", Level: 0}, {FacilityID: "storage", Level: 1},
-		{FacilityID: "storage", Level: 2, UpgradeCost: 1200, UpgradeSeconds: 900, MaterialID: "construction_tape", MaterialName: "建筑胶带", MaterialQuantity: 1, StorageBonus: 20},
-		{FacilityID: "storage", Level: 3, UpgradeCost: 3000, UpgradeSeconds: 1800, MaterialID: "metal_spare_parts", MaterialName: "金属备件", MaterialQuantity: 1, StorageBonus: 40},
+		{FacilityID: "storage", Level: 2, UpgradeCost: 1200, UpgradeSeconds: 900, MaterialID: "construction_tape", MaterialName: "建筑胶带", MaterialQuantity: 1, StorageBonus: 120},
+		{FacilityID: "storage", Level: 3, UpgradeCost: 3000, UpgradeSeconds: 1800, MaterialID: "metal_spare_parts", MaterialName: "金属备件", MaterialQuantity: 1, StorageBonus: 240},
 
 		{FacilityID: "security", Level: 0}, {FacilityID: "security", Level: 1, UpgradeCost: 800, UpgradeSeconds: 900, MaterialID: "metal_spare_parts", MaterialName: "金属备件", MaterialQuantity: 1},
 		{FacilityID: "security", Level: 2, UpgradeCost: 2200, UpgradeSeconds: 1800, MaterialID: "military_cable", MaterialName: "军用电缆", MaterialQuantity: 1},
@@ -59,21 +69,21 @@ func seedHideoutDefinitions(db *gorm.DB) error {
 		{FacilityID: "generator", Level: 2, UpgradeCost: 3200, UpgradeSeconds: 1800, MaterialID: "car_battery", MaterialName: "汽车电瓶", MaterialQuantity: 1, FuelSlotCount: 2},
 		{FacilityID: "generator", Level: 3, UpgradeCost: 7000, UpgradeSeconds: 3600, MaterialID: "military_battery", MaterialName: "军用电池", MaterialQuantity: 1, FuelSlotCount: 3},
 
-		{FacilityID: "heating", Level: 0}, {FacilityID: "heating", Level: 1, UpgradeCost: 700, UpgradeSeconds: 900, EnergyRecoveryPerHour: 2.4, MaterialID: "corrugated_hose", MaterialName: "波纹管", MaterialQuantity: 1},
-		{FacilityID: "heating", Level: 2, UpgradeCost: 1800, UpgradeSeconds: 1800, EnergyRecoveryPerHour: 7.2, MaterialID: "analog_thermometer", MaterialName: "模拟温度计", MaterialQuantity: 1},
-		{FacilityID: "heating", Level: 3, UpgradeCost: 4200, UpgradeSeconds: 3600, EnergyRecoveryPerHour: 14.4, MaterialID: "propane_tank", MaterialName: "丙烷罐", MaterialQuantity: 1},
+		{FacilityID: "heating", Level: 0, EnergyRecoveryPerHour: 25}, {FacilityID: "heating", Level: 1, UpgradeCost: 700, UpgradeSeconds: 900, EnergyRecoveryPerHour: 40, MaterialID: "corrugated_hose", MaterialName: "波纹管", MaterialQuantity: 1},
+		{FacilityID: "heating", Level: 2, UpgradeCost: 1800, UpgradeSeconds: 1800, EnergyRecoveryPerHour: 60, MaterialID: "analog_thermometer", MaterialName: "模拟温度计", MaterialQuantity: 1},
+		{FacilityID: "heating", Level: 3, UpgradeCost: 4200, UpgradeSeconds: 3600, EnergyRecoveryPerHour: 80, MaterialID: "propane_tank", MaterialName: "丙烷罐", MaterialQuantity: 1},
 
 		{FacilityID: "lighting", Level: 0}, {FacilityID: "lighting", Level: 1, UpgradeCost: 600, UpgradeSeconds: 900, MaterialID: "power_cord", MaterialName: "电源线", MaterialQuantity: 1},
 		{FacilityID: "lighting", Level: 2, UpgradeCost: 1600, UpgradeSeconds: 1800, MaterialID: "printed_circuit_board", MaterialName: "电路板", MaterialQuantity: 1},
 		{FacilityID: "lighting", Level: 3, UpgradeCost: 3600, UpgradeSeconds: 3600, MaterialID: "rechargeable_battery", MaterialName: "可充电电池", MaterialQuantity: 1},
 
-		{FacilityID: "rest_area", Level: 0}, {FacilityID: "rest_area", Level: 1, UpgradeCost: 600, UpgradeSeconds: 900, StressRecoveryPerHour: 5, MaterialID: "construction_tape", MaterialName: "建筑胶带", MaterialQuantity: 1},
-		{FacilityID: "rest_area", Level: 2, UpgradeCost: 1600, UpgradeSeconds: 1800, StressRecoveryPerHour: 10, MaterialID: "set_of_tools", MaterialName: "工具套装", MaterialQuantity: 1},
-		{FacilityID: "rest_area", Level: 3, UpgradeCost: 3600, UpgradeSeconds: 3600, StressRecoveryPerHour: 15, MaterialID: "electric_drill", MaterialName: "电钻", MaterialQuantity: 1},
+		{FacilityID: "rest_area", Level: 0, StressRecoveryPerHour: 20}, {FacilityID: "rest_area", Level: 1, UpgradeCost: 600, UpgradeSeconds: 900, StressRecoveryPerHour: 30, MaterialID: "construction_tape", MaterialName: "建筑胶带", MaterialQuantity: 1},
+		{FacilityID: "rest_area", Level: 2, UpgradeCost: 1600, UpgradeSeconds: 1800, StressRecoveryPerHour: 45, MaterialID: "set_of_tools", MaterialName: "工具套装", MaterialQuantity: 1},
+		{FacilityID: "rest_area", Level: 3, UpgradeCost: 3600, UpgradeSeconds: 3600, StressRecoveryPerHour: 60, MaterialID: "electric_drill", MaterialName: "电钻", MaterialQuantity: 1},
 
-		{FacilityID: "medstation", Level: 0, HPRecoveryPerHour: 10}, {FacilityID: "medstation", Level: 1, HPRecoveryPerHour: 27.4},
-		{FacilityID: "medstation", Level: 2, UpgradeCost: 1000, UpgradeSeconds: 900, HPRecoveryPerHour: 82.2, MaterialID: "salewa", MaterialName: "Salewa 急救包", MaterialQuantity: 1},
-		{FacilityID: "medstation", Level: 3, UpgradeCost: 2800, UpgradeSeconds: 1800, HPRecoveryPerHour: 173.5, MaterialID: "medical_tools", MaterialName: "医疗工具", MaterialQuantity: 1},
+		{FacilityID: "medstation", Level: 0, HPRecoveryPerHour: 25}, {FacilityID: "medstation", Level: 1, HPRecoveryPerHour: 50},
+		{FacilityID: "medstation", Level: 2, UpgradeCost: 1000, UpgradeSeconds: 900, HPRecoveryPerHour: 75, MaterialID: "salewa", MaterialName: "Salewa 急救包", MaterialQuantity: 1},
+		{FacilityID: "medstation", Level: 3, UpgradeCost: 2800, UpgradeSeconds: 1800, HPRecoveryPerHour: 100, MaterialID: "medical_tools", MaterialName: "医疗工具", MaterialQuantity: 1},
 
 		{FacilityID: "nutrition_unit", Level: 0}, {FacilityID: "nutrition_unit", Level: 1, UpgradeCost: 700, UpgradeSeconds: 900, MaterialID: "iskra", MaterialName: "Iskra 口粮", MaterialQuantity: 1, RequiresPower: true},
 		{FacilityID: "nutrition_unit", Level: 2, UpgradeCost: 1800, UpgradeSeconds: 1800, MaterialID: "condensed_milk", MaterialName: "炼乳罐头", MaterialQuantity: 1, RequiresPower: true},
@@ -83,9 +93,9 @@ func seedHideoutDefinitions(db *gorm.DB) error {
 		{FacilityID: "lavatory", Level: 2, UpgradeCost: 1800, UpgradeSeconds: 1800, MaterialID: "silicone_tube", MaterialName: "硅胶管", MaterialQuantity: 1, RequiresPower: true},
 		{FacilityID: "lavatory", Level: 3, UpgradeCost: 4200, UpgradeSeconds: 3600, MaterialID: "pressure_gauge", MaterialName: "压力表", MaterialQuantity: 1, RequiresPower: true},
 
-		{FacilityID: "water_collector", Level: 0}, {FacilityID: "water_collector", Level: 1, HydrationRecoveryPerHour: 6, MaterialID: "corrugated_hose", MaterialName: "波纹管", MaterialQuantity: 1},
-		{FacilityID: "water_collector", Level: 2, UpgradeCost: 1800, UpgradeSeconds: 1800, HydrationRecoveryPerHour: 18, MaterialID: "silicone_tube", MaterialName: "硅胶管", MaterialQuantity: 1},
-		{FacilityID: "water_collector", Level: 3, UpgradeCost: 4200, UpgradeSeconds: 3600, HydrationRecoveryPerHour: 36, MaterialID: "gas_analyzer", MaterialName: "气体分析仪", MaterialQuantity: 1},
+		{FacilityID: "water_collector", Level: 0, HydrationRecoveryPerHour: 25}, {FacilityID: "water_collector", Level: 1, HydrationRecoveryPerHour: 40, MaterialID: "corrugated_hose", MaterialName: "波纹管", MaterialQuantity: 1},
+		{FacilityID: "water_collector", Level: 2, UpgradeCost: 1800, UpgradeSeconds: 1800, HydrationRecoveryPerHour: 60, MaterialID: "silicone_tube", MaterialName: "硅胶管", MaterialQuantity: 1},
+		{FacilityID: "water_collector", Level: 3, UpgradeCost: 4200, UpgradeSeconds: 3600, HydrationRecoveryPerHour: 80, MaterialID: "gas_analyzer", MaterialName: "气体分析仪", MaterialQuantity: 1},
 
 		{FacilityID: "workbench", Level: 0}, {FacilityID: "workbench", Level: 1, RepairSpeedPercent: 0, RepairKitDiscountPercent: 0},
 		{FacilityID: "workbench", Level: 2, UpgradeCost: 1400, UpgradeSeconds: 900, RepairSpeedPercent: 25, RepairKitDiscountPercent: 3, MaterialID: "set_of_tools", MaterialName: "工具套装", MaterialQuantity: 1},

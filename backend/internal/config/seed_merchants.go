@@ -17,10 +17,7 @@ func seedMerchants(db *gorm.DB) error {
 		{ID: "union", Name: "联合商人", Category: "union", Reputation: 0, Desc: "联合商会特供（待开放）", Open: false, SortOrder: 6},
 	}
 	for _, m := range merchants {
-		if err := db.FirstOrCreate(&m, models.MerchantDef{ID: m.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.MerchantDef{}).Where("id=?", m.ID).Updates(m).Error; err != nil {
+		if err := upsertSeedDef(db, &m, m.ID); err != nil {
 			return err
 		}
 	}

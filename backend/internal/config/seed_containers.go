@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+
 	"idle/internal/models"
 
 	"gorm.io/gorm"
@@ -30,10 +32,7 @@ func seedContainers(db *gorm.DB) error {
 		{ID: "weapon_cache", Name: "武器零件柜", Tags: []string{"weaponpart", "valuable", "combat"}, ValueTier: 4, SearchRisk: 3, SearchTime: 3, RollMin: 1, RollMax: 3},
 	}
 	for _, container := range containers {
-		if err := db.FirstOrCreate(&container, models.LootContainerDef{ID: container.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.LootContainerDef{}).Where("id = ?", container.ID).Updates(container).Error; err != nil {
+		if err := upsertSeedDef(db, &container, container.ID); err != nil {
 			return err
 		}
 	}
@@ -122,10 +121,7 @@ func seedContainers(db *gorm.DB) error {
 		{ID: 63, ContainerID: "weapon_cache", ItemCategory: "valuable", Weight: 20, MinQuantity: 1, MaxQuantity: 1},
 	}
 	for _, rule := range rules {
-		if err := db.FirstOrCreate(&rule, models.LootContainerRule{ID: rule.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.LootContainerRule{}).Where("id = ?", rule.ID).Updates(rule).Error; err != nil {
+		if err := upsertSeedDef(db, &rule, fmt.Sprint(rule.ID)); err != nil {
 			return err
 		}
 	}

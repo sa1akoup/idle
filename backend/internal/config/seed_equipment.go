@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+
 	"idle/internal/models"
 
 	"gorm.io/gorm"
@@ -53,10 +55,7 @@ func seedEquipment(db *gorm.DB) error {
 		{ID: "sniper_svds", Name: "SVDS 精确射手步枪", Category: "sniper", CaliberID: "762x54r", Hit: 73, Damage: 52, Penetration: 60, Suppress: 28, Ready: -8, AmmoPerRound: 3, Noise: 84, Reliability: 88, CloseMod: -25, MidMod: 5, FarMod: 14, Price: 5500, Weight: 7, Slots: 3, MerchantCategory: "weapon", RepRequirement: 25},
 	}
 	for _, w := range weapons {
-		if err := db.FirstOrCreate(&w, models.WeaponDef{ID: w.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.WeaponDef{}).Where("id=?", w.ID).Updates(w).Error; err != nil {
+		if err := upsertSeedDef(db, &w, w.ID); err != nil {
 			return err
 		}
 	}
@@ -76,10 +75,7 @@ func seedEquipment(db *gorm.DB) error {
 		{ID: "armor_defender2", Name: "Defender-2 防弹衣", Type: "heavy", Protect: 50, ProtectionLevel: 6, Coverage: 85, Mobility: -14, Initiative: -9, Conceal: -15, AntiSuppress: 14, Escape: -18, MaxDurability: 190, Price: 6000, Weight: 18, Slots: 4, MerchantCategory: "clothing", RepRequirement: 40},
 	}
 	for _, a := range armors {
-		if err := db.FirstOrCreate(&a, models.ArmorDef{ID: a.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.ArmorDef{}).Where("id=?", a.ID).Updates(a).Error; err != nil {
+		if err := upsertSeedDef(db, &a, a.ID); err != nil {
 			return err
 		}
 	}
@@ -95,10 +91,7 @@ func seedEquipment(db *gorm.DB) error {
 		{ID: "chestrig_tv110", Name: "TV-110 胸挂", AddSlots: 18, AddWeight: 22, Price: 1800, Weight: 3, Slots: 3, MerchantCategory: "clothing", RepRequirement: 25},
 	}
 	for _, cr := range chestRigs {
-		if err := db.FirstOrCreate(&cr, models.ChestRigDef{ID: cr.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.ChestRigDef{}).Where("id=?", cr.ID).Updates(cr).Error; err != nil {
+		if err := upsertSeedDef(db, &cr, cr.ID); err != nil {
 			return err
 		}
 	}
@@ -114,10 +107,7 @@ func seedEquipment(db *gorm.DB) error {
 		{ID: "backpack_blackjack", Name: "Blackjack 背包", AddSlots: 35, AddWeight: 45, Price: 3600, Weight: 5, Slots: 5, MerchantCategory: "clothing", RepRequirement: 35},
 	}
 	for _, bp := range backpacks {
-		if err := db.FirstOrCreate(&bp, models.BackpackDef{ID: bp.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.BackpackDef{}).Where("id=?", bp.ID).Updates(bp).Error; err != nil {
+		if err := upsertSeedDef(db, &bp, bp.ID); err != nil {
 			return err
 		}
 	}
@@ -133,10 +123,7 @@ func seedEquipment(db *gorm.DB) error {
 		{ID: "helmet_airframe", Name: "Airframe 战术头盔", Protect: 24, Coverage: 60, Mobility: -3, Initiative: -1, Conceal: -5, AntiSuppress: 5, Escape: -4, MaxDurability: 120, Price: 2800, Weight: 3, Slots: 2, MerchantCategory: "clothing", RepRequirement: 30},
 	}
 	for _, hl := range helmets {
-		if err := db.FirstOrCreate(&hl, models.HelmetDef{ID: hl.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.HelmetDef{}).Where("id=?", hl.ID).Updates(hl).Error; err != nil {
+		if err := upsertSeedDef(db, &hl, hl.ID); err != nil {
 			return err
 		}
 	}
@@ -152,10 +139,7 @@ func seedEquipment(db *gorm.DB) error {
 		{ID: "headset_xcel", Name: "XCEL 500BT 耳机", HearingLevel: 3, Price: 1800, Weight: 1, Slots: 1, MerchantCategory: "clothing", RepRequirement: 30},
 	}
 	for _, hs := range headsets {
-		if err := db.FirstOrCreate(&hs, models.HeadsetDef{ID: hs.ID}).Error; err != nil {
-			return err
-		}
-		if err := db.Model(&models.HeadsetDef{}).Where("id=?", hs.ID).Updates(hs).Error; err != nil {
+		if err := upsertSeedDef(db, &hs, hs.ID); err != nil {
 			return err
 		}
 	}
@@ -166,6 +150,21 @@ func seedEquipment(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// upsertSeedDef 幂等写入装备定义。避免 FirstOrCreate 的“读回覆盖”坑：
+// 当数据库已存在该 ID 但某些字段为旧空值（如历史数据的 caliber_id）时，
+// FirstOrCreate 会把 DB 旧值读回覆盖源值，随后 Updates(struct) 又跳过零值，
+// 导致空口径永远补不进去。这里改为：查无则 Create，查有则 Select("*") 全量更新。
+func upsertSeedDef[T any](db *gorm.DB, def *T, id string) error {
+	var existing T
+	if err := db.First(&existing, "id = ?", id).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return db.Create(def).Error
+	}
+	return db.Model(&existing).Where("id = ?", id).Select("*").Updates(def).Error
 }
 
 func initialEquipmentInventory() []models.Inventory {

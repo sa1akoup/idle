@@ -61,10 +61,7 @@ func seedAmmo(db *gorm.DB) error {
 				MerchantCategory:      "weapon",
 				RepRequirement:        profile.RepRequirement,
 			}
-			if err := db.Where("id = ?", ammo.ID).FirstOrCreate(&ammo).Error; err != nil {
-				return err
-			}
-			if err := db.Model(&models.AmmoDef{}).Where("id = ?", ammo.ID).Updates(ammo).Error; err != nil {
+			if err := upsertSeedDef(db, &ammo, ammo.ID); err != nil {
 				return err
 			}
 		}
