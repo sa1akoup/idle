@@ -3,7 +3,7 @@ package engine
 
 const (
 	SchemaVersion = "exploration-snapshot-v5"
-	EngineVersion = "exploration-engine-v5"
+	EngineVersion = "exploration-engine-v6"
 )
 
 // Map 是探索路线的不可变快照。
@@ -201,6 +201,8 @@ type Armor struct {
 type Enemy struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
+	Kind                string `json:"kind,omitempty"`
+	VariedFrom          string `json:"variedFrom,omitempty"`
 	HP                  int    `json:"hp"`
 	StressThreshold     int    `json:"stressThreshold"`
 	Perception          int    `json:"perception"`
@@ -369,7 +371,6 @@ type CharacterState struct {
 	ShotgunProf int     `json:"shotgunProf"`
 	RifleProf   int     `json:"rifleProf"`
 	SniperProf  int     `json:"sniperProf"`
-	Trait       string  `json:"trait"`
 	HP          float64 `json:"hp"`
 	Energy      float64 `json:"energy"`
 	Hydration   float64 `json:"hydration"`

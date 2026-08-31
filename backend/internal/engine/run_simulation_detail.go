@@ -160,7 +160,6 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 	result := ""
 	finishedSession := false
 	for step, currentNodeID := range routePlan.NodeIDs {
-		moveDurationSec := int64(0)
 		if step > 0 {
 			previousNodeID := routePlan.NodeIDs[step-1]
 			moveTime := edgeMoveTime(adjacency[previousNodeID], currentNodeID)
@@ -168,12 +167,13 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 				return nil, fmt.Errorf("路线缺少移动边 %s -> %s", previousNodeID, currentNodeID)
 			}
 			actualMoveSec := state.consumeNextMoveDuration(int64(moveTime) * 60)
-			moveDurationSec = actualMoveSec
 			state.addTrace(TraceNodeMoveStarted, state.DurationSec, previousNodeID, currentNodeID, map[string]interface{}{
 				"fromNodeId": previousNodeID, "toNodeId": currentNodeID, "moveTime": moveTime,
 				"actualMoveTimeSec": actualMoveSec,
 			})
 			state.DurationSec += actualMoveSec
+			// 每次节点间移动固定减压 5 点，作为战斗之外的恒定压力缓解源。
+			state.Player.Stress = clamp(state.Player.Stress-5, 0, state.Player.StressThreshold)
 		}
 		node, ok := byID[currentNodeID]
 		if !ok {
@@ -199,7 +199,6 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			"playerArmorDurability": state.Player.ArmorDurability,
 		})
 		state.DurationSec += nodeDurationSec
-		actualDurationSec := nodeDurationSec + moveDurationSec
 
 		if err := events.Trigger(state, eventPhaseEnterNode, rng); err != nil {
 			return nil, err
@@ -247,12 +246,15 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			}
 		}
 		canSearch := !encountered || encounterCleared
-		if state.Mode == runModeExploring && canSearch && !state.SkipSearch {
+		// 撤离锚点放宽搜索限制：无论途中是否已进入撤离模式，抵达锚点都可搜刮一次。
+		anchorNode := node.ID == routePlan.AnchorNodeID
+		searchAllowed := state.Mode == runModeExploring || anchorNode
+		if searchAllowed && canSearch && !state.SkipSearch {
 			if err := events.Trigger(state, eventPhasePreSearch, rng); err != nil {
 				return nil, err
 			}
 			evaluateAutomaticEvacuation(state, weapon)
-			if state.Mode == runModeExploring && !state.SkipSearch {
+			if searchAllowed && !state.SkipSearch {
 				for _, assignment := range materialized[node.ID] {
 					for i := 0; i < assignment.Count; i++ {
 						if err := state.CollectContainer(assignment.ContainerID, "节点:"+node.Name); err != nil {
@@ -276,8 +278,8 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			}
 		}
 
-		// 每经过一个节点的移动/探索时间都产生减压效果。
-		stressRecovery := float64(actualDurationSec) / 60 * 5
+		// 探索时间减压（移动减压已在节点间移动时固定 -5）。
+		stressRecovery := float64(nodeDurationSec) / 60 * 5
 		state.Player.Stress = clamp(state.Player.Stress-stressRecovery, 0, state.Player.StressThreshold)
 		if node.ID != routePlan.AnchorNodeID {
 			continue

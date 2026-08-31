@@ -100,15 +100,18 @@ type AttackResult struct {
 	AmmoSpent             int
 }
 
-func effectiveSkill(train, mainAttr int) float64 {
+// EffectiveSkill 计算训练技能与主属性的有效技能值。
+func EffectiveSkill(train, mainAttr int) float64 {
 	return float64(train)*0.75 + float64(mainAttr)*0.25
 }
 
-func calcMaxHP(strength int) float64 {
+// CalcMaxHP 根据力量计算角色最大生命值，并限制在 90-110。
+func CalcMaxHP(strength int) float64 {
 	return clamp(100+float64(strength-50)*0.2, 90, 110)
 }
 
-func calcStressThreshold(resistEff float64) float64 {
+// CalcStressThreshold 根据有效抗压计算压力阈值。
+func CalcStressThreshold(resistEff float64) float64 {
 	return 70 + resistEff*0.2
 }
 
@@ -171,15 +174,15 @@ func finalWeaponControl(attrControl float64, prof int) float64 {
 }
 
 func buildPlayerActor(character CharacterState, weapon Weapon, armor Armor, armorDurability int, ammo Ammo, ammoRounds int) BattleActor {
-	percepEff := effectiveSkill(character.Perception, character.Agility)
-	stealthEff := effectiveSkill(character.Stealth, character.Agility)
-	resistEff := effectiveSkill(character.Resist, character.Strength)
+	percepEff := EffectiveSkill(character.Perception, character.Agility)
+	stealthEff := EffectiveSkill(character.Stealth, character.Agility)
+	resistEff := EffectiveSkill(character.Resist, character.Strength)
 	attrControl := calcWeaponAttrControl(weapon.Category, character, percepEff, resistEff)
-	maxHP := calcMaxHP(character.Strength)
+	maxHP := CalcMaxHP(character.Strength)
 	hp := clamp(character.HP, 0, maxHP)
 	return BattleActor{
 		Name: character.Name, MaxHP: maxHP, HP: hp,
-		Stress: float64(character.Stress), StressThreshold: calcStressThreshold(resistEff), Weapon: weapon, Armor: armor,
+		Stress: float64(character.Stress), StressThreshold: CalcStressThreshold(resistEff), Weapon: weapon, Armor: armor,
 		ArmorDurability: float64(armorDurability), ArmorMaxDur: float64(armor.MaxDurability),
 		Evasion: calcEvasion(float64(character.Agility), float64(armor.Mobility)), Mobility: float64(armor.Mobility),
 		PerceptionEff: percepEff, StealthEff: stealthEff, Agility: float64(character.Agility), ResistEff: resistEff,
@@ -314,8 +317,10 @@ func attack(attacker, defender *BattleActor, distanceModifier, ambush int, rng *
 		result.HealthDamage = oldHP - defender.HP
 		damageForStress = result.HealthDamage
 	}
+	// 方案B：压力拆分为“交火压力”（未命中也有，来自压制值）与“受创压力”（命中按伤害）两部分。
+	// 交火压力系数 0.2（原 1.0 整额，未命中 0.5），受创压力系数 0.15（原 0.25），避免 1-2 轮压力爆炸。
 	antiSuppress := float64(defender.Armor.AntiSuppress)
-	stressAdd := math.Max(1, float64(attacker.Weapon.Suppress)*hitCoeff*(1-defender.ResistEff*0.005)+damageForStress*0.25-antiSuppress)
+	stressAdd := math.Max(1, float64(attacker.Weapon.Suppress)*hitCoeff*0.2*(1-defender.ResistEff*0.005)+damageForStress*0.15-antiSuppress)
 	defender.Stress += stressAdd
 	if defender.Stress > defender.StressThreshold {
 		defender.Stress = defender.StressThreshold

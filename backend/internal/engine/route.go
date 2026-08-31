@@ -225,11 +225,34 @@ func PlanRoute(snapshot ScenarioSnapshot, style string, rng *rand.Rand, options 
 	}
 	sort.SliceStable(activePoints, func(i, j int) bool { return activePoints[i].ID < activePoints[j].ID })
 
+	// 出生点：从非撤离锚点的节点中确定式随机挑选；rng 缺省时退回地图默认起点。
+	startNodeID := snapshot.Map.StartNodeID
+	if rng != nil {
+		anchorNodeIDs := make(map[string]struct{}, len(activePoints))
+		for _, point := range activePoints {
+			anchorNodeIDs[point.AnchorNodeID] = struct{}{}
+		}
+		spawnCandidates := make([]string, 0, len(snapshot.Nodes))
+		for _, node := range snapshot.Nodes {
+			if _, isAnchor := anchorNodeIDs[node.ID]; isAnchor {
+				continue
+			}
+			spawnCandidates = append(spawnCandidates, node.ID)
+		}
+		if len(spawnCandidates) > 0 {
+			sort.Strings(spawnCandidates)
+			startNodeID = spawnCandidates[rng.Intn(len(spawnCandidates))]
+		}
+	}
+	if _, ok := nodesByID[startNodeID]; !ok {
+		return RoutePlan{}, fmt.Errorf("起点节点 %s 不存在", startNodeID)
+	}
+
 	candidates := make([]routeCandidate, 0, options.MaxCandidates)
 	for _, point := range activePoints {
-		path := []string{snapshot.Map.StartNodeID}
-		visited := map[string]bool{snapshot.Map.StartNodeID: true}
-		enumerateRoutes(snapshot.Map.StartNodeID, point.AnchorNodeID, path, visited, adjacency, nodesByID, point, options, &candidates)
+		path := []string{startNodeID}
+		visited := map[string]bool{startNodeID: true}
+		enumerateRoutes(startNodeID, point.AnchorNodeID, path, visited, adjacency, nodesByID, point, options, &candidates)
 		if len(candidates) >= options.MaxCandidates {
 			break
 		}
@@ -389,8 +412,18 @@ func extractionPointByID(points []ExtractionPoint, id string) (ExtractionPoint, 
 
 // ValidateRoutePlan 校验一条已规划路线仍然属于当前快照图。
 func ValidateRoutePlan(snapshot ScenarioSnapshot, plan RoutePlan) error {
-	if len(plan.NodeIDs) == 0 || plan.NodeIDs[0] != snapshot.Map.StartNodeID {
-		return fmt.Errorf("路线必须从起点 %s 开始", snapshot.Map.StartNodeID)
+	if len(plan.NodeIDs) == 0 {
+		return fmt.Errorf("路线为空")
+	}
+	// v6 起点从非锚点节点中随机选择，这里只约束"起点不得是撤离锚点"。
+	anchorNodeIDs := make(map[string]struct{}, len(snapshot.ExtractionPoints))
+	for _, point := range snapshot.ExtractionPoints {
+		if point.Enabled {
+			anchorNodeIDs[point.AnchorNodeID] = struct{}{}
+		}
+	}
+	if _, forbidden := anchorNodeIDs[plan.NodeIDs[0]]; forbidden {
+		return fmt.Errorf("路线起点不得是撤离锚点 %s", plan.NodeIDs[0])
 	}
 	if plan.ExtractionID == "" || plan.AnchorNodeID == "" {
 		return fmt.Errorf("路线缺少撤离点或锚点")

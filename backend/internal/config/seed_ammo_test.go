@@ -18,7 +18,7 @@ func TestSeedAmmoCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("打开测试数据库: %v", err)
 	}
-	if err := db.AutoMigrate(&models.AmmoDef{}, &models.Inventory{}, &models.EnemyDef{}); err != nil {
+	if err := db.AutoMigrate(&models.AmmoDef{}, &models.Inventory{}, &models.EnemyTemplateDef{}); err != nil {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}
 	if err := seedAmmo(db); err != nil {
@@ -57,16 +57,16 @@ func TestSeedAmmoCatalog(t *testing.T) {
 			t.Fatalf("初始弹药 %s 异常: %+v", item.ItemID, inventory)
 		}
 	}
-	if err := seedUnits(db); err != nil {
-		t.Fatalf("写入敌人种子: %v", err)
+	if err := seedEnemyTemplates(db); err != nil {
+		t.Fatalf("写入敌人模板: %v", err)
 	}
-	for enemyID, ammoID := range map[string]string{"enemy_elite": "ammo_762x39_n4", "enemy_sniper": "ammo_762x51_n4"} {
-		var enemy models.EnemyDef
-		if err := db.First(&enemy, "id = ?", enemyID).Error; err != nil {
-			t.Fatalf("读取敌人 %s: %v", enemyID, err)
+	for templateID, level := range map[string]int{"template_elite": 4, "template_sniper": 4} {
+		var template models.EnemyTemplateDef
+		if err := db.First(&template, "id = ?", templateID).Error; err != nil {
+			t.Fatalf("读取敌人模板 %s: %v", templateID, err)
 		}
-		if enemy.AmmoID != ammoID {
-			t.Fatalf("敌人 %s 使用弹药 %s，期望 %s", enemyID, enemy.AmmoID, ammoID)
+		if template.AmmoLevelMin > level || template.AmmoLevelMax < level {
+			t.Fatalf("模板 %s 弹药等级区间 %d-%d 未覆盖 N%d", templateID, template.AmmoLevelMin, template.AmmoLevelMax, level)
 		}
 	}
 }

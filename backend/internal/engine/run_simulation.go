@@ -31,11 +31,11 @@ type simulatedRun struct {
 
 // SimulateRun 是探索引擎唯一的运行入口。它只读取快照和输入，不执行数据库读写。
 func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
+	if err := ValidateSnapshot(snapshot); err != nil {
+		return RunResult{}, fmt.Errorf("校验场景快照: %w", err)
+	}
 	style, err := resolveStyle(snapshot.Styles, input.Style)
 	if err != nil {
-		return RunResult{}, err
-	}
-	if err := ValidateMapGraph(snapshot.Map, snapshot.Nodes, snapshot.Edges, snapshot.ExtractionPoints); err != nil {
 		return RunResult{}, err
 	}
 	weapon, ok := snapshot.Weapons[input.State.Loadout.WeaponID]

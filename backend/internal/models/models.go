@@ -12,7 +12,7 @@ const PlayerCharacterID uint = 1
 const PlayerLoadoutID uint = 1
 
 // InventoryCapacity 仓库可容纳的非现金物品总数（当前装备与预设装备不计入）。
-const InventoryCapacity = 120
+const InventoryCapacity = 480
 
 // BaseCarrySlots 基础可携带物品格数（不含胸挂/背包加成）。
 const BaseCarrySlots = 20
@@ -78,8 +78,6 @@ type Character struct {
 	RifleProf   int `json:"rifleProf"`
 	SniperProf  int `json:"sniperProf"`
 
-	Trait string `json:"trait"`
-
 	// 持久化生存资源。HP 使用 Strength 计算动态上限，Energy/Hydration 上限为 100。
 	HP             float64   `json:"hp"`
 	Energy         float64   `json:"energy"`
@@ -101,11 +99,6 @@ type FacilityRequirement struct {
 	Quantity        int     `json:"quantity"`
 	RequiredValue   float64 `json:"requiredValue"`
 	SortOrder       int     `json:"sortOrder"`
-}
-
-// EffectiveSkill 计算有效子技能
-func EffectiveSkill(train, mainAttr int) float64 {
-	return float64(train)*0.75 + float64(mainAttr)*0.25
 }
 
 // WeaponDef 武器定义
@@ -337,23 +330,60 @@ type ExtractionPointDef struct {
 	Tags         []string `gorm:"serializer:json" json:"tags"`
 }
 
-// EnemyDef 聚合敌人
-type EnemyDef struct {
-	ID                  string `gorm:"primaryKey" json:"id"`
-	Name                string `json:"name"`
-	HP                  int    `json:"hp"`
-	StressThreshold     int    `json:"stressThreshold"`
-	Perception          int    `json:"perception"`
-	Stealth             int    `json:"stealth"`
-	Agility             int    `json:"agility"`
-	WeaponID            string `json:"weaponId"`
-	ArmorID             string `json:"armorId"`
-	AmmoID              string `json:"ammoId"`
-	AmmoRounds          int    `json:"ammoRounds"`
-	Evasion             int    `json:"evasion"`
-	Mobility            int    `json:"mobility"`
-	Suppress            int    `json:"suppress"`
-	BackpackContainerID string `json:"backpackContainerId"`
+// WeightedRef 权重引用：用于模板内武器/护甲/背包/掉落池抽取。
+type WeightedRef struct {
+	Ref    string `json:"ref"`
+	Weight int    `json:"weight"`
+}
+
+// EnemyTemplateDef 敌人模板：定义一类敌人的生成规则，构建快照时物化为运行时敌人变体。
+type EnemyTemplateDef struct {
+	ID        string   `gorm:"primaryKey" json:"id"` // template_scav_grunt 等
+	Name      string   `json:"name"`
+	Kind      string   `json:"kind"`                             // grunt/guard/elite/boss/sniper
+	SpawnTags []string `gorm:"serializer:json" json:"spawnTags"` // outdoor/indoor/underground/far 等
+	Tier      int      `json:"tier"`                             // 0 杂鱼 ~ 3 boss
+
+	// 属性基础值与浮动区间
+	HPBase         int `json:"hpBase"`
+	HPFlux         int `json:"hpFlux"`
+	HPFloor        int `json:"hpFloor"`
+	HPCap          int `json:"hpCap"`
+	StressBase     int `json:"stressBase"`
+	StressFlux     int `json:"stressFlux"`
+	StressFloor    int `json:"stressFloor"`
+	StressCap      int `json:"stressCap"`
+	PerceptionBase int `json:"perceptionBase"`
+	PerceptionFlux int `json:"perceptionFlux"`
+	StealthBase    int `json:"stealthBase"`
+	StealthFlux    int `json:"stealthFlux"`
+	AgilityBase    int `json:"agilityBase"`
+	AgilityFlux    int `json:"agilityFlux"`
+	EvasionBase    int `json:"evasionBase"`
+	EvasionFlux    int `json:"evasionFlux"`
+	MobilityBase   int `json:"mobilityBase"`
+	MobilityFlux   int `json:"mobilityFlux"`
+	SuppressBase   int `json:"suppressBase"`
+	SuppressFlux   int `json:"suppressFlux"`
+
+	// 装备池（按权重抽取）
+	WeaponPool     []WeightedRef `gorm:"serializer:json" json:"weaponPool"`
+	ArmorPool      []WeightedRef `gorm:"serializer:json" json:"armorPool"`
+	AmmoLevelMin   int           `json:"ammoLevelMin"`
+	AmmoLevelMax   int           `json:"ammoLevelMax"`
+	AmmoRoundsBase int           `json:"ammoRoundsBase"`
+	AmmoRoundsMult float64       `json:"ammoRoundsMult"`
+
+	// 掉落
+	BackpackPool  []WeightedRef `gorm:"serializer:json" json:"backpackPool"`
+	BossLootItems []WeightedRef `gorm:"serializer:json" json:"bossLootItems"`
+	BossAmmoDrop  bool          `json:"bossAmmoDrop"`
+
+	// Boss 固定装备（不走池，仅 boss 用）
+	BossWeaponID string `json:"bossWeaponId"`
+	BossArmorID  string `json:"bossArmorId"`
+	BossName     string `json:"bossName"` // 命名变体，如 【BOSS】铁腕·卡甘
+	SortOrder    int    `json:"sortOrder"`
 }
 
 // EventCondition 描述事件选项的运行时前置条件。

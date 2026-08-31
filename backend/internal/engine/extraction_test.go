@@ -21,7 +21,7 @@ func TestExtractionEncounterIsResolvedAfterArrival(t *testing.T) {
 				ID: "extract_ambush_test", Name: "撤离点伏兵", Category: "evacuation",
 				ExclusiveGroup: "encounter", RepeatPolicy: "once_per_run",
 				Options: []EventOption{{
-					ID: "engage", Modes: []string{runModeEvacuating}, Check: EventCheck{Type: "none"},
+					ID: "engage", Modes: []string{runModeEvacuating}, Intent: "engage", RiskTier: 5, ValueTier: 2, Check: EventCheck{Type: "none"},
 					SuccessEffects: []EventEffect{{Type: "encounter", Ref: "extraction"}},
 				}},
 			},

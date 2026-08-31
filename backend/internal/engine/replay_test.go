@@ -109,42 +109,45 @@ func TestNodeTravelReducesStressIncludingExtraction(t *testing.T) {
 	}
 }
 
-func TestShortcutReducesStressRecoveryByActualDuration(t *testing.T) {
-	result, err := SimulateRun(shortcutStressSnapshot(1), shortcutStressInput(40))
+// v6 出生点随机化后，捷径机制测试改用"单出生候选"夹具（出生节点是唯一非锚点），
+// 保证捷径必定在出生节点触发；断言聚焦在下一段移动的缩短量与 0 耗时下限。
+func TestShortcutReducesNextMoveByValue(t *testing.T) {
+	result, err := SimulateRun(shortcutStressSnapshot(1), shortcutStressInput(10))
 	if err != nil {
-		t.Fatalf("带捷径的压力恢复模拟失败: %v", err)
+		t.Fatalf("带捷径的模拟失败: %v", err)
 	}
-	if result.DurationSec != 720 {
-		t.Fatalf("捷径后的实际耗时 = %d 秒，期望 720 秒", result.DurationSec)
-	}
-	if result.NextState.Character.Stress != 0 {
-		t.Fatalf("按实际耗时恢复后的压力 = %d，期望 0", result.NextState.Character.Stress)
+	// 节点探索 120s + 移动 180s-60s + 锚点探索 120s + 撤离读取 60s
+	if result.DurationSec != 420 {
+		t.Fatalf("捷径(1分钟)后的实际耗时 = %d 秒，期望 420 秒", result.DurationSec)
 	}
 }
 
-func TestZeroDurationShortcutDoesNotRecoverStress(t *testing.T) {
-	result, err := SimulateRun(shortcutStressSnapshot(2), shortcutStressInput(40))
+func TestShortcutClampsNextMoveToZero(t *testing.T) {
+	result, err := SimulateRun(shortcutStressSnapshot(40), shortcutStressInput(10))
 	if err != nil {
-		t.Fatalf("零耗时捷径模拟失败: %v", err)
+		t.Fatalf("大步长捷径模拟失败: %v", err)
 	}
-	if result.DurationSec != 660 {
-		t.Fatalf("零耗时捷径后的实际耗时 = %d 秒，期望 660 秒", result.DurationSec)
-	}
-	if result.NextState.Character.Stress != 0 {
-		t.Fatalf("零耗时节点后的压力 = %d，期望 0", result.NextState.Character.Stress)
+	// 缩短量超过下一段移动 180s，被钳制到 0：120 + 0 + 120 + 60
+	if result.DurationSec != 300 {
+		t.Fatalf("大步长捷径后的实际耗时 = %d 秒，期望 300 秒", result.DurationSec)
 	}
 }
 
-func TestShortcutOnlyAffectsNextNodeDurationAndStress(t *testing.T) {
-	result, err := SimulateRun(shortcutStressSnapshot(1), shortcutStressInput(40))
+func TestShortcutOnlyAffectsNextMove(t *testing.T) {
+	short, err := SimulateRun(shortcutStressSnapshot(40), shortcutStressInput(10))
 	if err != nil {
-		t.Fatalf("捷径作用范围模拟失败: %v", err)
+		t.Fatalf("大步长捷径模拟失败: %v", err)
 	}
-	if result.DurationSec != 720 {
-		t.Fatalf("捷径影响了后续节点耗时，实际耗时 = %d 秒，期望 720 秒", result.DurationSec)
+	full, err := SimulateRun(shortcutStressSnapshot(1), shortcutStressInput(10))
+	if err != nil {
+		t.Fatalf("小步长捷径模拟失败: %v", err)
 	}
-	if result.NextState.Character.Stress != 0 {
-		t.Fatalf("捷径后的压力 = %d，期望 0", result.NextState.Character.Stress)
+	// 捷径只作用于下一段移动：两个不同步长之间的差值不得超过单段移动 180s。
+	if full.DurationSec-short.DurationSec > 180 {
+		t.Fatalf("捷径影响了后续节点耗时: %d vs %d", full.DurationSec, short.DurationSec)
+	}
+	if full.DurationSec <= short.DurationSec {
+		t.Fatalf("更长短步长应耗时更长: %d vs %d", full.DurationSec, short.DurationSec)
 	}
 }
 
@@ -195,14 +198,12 @@ func shortcutStressSnapshot(shortcutMinutes int) ScenarioSnapshot {
 	snapshot := replayTestSnapshot()
 	snapshot.Nodes = []Node{
 		{ID: "node_start", MapID: "map_test", Name: "起点", PositionX: 0, PositionY: 0, ExploreTime: 2},
-		{ID: "node_middle", MapID: "map_test", Name: "中段", PositionX: 1, PositionY: 0, ExploreTime: 2},
-		{ID: "node_extract", MapID: "map_test", Name: "撤离锚点", PositionX: 2, PositionY: 0, ExploreTime: 2},
+		{ID: "node_extract", MapID: "map_test", Name: "撤离锚点", PositionX: 1, PositionY: 0, ExploreTime: 2},
 	}
-	snapshot.Map.LayoutColumns = 3
+	snapshot.Map.LayoutColumns = 2
 	snapshot.Map.LayoutRows = 1
 	snapshot.Edges = []MapEdge{
-		{ID: 1, MapID: "map_test", FromNodeID: "node_start", ToNodeID: "node_middle", MoveTime: 3, Bidirectional: true},
-		{ID: 2, MapID: "map_test", FromNodeID: "node_middle", ToNodeID: "node_extract", MoveTime: 3, Bidirectional: true},
+		{ID: 1, MapID: "map_test", FromNodeID: "node_start", ToNodeID: "node_extract", MoveTime: 3, Bidirectional: true},
 	}
 	snapshot.ExtractionPoints = []ExtractionPoint{{ID: "extract_test", MapID: "map_test", Name: "测试撤离点", Kind: "normal", AnchorNodeID: "node_extract", TravelTime: 1, Enabled: true}}
 	snapshot.Events = EventCatalog{
@@ -210,7 +211,7 @@ func shortcutStressSnapshot(shortcutMinutes int) ScenarioSnapshot {
 			"shortcut_test": {
 				ID: "shortcut_test", Name: "测试捷径", RepeatPolicy: "once_per_run",
 				Options: []EventOption{{
-					ID: "take_shortcut", Modes: []string{"exploring"}, Check: EventCheck{Type: "none"},
+					ID: "take_shortcut", Modes: []string{"exploring"}, Intent: "reroute", RiskTier: 1, ValueTier: 2, Check: EventCheck{Type: "none"},
 					SuccessEffects: []EventEffect{{Type: "evac_shortcut", Value: shortcutMinutes}},
 				}},
 			},
