@@ -204,7 +204,3 @@ func appendLootSettlementEvents(tx *gorm.DB, userID, sessionID uint, runIndex in
 	}
 	return nil
 }
-
-func isRecordNotFound(err error) bool {
-	return errors.Is(err, gorm.ErrRecordNotFound)
-}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -476,7 +477,7 @@ func consumeRepairKitsTx(tx *gorm.DB, userID uint, requiredValue float64) error 
 func settleDueHideoutJobsForUser(db *gorm.DB, userID uint) error {
 	var count int64
 	if err := db.Model(&models.FacilityJob{}).
-		Where("user_id = ? AND status = ? AND complete_at <= ?", userID, facilityJobRunning, time.Now()).
+		Where("user_id = ? AND status IN ? AND complete_at <= ?", userID, []string{facilityJobRunning, facilityJobCompletedUnclaimed}, time.Now()).
 		Count(&count).Error; err != nil {
 		return fmt.Errorf("检查到期藏身处作业: %w", err)
 	}
@@ -494,7 +495,7 @@ func settleDueHideoutJobsForUser(db *gorm.DB, userID uint) error {
 func settleDueHideoutJobsTx(tx *gorm.DB, userID uint, now time.Time) error {
 	var jobs []models.FacilityJob
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id = ? AND status = ? AND complete_at <= ?", userID, facilityJobRunning, now).
+		Where("user_id = ? AND status IN ? AND complete_at <= ?", userID, []string{facilityJobRunning, facilityJobCompletedUnclaimed}, now).
 		Order("complete_at asc, id asc").Find(&jobs).Error; err != nil {
 		return fmt.Errorf("读取到期藏身处作业: %w", err)
 	}
@@ -519,6 +520,41 @@ func settleDueHideoutJobsTx(tx *gorm.DB, userID uint, now time.Time) error {
 				"max_durability": newMax, "cur_durability": newMax, "repair_count": armor.RepairCount + 1, "status": "normal",
 			}).Error; err != nil {
 				return fmt.Errorf("完成护甲维修: %w", err)
+			}
+		case facilityJobTypeCraft:
+			if job.TargetRef == "" {
+				return fmt.Errorf("制造作业缺少配方引用")
+			}
+			var recipe models.RecipeDef
+			if err := tx.Where("id = ?", job.TargetRef).First(&recipe).Error; err != nil {
+				return fmt.Errorf("读取制造配方 %s: %w", job.TargetRef, err)
+			}
+			output, err := catalog.New(tx).FindByID(recipe.OutputItemID)
+			if err != nil {
+				return err
+			}
+			outputSlots, err := craftingOutputSlots(tx, userID, output, recipe.OutputQuantity)
+			if err != nil {
+				return err
+			}
+			used, err := inventoryUsage(tx, userID)
+			if err != nil {
+				return err
+			}
+			capacity, err := storageCapacityForUser(tx, userID)
+			if err != nil {
+				return err
+			}
+			if used+outputSlots > capacity {
+				// 到期但仓库已被占满：作业保留为未领取，等待下一次结算时空间释放再交付。
+				if err := tx.Model(&models.FacilityJob{}).Where("id = ? AND user_id = ?", job.ID, userID).Update("status", facilityJobCompletedUnclaimed).Error; err != nil {
+					return fmt.Errorf("标记制造作业待交付: %w", err)
+				}
+				continue
+			}
+			// 产物走购买同款入库路径：耐久成品自动建满耐久实例。
+			if err := addInventoryItem(tx, userID, output, recipe.OutputQuantity, false); err != nil {
+				return fmt.Errorf("发放制造产物 %s: %w", recipe.OutputItemID, err)
 			}
 		default:
 			return fmt.Errorf("未知藏身处作业类型 %s", job.JobType)
@@ -601,16 +637,4 @@ func cashQuantity(db *gorm.DB, userID uint) (int, error) {
 		return 0, fmt.Errorf("读取现金: %w", err)
 	}
 	return cash, nil
-}
-
-func hasInventoryQuantity(db *gorm.DB, userID uint, itemID string, quantity int) bool {
-	if quantity <= 0 || itemID == "" {
-		return true
-	}
-	var total int
-	if err := db.Model(&models.Inventory{}).Where("user_id = ? AND item_id = ?", userID, itemID).
-		Select("COALESCE(SUM(quantity), 0)").Scan(&total).Error; err != nil {
-		return false
-	}
-	return total >= quantity
 }

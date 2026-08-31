@@ -11,11 +11,7 @@ import (
 )
 
 // inventoryUsage 计算仓库已占用容量，扣除当前装备与 3 套预设装备（含补给）的占用。
-func inventoryUsage(db *gorm.DB, userIDs ...uint) (int, error) {
-	userID := models.DefaultUserID
-	if len(userIDs) > 0 {
-		userID = userIDs[0]
-	}
+func inventoryUsage(db *gorm.DB, userID uint) (int, error) {
 	var rows []struct {
 		ItemID   string
 		Kind     string

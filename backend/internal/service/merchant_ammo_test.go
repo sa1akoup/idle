@@ -70,13 +70,25 @@ func TestMerchantAmmoCatalogAndPurchaseRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取弹药目录: %v", err)
 	}
-	if len(catalog) != 4 {
-		t.Fatalf("弹药目录数量 = %d，期望只展示 N1-N4", len(catalog))
+	if len(catalog) != 6 {
+		t.Fatalf("商人目录数量 = %d，期望包含 N1-N6 以提供出售价格", len(catalog))
 	}
+	buyableCount := 0
 	for _, item := range catalog {
-		if item.ID == "ammo_556x45_n5" || item.ID == "ammo_556x45_n6" {
-			t.Fatalf("高等级弹药不应出现在商人目录: %+v", item)
+		if item.Buyable {
+			buyableCount++
 		}
+		if item.ID == "ammo_556x45_n5" || item.ID == "ammo_556x45_n6" {
+			if item.Buyable {
+				t.Fatalf("高等级弹药不应允许购买: %+v", item)
+			}
+			if item.SellPrice <= 0 {
+				t.Fatalf("高等级弹药应返回后端计算的出售价格: %+v", item)
+			}
+		}
+	}
+	if buyableCount != 4 {
+		t.Fatalf("可购买弹药数量 = %d，期望 N1-N4", buyableCount)
 	}
 
 	n5 := catalogItem{ID: "ammo_556x45_n5", Kind: "ammo", AmmoLevel: 5, Price: 5, MerchantCategory: merchant.Category}

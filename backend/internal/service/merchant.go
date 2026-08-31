@@ -8,15 +8,17 @@ import (
 	"math"
 
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 )
 
-// MerchantCatalogItem 商人商品，价格已按商人好感度计算。
+// MerchantCatalogItem 商人商品，价格已按商人好感度计算；Buyable 表示是否允许购买。
 type MerchantCatalogItem struct {
 	ID                string  `json:"id"`
 	Name              string  `json:"name"`
 	Kind              string  `json:"kind"`
+	Buyable           bool    `json:"buyable"`
 	Category          string  `json:"category"`
 	Detail            string  `json:"detail"`
 	BasePrice         int     `json:"basePrice"`
@@ -46,11 +48,6 @@ func roundPrice(base int, multiplier float64) int {
 	return int(math.Round(float64(base) * multiplier))
 }
 
-// GetMerchants 返回按展示顺序排列的商人。
-func GetMerchants(db *gorm.DB) ([]models.MerchantDef, error) {
-	return GetMerchantsForUser(db, models.DefaultUserID)
-}
-
 // GetMerchantsForUser 返回指定用户看到的商人状态。
 func GetMerchantsForUser(db *gorm.DB, userID uint) ([]models.MerchantDef, error) {
 	var list []models.MerchantDef
@@ -72,11 +69,6 @@ func GetMerchantsForUser(db *gorm.DB, userID uint) ([]models.MerchantDef, error)
 		}
 	}
 	return list, nil
-}
-
-// GetMerchantByID 按 ID 读取商人。
-func GetMerchantByID(db *gorm.DB, id string) (*models.MerchantDef, error) {
-	return GetMerchantByIDForUser(db, models.DefaultUserID, id)
 }
 
 // GetMerchantByIDForUser 读取指定用户的商人状态。
@@ -107,143 +99,66 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 	buyPrice := buyMultiplier(merchant.Reputation)
 	sellPrice := sellMultiplier(merchant.Reputation)
 	items := make([]MerchantCatalogItem, 0)
-
-	var weapons []models.WeaponDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Find(&weapons).Error; err != nil {
+	catalogRepo := catalog.New(db)
+	catalogItems, err := catalogRepo.ListByMerchantCategory(merchant.Category)
+	if err != nil {
 		return nil, err
 	}
-	for _, weapon := range weapons {
-		detail := fmt.Sprintf("伤害 %d / 近战穿透 %d", weapon.Damage, weapon.Penetration)
-		if weapon.AmmoPerRound > 0 {
-			detail = fmt.Sprintf("伤害 %d / 口径 %s", weapon.Damage, weapon.CaliberID)
+	itemIDs := make([]string, 0, len(catalogItems))
+	for _, item := range catalogItems {
+		itemIDs = append(itemIDs, item.ID)
+	}
+	useByID, err := catalogRepo.FindUsesByIDs(itemIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range catalogItems {
+		base := MerchantCatalogItem{
+			ID: item.ID, Name: item.Name, Kind: item.Kind,
+			Buyable:   true,
+			BasePrice: item.Price, Price: roundPrice(item.Price, buyPrice), SellPrice: roundPrice(item.Price, sellPrice),
+			Weight: item.Weight, Slots: item.Slots, RepReq: item.RepRequirement,
 		}
-		items = append(items, MerchantCatalogItem{
-			ID: weapon.ID, Name: weapon.Name, Kind: "weapon",
-			Detail:    detail,
-			BasePrice: weapon.Price, Price: roundPrice(weapon.Price, buyPrice), SellPrice: roundPrice(weapon.Price, sellPrice),
-			Weight: weapon.Weight, Slots: weapon.Slots, RepReq: weapon.RepRequirement,
-		})
-	}
-
-	var ammos []models.AmmoDef
-	if err := db.Where("merchant_category = ? AND level <= ?", merchant.Category, 4).Order("caliber_id asc, level asc").Find(&ammos).Error; err != nil {
-		return nil, err
-	}
-	for _, ammo := range ammos {
-		items = append(items, MerchantCatalogItem{
-			ID: ammo.ID, Name: ammo.Name, Kind: "ammo",
-			Detail:    fmt.Sprintf("口径 %s / N%d / 单发价格", ammo.CaliberID, ammo.Level),
-			BasePrice: ammo.Price, Price: roundPrice(ammo.Price, buyPrice), SellPrice: roundPrice(ammo.Price, sellPrice),
-			Slots: 1, RepReq: ammo.RepRequirement,
-		})
-	}
-
-	var armors []models.ArmorDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Find(&armors).Error; err != nil {
-		return nil, err
-	}
-	for _, armor := range armors {
-		items = append(items, MerchantCatalogItem{
-			ID: armor.ID, Name: armor.Name, Kind: "armor",
-			Detail:    fmt.Sprintf("A%d / 覆盖 %d%%", armor.ProtectionLevel, armor.Coverage),
-			BasePrice: armor.Price, Price: roundPrice(armor.Price, buyPrice), SellPrice: roundPrice(armor.Price, sellPrice),
-			Weight: armor.Weight, Slots: armor.Slots, RepReq: armor.RepRequirement,
-		})
-	}
-
-	var itemUses []models.ItemUseDef
-	if err := db.Find(&itemUses).Error; err != nil {
-		return nil, err
-	}
-	useByID := make(map[string]models.ItemUseDef, len(itemUses))
-	for _, use := range itemUses {
-		useByID[use.ItemID] = use
-	}
-
-	var consumables []models.ConsumableDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Find(&consumables).Error; err != nil {
-		return nil, err
-	}
-	for _, consumable := range consumables {
-		use := useByID[consumable.ID]
-		items = append(items, MerchantCatalogItem{
-			ID: consumable.ID, Name: consumable.Name, Kind: "consumable", Detail: usableItemDetail(consumable.Desc, use),
-			BasePrice: consumable.Price, Price: roundPrice(consumable.Price, buyPrice), SellPrice: roundPrice(consumable.Price, sellPrice),
-			Weight: consumable.Weight, Slots: consumable.Slots, RepReq: consumable.RepRequirement,
-			HPRecovery: use.HPRecovery, EnergyRecovery: use.EnergyRecovery, HydrationRecovery: use.HydrationRecovery,
-			RepairValue: use.RepairValue, FuelSeconds: use.FuelSeconds, MaxDurability: use.MaxDurability, InstanceRequired: use.InstanceRequired,
-		})
-	}
-	var lootItems []models.LootItemDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Order("id asc").Find(&lootItems).Error; err != nil {
-		return nil, err
-	}
-	for _, loot := range lootItems {
-		use, ok := useByID[loot.ID]
-		if !ok || (!use.UsableInSession && !use.UsableInHideout && use.RepairValue <= 0 && use.FuelSeconds <= 0) {
+		switch item.Kind {
+		case "weapon":
+			base.Detail = fmt.Sprintf("伤害 %d / 近战穿透 %d", item.Damage, item.Penetration)
+			if item.AmmoPerRound > 0 {
+				base.Detail = fmt.Sprintf("伤害 %d / 口径 %s", item.Damage, item.CaliberID)
+			}
+		case "ammo":
+			if item.AmmoLevel > 4 {
+				base.Buyable = false
+			}
+			base.Detail = fmt.Sprintf("口径 %s / N%d / 单发价格", item.CaliberID, item.AmmoLevel)
+			base.Slots = 1
+		case "armor":
+			base.Detail = fmt.Sprintf("A%d / 覆盖 %d%%", item.ProtectionLevel, item.Coverage)
+		case "consumable":
+			use := useByID[item.ID]
+			base.Detail = usableItemDetail(item.Desc, use)
+			base.HPRecovery, base.EnergyRecovery, base.HydrationRecovery = use.HPRecovery, use.EnergyRecovery, use.HydrationRecovery
+			base.RepairValue, base.FuelSeconds, base.MaxDurability, base.InstanceRequired = use.RepairValue, use.FuelSeconds, use.MaxDurability, use.InstanceRequired
+		case "loot":
+			use, ok := useByID[item.ID]
+			if !ok || (!use.UsableInSession && !use.UsableInHideout && use.RepairValue <= 0 && use.FuelSeconds <= 0) {
+				base.Buyable = false
+			}
+			base.Category = item.Category
+			base.Detail = usableItemDetail(item.Desc, use)
+			base.HPRecovery, base.EnergyRecovery, base.HydrationRecovery = use.HPRecovery, use.EnergyRecovery, use.HydrationRecovery
+			base.RepairValue, base.FuelSeconds, base.MaxDurability, base.InstanceRequired = use.RepairValue, use.FuelSeconds, use.MaxDurability, use.InstanceRequired
+		case "chestrig", "backpack":
+			base.Detail = fmt.Sprintf("格数 +%d / 负重 +%dkg", item.AddSlots, item.AddWeight)
+		case "helmet":
+			base.Detail = fmt.Sprintf("防护 %d / 覆盖 %d%%", item.Protect, item.Coverage)
+		case "headset":
+			base.Detail = fmt.Sprintf("听力 Lv.%d", item.HearingLevel)
+		default:
 			continue
 		}
-		items = append(items, MerchantCatalogItem{
-			ID: loot.ID, Name: loot.Name, Kind: "loot", Category: loot.Category, Detail: usableItemDetail(loot.Desc, use),
-			BasePrice: loot.Price, Price: roundPrice(loot.Price, buyPrice), SellPrice: roundPrice(loot.Price, sellPrice),
-			Weight: loot.Weight, Slots: loot.Slots, RepReq: loot.RepRequirement,
-			HPRecovery: use.HPRecovery, EnergyRecovery: use.EnergyRecovery, HydrationRecovery: use.HydrationRecovery,
-			RepairValue: use.RepairValue, FuelSeconds: use.FuelSeconds, MaxDurability: use.MaxDurability, InstanceRequired: use.InstanceRequired,
-		})
+		items = append(items, base)
 	}
-
-	var chestRigs []models.ChestRigDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Find(&chestRigs).Error; err != nil {
-		return nil, err
-	}
-	for _, chestRig := range chestRigs {
-		items = append(items, MerchantCatalogItem{
-			ID: chestRig.ID, Name: chestRig.Name, Kind: "chestrig",
-			Detail:    fmt.Sprintf("格数 +%d / 负重 +%dkg", chestRig.AddSlots, chestRig.AddWeight),
-			BasePrice: chestRig.Price, Price: roundPrice(chestRig.Price, buyPrice), SellPrice: roundPrice(chestRig.Price, sellPrice),
-			Weight: chestRig.Weight, Slots: chestRig.Slots, RepReq: chestRig.RepRequirement,
-		})
-	}
-
-	var backpacks []models.BackpackDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Find(&backpacks).Error; err != nil {
-		return nil, err
-	}
-	for _, backpack := range backpacks {
-		items = append(items, MerchantCatalogItem{
-			ID: backpack.ID, Name: backpack.Name, Kind: "backpack",
-			Detail:    fmt.Sprintf("格数 +%d / 负重 +%dkg", backpack.AddSlots, backpack.AddWeight),
-			BasePrice: backpack.Price, Price: roundPrice(backpack.Price, buyPrice), SellPrice: roundPrice(backpack.Price, sellPrice),
-			Weight: backpack.Weight, Slots: backpack.Slots, RepReq: backpack.RepRequirement,
-		})
-	}
-
-	var helmets []models.HelmetDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Find(&helmets).Error; err != nil {
-		return nil, err
-	}
-	for _, helmet := range helmets {
-		items = append(items, MerchantCatalogItem{
-			ID: helmet.ID, Name: helmet.Name, Kind: "helmet",
-			Detail:    fmt.Sprintf("防护 %d / 覆盖 %d%%", helmet.Protect, helmet.Coverage),
-			BasePrice: helmet.Price, Price: roundPrice(helmet.Price, buyPrice), SellPrice: roundPrice(helmet.Price, sellPrice),
-			Weight: helmet.Weight, Slots: helmet.Slots, RepReq: helmet.RepRequirement,
-		})
-	}
-
-	var headsets []models.HeadsetDef
-	if err := db.Where("merchant_category = ?", merchant.Category).Find(&headsets).Error; err != nil {
-		return nil, err
-	}
-	for _, headset := range headsets {
-		items = append(items, MerchantCatalogItem{
-			ID: headset.ID, Name: headset.Name, Kind: "headset",
-			Detail:    fmt.Sprintf("听力 Lv.%d", headset.HearingLevel),
-			BasePrice: headset.Price, Price: roundPrice(headset.Price, buyPrice), SellPrice: roundPrice(headset.Price, sellPrice),
-			Weight: headset.Weight, Slots: headset.Slots, RepReq: headset.RepRequirement,
-		})
-	}
-
 	return items, nil
 }
 
@@ -267,11 +182,6 @@ func usableItemDetail(desc string, use models.ItemUseDef) string {
 	return detail
 }
 
-// applyMerchantPrice 根据商品归属商人计算实际购买价，并校验商人状态与好感度解锁。
-func applyMerchantPrice(tx *gorm.DB, item *catalogItem) error {
-	return applyMerchantPriceForUser(tx, models.DefaultUserID, item)
-}
-
 func applyMerchantPriceForUser(tx *gorm.DB, userID uint, item *catalogItem) error {
 	if item.Kind == "ammo" && item.AmmoLevel > 4 {
 		return fmt.Errorf("%w：武器商人最高只出售 N4 弹药", ErrMerchantUnavailable)
@@ -291,11 +201,6 @@ func applyMerchantPriceForUser(tx *gorm.DB, userID uint, item *catalogItem) erro
 	}
 	item.PaidPrice = roundPrice(item.Price, buyMultiplier(merchant.Reputation))
 	return nil
-}
-
-// PurchaseFromMerchant 从指定商人购买商品，校验商人归属与好感度解锁。
-func PurchaseFromMerchant(db *gorm.DB, merchantID, itemID string, quantity int) error {
-	return PurchaseFromMerchantForUserWithKey(db, models.DefaultUserID, "", merchantID, itemID, quantity)
 }
 
 // PurchaseFromMerchantForUser 为指定用户购买商品。
@@ -328,7 +233,7 @@ func PurchaseFromMerchantForUserWithKey(db *gorm.DB, userID uint, operationKey, 
 			return fmt.Errorf("该商人暂未开放")
 		}
 
-		item, err := findCatalogItem(tx, itemID)
+		item, err := catalog.New(tx).FindByID(itemID)
 		if err != nil {
 			return err
 		}
@@ -353,11 +258,6 @@ func PurchaseFromMerchantForUserWithKey(db *gorm.DB, userID uint, operationKey, 
 		}
 		return nil
 	})
-}
-
-// SellItem 将物品出售给对应商人，返回获得的现金。
-func SellItem(db *gorm.DB, merchantID, itemID string, quantity int) (int, error) {
-	return SellItemForUserWithKey(db, models.DefaultUserID, "", merchantID, itemID, quantity)
 }
 
 // SellItemForUser 为指定用户出售物品。
@@ -414,7 +314,7 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 			if len(instances) < quantity {
 				return fmt.Errorf("%s 可出售数量不足（当前 %d）", itemID, len(instances))
 			}
-			item, err := findCatalogItem(tx, itemID)
+			item, err := catalog.New(tx).FindByID(itemID)
 			if err != nil {
 				return err
 			}

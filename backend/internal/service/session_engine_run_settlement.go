@@ -346,14 +346,6 @@ func ensureSessionAmmoBeforeNextRun(tx *gorm.DB, userID uint, snapshot engine.Sc
 	return ensureSessionAmmoTx(tx, userID, snapshot, state)
 }
 
-func lootQuantityEngine(loot []engine.LootDrop) int {
-	total := 0
-	for _, drop := range loot {
-		total += drop.Quantity
-	}
-	return total
-}
-
 func stringsFromStacks(stacks []engine.ItemStack) string {
 	ids := make([]string, 0)
 	for _, stack := range stacks {

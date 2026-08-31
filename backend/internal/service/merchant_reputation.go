@@ -10,11 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// AwardReputation 提升指定商人的好感度。
-func AwardReputation(db *gorm.DB, merchantID string, amount int) error {
-	return AwardReputationForUser(db, models.DefaultUserID, merchantID, amount)
-}
-
 // AwardReputationForUser 提升指定用户的商人好感度。
 func AwardReputationForUser(db *gorm.DB, userID uint, merchantID string, amount int) error {
 	if amount <= 0 {

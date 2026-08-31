@@ -60,10 +60,6 @@ type RunResult struct {
 	SkipResourceConsumption bool         `json:"skipResourceConsumption"`
 }
 
-func CloneItemStacks(stacks []ItemStack) []ItemStack {
-	return append([]ItemStack(nil), stacks...)
-}
-
 func CloneCarriedItems(items []CarriedItem) []CarriedItem {
 	return append([]CarriedItem(nil), items...)
 }

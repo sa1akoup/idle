@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 )
@@ -23,11 +24,6 @@ type CarryCapacity struct {
 	UsedWeight  float64 `json:"usedWeight"`  // 当前携行已占用负重 kg
 }
 
-// GetCarryCapacity 计算当前携行装备的容量与占用。
-func GetCarryCapacity(db *gorm.DB) (*CarryCapacity, error) {
-	return GetCarryCapacityForUser(db, models.DefaultUserID)
-}
-
 // GetCarryCapacityForUser 计算指定用户当前携行装备的容量与占用。
 func GetCarryCapacityForUser(db *gorm.DB, userID uint) (*CarryCapacity, error) {
 	var c models.Character
@@ -39,42 +35,35 @@ func GetCarryCapacityForUser(db *gorm.DB, userID uint) (*CarryCapacity, error) {
 		return nil, err
 	}
 
-	bonusSlots, bonusWeight := 0, 0.0
-	var chestRig models.ChestRigDef
-	if loadout.ChestRigID != "" {
-		if err := db.First(&chestRig, "id = ?", loadout.ChestRigID).Error; err != nil {
-			return nil, fmt.Errorf("读取胸挂: %w", err)
-		}
-		bonusSlots += chestRig.AddSlots
-		bonusWeight += float64(chestRig.AddWeight)
-	}
-	var backpack models.BackpackDef
-	if loadout.BackpackID != "" {
-		if err := db.First(&backpack, "id = ?", loadout.BackpackID).Error; err != nil {
-			return nil, fmt.Errorf("读取背包: %w", err)
-		}
-		bonusSlots += backpack.AddSlots
-		bonusWeight += float64(backpack.AddWeight)
-	}
-
 	baseWeight := models.BaseCarryWeight(c.Strength)
 	baseSlots := models.BaseCarrySlots
 
 	ids := []string{loadout.WeaponID, loadout.ArmorID,
 		loadout.ChestRigID, loadout.BackpackID, loadout.HelmetID, loadout.HeadsetID}
 	ids = append(ids, loadout.Consumables...)
+	catalogRepo := catalog.New(db)
+	items, err := catalogRepo.FindByIDs(ids)
+	if err != nil {
+		return nil, fmt.Errorf("读取携行物品目录: %w", err)
+	}
 
+	bonusSlots, bonusWeight := 0, 0.0
 	usedSlots, usedWeight := 0, 0.0
 	for _, id := range ids {
 		if id == "" {
 			continue
 		}
-		item, err := findCatalogItem(db, id)
-		if err != nil {
-			return nil, fmt.Errorf("读取携行物品 %s: %w", id, err)
+		item, ok := items[id]
+		if !ok {
+			return nil, fmt.Errorf("读取携行物品 %s: %w", id, catalog.ErrItemNotFound)
 		}
 		usedSlots += item.Slots
 		usedWeight += float64(item.Weight)
+		switch item.Kind {
+		case "chestrig", "backpack":
+			bonusSlots += item.AddSlots
+			bonusWeight += float64(item.AddWeight)
+		}
 	}
 
 	return &CarryCapacity{

@@ -4,7 +4,6 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"idle/internal/models"
@@ -37,13 +36,6 @@ type GeneratorView struct {
 	FuelConsumptionFactor float64             `json:"fuelConsumptionFactor"`
 	UpdatedAt             time.Time           `json:"updatedAt"`
 	Fuels                 []GeneratorFuelView `json:"fuels"`
-}
-
-func GetGeneratorViewForUser(db *gorm.DB, userID uint) (*GeneratorView, error) {
-	if err := settleGeneratorForUser(db, userID); err != nil {
-		return nil, err
-	}
-	return generatorViewTx(db, userID)
 }
 
 func settleGeneratorForUser(db *gorm.DB, userID uint) error {
@@ -256,9 +248,11 @@ func generatorViewTx(db *gorm.DB, userID uint) (*GeneratorView, error) {
 		return nil, err
 	}
 	view := &GeneratorView{Enabled: runtime.Enabled, FuelSlots: level.FuelSlotCount, UpdatedAt: runtime.UpdatedAt, FuelConsumptionFactor: 1}
-	if reduction, err := solarPanelFuelReductionTx(db, userID); err == nil {
-		view.FuelConsumptionFactor = 1 - reduction/100
+	reduction, err := solarPanelFuelReductionTx(db, userID)
+	if err != nil {
+		return nil, fmt.Errorf("读取太阳能板燃料减耗: %w", err)
 	}
+	view.FuelConsumptionFactor = 1 - reduction/100
 	if len(state.FuelInstanceIDs) == 0 {
 		view.Fuels = []GeneratorFuelView{}
 		return view, nil
@@ -398,8 +392,4 @@ func containsUint(values []uint, target uint) bool {
 		}
 	}
 	return false
-}
-
-func sortUint(values []uint) {
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
 }

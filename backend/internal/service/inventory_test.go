@@ -61,16 +61,16 @@ func TestPurchaseItemDeductsCashAndAddsInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := PurchaseItem(db, "weapon", 2); err != nil {
+	if err := PurchaseItemForUser(db, models.DefaultUserID, "weapon", 2); err != nil {
 		t.Fatalf("购买武器: %v", err)
 	}
-	if err := PurchaseItem(db, "armor", 1); err != nil {
+	if err := PurchaseItemForUser(db, models.DefaultUserID, "armor", 1); err != nil {
 		t.Fatalf("购买护甲: %v", err)
 	}
 
-	assertInventoryQuantity(t, db, "cash", 600)
-	assertInventoryQuantity(t, db, "weapon", 2)
-	assertInventoryQuantity(t, db, "armor", 1)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "cash", 600)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "weapon", 2)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "armor", 1)
 	var armorCount int64
 	if err := db.Model(&models.ArmorInstance{}).Where("user_id = ?", models.DefaultUserID).Count(&armorCount).Error; err != nil {
 		t.Fatal(err)
@@ -84,19 +84,19 @@ func TestReplaceLostLoadoutPurchasesPreset(t *testing.T) {
 	db := newInventoryTestDB(t)
 	seedTestLoadout(t, db, 1000)
 
-	paid, err := ReplaceLostLoadout(db, 1)
+	paid, err := ReplaceLostLoadoutForUser(db, models.DefaultUserID, 1)
 	if err != nil {
 		t.Fatalf("自动补购: %v", err)
 	}
 	if paid != 350 {
 		t.Fatalf("补购金额 = %d，期望 350", paid)
 	}
-	assertInventoryQuantity(t, db, "cash", 650)
-	assertInventoryQuantity(t, db, "weapon", 1)
-	assertInventoryQuantity(t, db, "armor", 1)
-	assertInventoryQuantity(t, db, "smoke", 1)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "cash", 650)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "weapon", 1)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "armor", 1)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "smoke", 1)
 
-	loadout, err := GetPlayerLoadout(db)
+	loadout, err := GetPlayerLoadoutForUser(db, models.DefaultUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,14 +114,14 @@ func TestReplaceLostLoadoutUsesChosenPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	paid, err := ReplaceLostLoadout(db, 2)
+	paid, err := ReplaceLostLoadoutForUser(db, models.DefaultUserID, 2)
 	if err != nil {
 		t.Fatalf("按预设2补购: %v", err)
 	}
 	if paid != 400 {
 		t.Fatalf("补购金额 = %d，期望 400（冲锋枪150+护甲200+烟雾弹50）", paid)
 	}
-	assertInventoryQuantity(t, db, "weapon2", 1)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "weapon2", 1)
 	var lostCount int64
 	if err := db.Model(&models.Inventory{}).Where("user_id = ? AND item_id = ?", models.DefaultUserID, "weapon").Count(&lostCount).Error; err != nil {
 		t.Fatal(err)
@@ -129,9 +129,9 @@ func TestReplaceLostLoadoutUsesChosenPreset(t *testing.T) {
 	if lostCount != 0 {
 		t.Fatalf("丢失武器记录仍在仓库中")
 	}
-	assertInventoryQuantity(t, db, "smoke", 1)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "smoke", 1)
 
-	loadout, err := GetPlayerLoadout(db)
+	loadout, err := GetPlayerLoadoutForUser(db, models.DefaultUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,13 +145,13 @@ func TestInventoryUsageExcludesLoadoutAllocation(t *testing.T) {
 	seedTestLoadout(t, db, 1000)
 	// 当前装备与预设1均占用 weapon/armor/smoke 各1，库存各1时全部扣除 -> 占用0
 	// 多买备用武器与烟雾弹，超出装备占用的部分计入容量
-	if err := PurchaseItem(db, "weapon", 2); err != nil {
+	if err := PurchaseItemForUser(db, models.DefaultUserID, "weapon", 2); err != nil {
 		t.Fatalf("购买备用武器: %v", err)
 	}
-	if err := PurchaseItem(db, "smoke", 2); err != nil {
+	if err := PurchaseItemForUser(db, models.DefaultUserID, "smoke", 2); err != nil {
 		t.Fatalf("购买备用烟雾弹: %v", err)
 	}
-	used, err := inventoryUsage(db)
+	used, err := inventoryUsage(db, models.DefaultUserID)
 	if err != nil {
 		t.Fatalf("计算仓库容量: %v", err)
 	}
@@ -165,11 +165,11 @@ func TestReplaceLostLoadoutKeepsLossWhenCashIsInsufficient(t *testing.T) {
 	db := newInventoryTestDB(t)
 	seedTestLoadout(t, db, 100)
 
-	_, err := ReplaceLostLoadout(db, 1)
+	_, err := ReplaceLostLoadoutForUser(db, models.DefaultUserID, 1)
 	if !errors.Is(err, ErrPurchaseUnavailable) {
 		t.Fatalf("错误 = %v，期望 ErrPurchaseUnavailable", err)
 	}
-	assertInventoryQuantity(t, db, "cash", 100)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "cash", 100)
 	for _, itemID := range []string{"weapon", "armor", "smoke"} {
 		var count int64
 		if err := db.Model(&models.Inventory{}).Where("user_id = ? AND item_id = ?", models.DefaultUserID, itemID).Count(&count).Error; err != nil {
@@ -180,7 +180,7 @@ func TestReplaceLostLoadoutKeepsLossWhenCashIsInsufficient(t *testing.T) {
 		}
 	}
 
-	loadout, err := GetPlayerLoadout(db)
+	loadout, err := GetPlayerLoadoutForUser(db, models.DefaultUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,10 +214,10 @@ func seedTestLoadout(t *testing.T, db *gorm.DB, cash int) {
 	}
 }
 
-func assertInventoryQuantity(t *testing.T, db *gorm.DB, itemID string, want int) {
+func assertInventoryQuantity(t *testing.T, db *gorm.DB, userID uint, itemID string, want int) {
 	t.Helper()
 	var inventory models.Inventory
-	if err := db.Where("user_id = ? AND item_id = ?", models.DefaultUserID, itemID).First(&inventory).Error; err != nil {
+	if err := db.Where("user_id = ? AND item_id = ?", userID, itemID).First(&inventory).Error; err != nil {
 		t.Fatalf("读取库存 %s: %v", itemID, err)
 	}
 	if inventory.Quantity != want {

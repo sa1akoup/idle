@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 )
@@ -22,27 +23,7 @@ type StorageCapacity struct {
 	Used     int `json:"used"`
 }
 
-type catalogItem struct {
-	ID               string
-	Name             string
-	Kind             string
-	Category         string
-	Price            int // 基准价
-	PaidPrice        int // 实际支付价（按商人好感度折算），0 时按基准价
-	Weight           int
-	Slots            int
-	DropWeight       int
-	MerchantCategory string
-	RepRequirement   int
-	ArmorMax         int
-	RoundsPerSlot    int
-	AmmoLevel        int
-}
-
-// PurchaseItem 从商人购买指定数量的商品（不校验商人归属，供测试/内部使用）。
-func PurchaseItem(db *gorm.DB, itemID string, quantity int) error {
-	return PurchaseItemForUser(db, models.DefaultUserID, itemID, quantity)
-}
+type catalogItem = catalog.Item
 
 // PurchaseItemForUser 为指定用户购买商品，供内部流程使用。
 func PurchaseItemForUser(db *gorm.DB, userID uint, itemID string, quantity int) error {
@@ -53,7 +34,7 @@ func PurchaseItemForUser(db *gorm.DB, userID uint, itemID string, quantity int) 
 		if err := lockUserResourcesTx(tx, userID); err != nil {
 			return err
 		}
-		item, err := findCatalogItem(tx, itemID)
+		item, err := catalog.New(tx).FindByID(itemID)
 		if err != nil {
 			return err
 		}
@@ -66,77 +47,6 @@ func PurchaseItemForUser(db *gorm.DB, userID uint, itemID string, quantity int) 
 	})
 }
 
-func findCatalogItem(db *gorm.DB, itemID string) (catalogItem, error) {
-	var weapon models.WeaponDef
-	if err := db.First(&weapon, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: weapon.ID, Name: weapon.Name, Kind: "weapon", Price: weapon.Price, Weight: weapon.Weight, Slots: weapon.Slots, MerchantCategory: weapon.MerchantCategory, RepRequirement: weapon.RepRequirement}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取武器商品: %w", err)
-	}
-
-	var armor models.ArmorDef
-	if err := db.First(&armor, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: armor.ID, Name: armor.Name, Kind: "armor", Price: armor.Price, Weight: armor.Weight, Slots: armor.Slots, MerchantCategory: armor.MerchantCategory, RepRequirement: armor.RepRequirement, ArmorMax: armor.MaxDurability}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取护甲商品: %w", err)
-	}
-
-	var ammo models.AmmoDef
-	if err := db.First(&ammo, "id = ?", itemID).Error; err == nil {
-		return catalogItem{
-			ID: ammo.ID, Name: ammo.Name, Kind: "ammo", Price: ammo.Price, Slots: 1,
-			MerchantCategory: ammo.MerchantCategory, RepRequirement: ammo.RepRequirement,
-			RoundsPerSlot: ammo.RoundsPerSlot, AmmoLevel: ammo.Level,
-		}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取弹药商品: %w", err)
-	}
-
-	var consumable models.ConsumableDef
-	if err := db.First(&consumable, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: consumable.ID, Name: consumable.Name, Kind: "consumable", Price: consumable.Price, Weight: consumable.Weight, Slots: consumable.Slots, MerchantCategory: consumable.MerchantCategory, RepRequirement: consumable.RepRequirement}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取补给商品: %w", err)
-	}
-
-	var chestRig models.ChestRigDef
-	if err := db.First(&chestRig, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: chestRig.ID, Name: chestRig.Name, Kind: "chestrig", Price: chestRig.Price, Weight: chestRig.Weight, Slots: chestRig.Slots, MerchantCategory: chestRig.MerchantCategory, RepRequirement: chestRig.RepRequirement}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取胸挂商品: %w", err)
-	}
-
-	var backpack models.BackpackDef
-	if err := db.First(&backpack, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: backpack.ID, Name: backpack.Name, Kind: "backpack", Price: backpack.Price, Weight: backpack.Weight, Slots: backpack.Slots, MerchantCategory: backpack.MerchantCategory, RepRequirement: backpack.RepRequirement}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取背包商品: %w", err)
-	}
-
-	var helmet models.HelmetDef
-	if err := db.First(&helmet, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: helmet.ID, Name: helmet.Name, Kind: "helmet", Price: helmet.Price, Weight: helmet.Weight, Slots: helmet.Slots, MerchantCategory: helmet.MerchantCategory, RepRequirement: helmet.RepRequirement}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取头盔商品: %w", err)
-	}
-
-	var headset models.HeadsetDef
-	if err := db.First(&headset, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: headset.ID, Name: headset.Name, Kind: "headset", Price: headset.Price, Weight: headset.Weight, Slots: headset.Slots, MerchantCategory: headset.MerchantCategory, RepRequirement: headset.RepRequirement}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取耳机商品: %w", err)
-	}
-
-	var loot models.LootItemDef
-	if err := db.First(&loot, "id = ?", itemID).Error; err == nil {
-		return catalogItem{ID: loot.ID, Name: loot.Name, Kind: "loot", Category: loot.Category, Price: loot.Price, Weight: loot.Weight, Slots: loot.Slots, DropWeight: loot.DropWeight, MerchantCategory: loot.MerchantCategory, RepRequirement: loot.RepRequirement}, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return catalogItem{}, fmt.Errorf("读取战利品商品: %w", err)
-	}
-
-	return catalogItem{}, fmt.Errorf("商品不存在")
-}
-
 func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, error) {
 	if len(items) == 0 {
 		return 0, nil
@@ -144,6 +54,7 @@ func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, e
 	if err := settleDueHideoutJobsTx(tx, userID, time.Now()); err != nil {
 		return 0, err
 	}
+	catalogRepo := catalog.New(tx)
 
 	used, err := inventoryUsage(tx, userID)
 	if err != nil {
@@ -182,7 +93,7 @@ func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, e
 	}
 	for itemID, quantity := range quantities {
 		item := definitions[itemID]
-		if err := addInventoryItem(tx, userID, item, quantity, false); err != nil {
+		if err := addInventoryItemWithCatalog(tx, userID, item, quantity, false, catalogRepo); err != nil {
 			return 0, err
 		}
 		if item.Kind == "armor" {
@@ -229,11 +140,6 @@ func purchaseCapacityDelta(tx *gorm.DB, userID uint, items []catalogItem) (int, 
 	return additional, nil
 }
 
-// GetStorageCapacity 返回仓库容量与扣除装备配置后的实际占用。
-func GetStorageCapacity(db *gorm.DB) (*StorageCapacity, error) {
-	return GetStorageCapacityForUser(db, models.DefaultUserID)
-}
-
 // GetStorageCapacityForUser 返回指定用户仓库容量与扣除装备配置后的实际占用。
 func GetStorageCapacityForUser(db *gorm.DB, userID uint) (*StorageCapacity, error) {
 	if err := settleDueHideoutJobsForUser(db, userID); err != nil {
@@ -252,8 +158,16 @@ func GetStorageCapacityForUser(db *gorm.DB, userID uint) (*StorageCapacity, erro
 
 // addInventoryItem 按 (itemID, raidExtract) 新增或累加库存。
 func addInventoryItem(tx *gorm.DB, userID uint, item catalogItem, quantity int, raidExtract bool) error {
+	return addInventoryItemWithCatalog(tx, userID, item, quantity, raidExtract, catalog.New(tx))
+}
+
+func addInventoryItemWithCatalog(tx *gorm.DB, userID uint, item catalogItem, quantity int, raidExtract bool, catalogRepo *catalog.Repository) error {
 	var useDef models.ItemUseDef
-	if err := tx.Where("item_id = ?", item.ID).First(&useDef).Error; err == nil && useDef.InstanceRequired {
+	useDef, found, err := catalogRepo.FindUseByID(item.ID)
+	if err != nil {
+		return err
+	}
+	if found && useDef.InstanceRequired {
 		maxDurability := useDef.MaxDurability
 		if maxDurability <= 0 {
 			maxDurability = 100
@@ -267,11 +181,9 @@ func addInventoryItem(tx *gorm.DB, userID uint, item catalogItem, quantity int, 
 			}
 		}
 		return nil
-	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("读取物品效果 %s: %w", item.ID, err)
 	}
 	var inventory models.Inventory
-	err := tx.Where("user_id = ? AND item_id = ? AND raid_extract = ?", userID, item.ID, raidExtract).First(&inventory).Error
+	err = tx.Where("user_id = ? AND item_id = ? AND raid_extract = ?", userID, item.ID, raidExtract).First(&inventory).Error
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		inventory = models.Inventory{

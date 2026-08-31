@@ -20,8 +20,14 @@ func TestActiveSessionBlocksSellingCurrentLoadoutItem(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SellItem(db, "weapon", "weapon", 1); !errors.Is(err, ErrActiveSessionResourceLocked) {
+	if _, err := SellItemForUser(db, models.DefaultUserID, "weapon", "weapon", 1); !errors.Is(err, ErrActiveSessionResourceLocked) {
 		t.Fatalf("出售活跃行动武器错误 = %v，期望 ErrActiveSessionResourceLocked", err)
+	}
+}
+
+func TestSplitSessionConsumablesRejectsMalformedCSV(t *testing.T) {
+	if _, err := splitSessionConsumables(`"unterminated`); err == nil {
+		t.Fatal("损坏的行动补给 CSV 应返回错误")
 	}
 }
 
@@ -51,11 +57,11 @@ func TestActiveSessionBlocksLoadoutMutation(t *testing.T) {
 	if err := db.Create(&models.Session{UserID: models.DefaultUserID, WeaponID: "weapon", ArmorID: "armor", Status: "running"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	loadout, err := GetPlayerLoadout(db)
+	loadout, err := GetPlayerLoadoutForUser(db, models.DefaultUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = SavePlayerLoadout(db, SaveLoadoutReq{WeaponID: loadout.WeaponID, ArmorID: loadout.ArmorID, Consumables: loadout.Consumables})
+	_, err = SavePlayerLoadoutForUser(db, models.DefaultUserID, SaveLoadoutReq{WeaponID: loadout.WeaponID, ArmorID: loadout.ArmorID, Consumables: loadout.Consumables})
 	if !errors.Is(err, ErrActiveSessionResourceLocked) {
 		t.Fatalf("修改活跃行动装备错误 = %v，期望 ErrActiveSessionResourceLocked", err)
 	}
@@ -82,7 +88,7 @@ func TestConcurrentSellingLastItemOnlyOneSucceeds(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, sellErr := SellItem(db, "weapon", "weapon2", 1)
+			_, sellErr := SellItemForUser(db, models.DefaultUserID, "weapon", "weapon2", 1)
 			results <- sellErr
 		}()
 	}
@@ -111,7 +117,7 @@ func TestConcurrentSellingLastItemOnlyOneSucceeds(t *testing.T) {
 	if weaponQuantity != 0 {
 		t.Fatalf("并发出售后的武器库存 = %d，期望 0", weaponQuantity)
 	}
-	assertInventoryQuantity(t, db, "cash", 1045)
+	assertInventoryQuantity(t, db, models.DefaultUserID, "cash", 1045)
 }
 
 func TestDifferentUsersCanSellConcurrently(t *testing.T) {
@@ -180,7 +186,8 @@ func TestSessionStartAndSellCurrentWeaponAreSerialized(t *testing.T) {
 	var started *models.Session
 	var startErr error
 	var sellErr error
-	service := NewSessionService(db, models.DefaultUserID)
+	scheduler := newStartedTestScheduler(t, db)
+	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -193,7 +200,7 @@ func TestSessionStartAndSellCurrentWeaponAreSerialized(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		_, sellErr = SellItem(db, "weapon", "rifle_ak", 1)
+		_, sellErr = SellItemForUser(db, models.DefaultUserID, "weapon", "rifle_ak", 1)
 	}()
 	close(start)
 	wg.Wait()
@@ -205,7 +212,7 @@ func TestSessionStartAndSellCurrentWeaponAreSerialized(t *testing.T) {
 		if !errors.Is(sellErr, ErrActiveSessionResourceLocked) {
 			t.Fatalf("Session 启动成功后出售当前武器错误 = %v，期望资源锁错误", sellErr)
 		}
-		waitSessionWorker(t, started.ID)
+		waitSessionWorker(t, scheduler, started.ID)
 		if err := service.failSession(started.ID, errors.New("test cleanup")); err != nil {
 			t.Fatalf("清理并发测试 Session: %v", err)
 		}
@@ -246,7 +253,8 @@ func TestSessionStartAndRepairCurrentArmorAreSerialized(t *testing.T) {
 	var started *models.Session
 	var startErr error
 	var repairErr error
-	service := NewSessionService(db, models.DefaultUserID)
+	scheduler := newStartedTestScheduler(t, db)
+	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -268,7 +276,7 @@ func TestSessionStartAndRepairCurrentArmorAreSerialized(t *testing.T) {
 		t.Fatalf("并发维修当前护甲失败: %v", repairErr)
 	}
 	if startErr == nil {
-		waitSessionWorker(t, started.ID)
+		waitSessionWorker(t, scheduler, started.ID)
 		if err := service.failSession(started.ID, errors.New("test cleanup")); err != nil {
 			t.Fatalf("清理并发测试 Session: %v", err)
 		}

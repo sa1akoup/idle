@@ -4,26 +4,9 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"idle/internal/engine"
 )
-
-func appendEngineReport(report []string, line string) []string {
-	return append(append([]string(nil), report...), line)
-}
-
-func classifyResourceUnavailable(err error, fallback string) string {
-	message := err.Error()
-	switch {
-	case strings.Contains(message, "现金"):
-		return "cash_insufficient"
-	case strings.Contains(message, "弹药") || strings.Contains(message, "口径"):
-		return "ammo_unavailable"
-	default:
-		return fallback
-	}
-}
 
 func encodeEngineReport(report []string) (string, error) {
 	encoded, err := json.Marshal(report)

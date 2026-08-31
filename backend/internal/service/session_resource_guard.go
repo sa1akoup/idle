@@ -78,7 +78,11 @@ func ensureItemNotInActiveSession(tx *gorm.DB, userID uint, itemID string) error
 				protected[id] = struct{}{}
 			}
 		}
-		for _, id := range splitSessionConsumables(session.Consumables) {
+		consumables, err := splitSessionConsumables(session.Consumables)
+		if err != nil {
+			return fmt.Errorf("解析行动携带补给: %w", err)
+		}
+		for _, id := range consumables {
 			protected[id] = struct{}{}
 		}
 	}
@@ -101,15 +105,15 @@ func ensureArmorRepairAllowed(tx *gorm.DB, userID uint, armorID string) error {
 	return nil
 }
 
-func splitSessionConsumables(value string) []string {
+func splitSessionConsumables(value string) ([]string, error) {
 	if strings.TrimSpace(value) == "" {
-		return nil
+		return nil, nil
 	}
 	reader := csv.NewReader(strings.NewReader(value))
 	reader.TrimLeadingSpace = true
 	parts, err := reader.Read()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("行动补给 CSV 格式无效: %w", err)
 	}
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -117,5 +121,5 @@ func splitSessionConsumables(value string) []string {
 			result = append(result, part)
 		}
 	}
-	return result
+	return result, nil
 }

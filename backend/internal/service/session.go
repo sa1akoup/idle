@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"idle/internal/engine"
@@ -19,10 +18,15 @@ type SessionService struct {
 	db         *gorm.DB
 	userID     uint
 	leaseOwner string
+	scheduler  *SessionScheduler
 }
 
 func NewSessionService(db *gorm.DB, userID uint) *SessionService {
 	return &SessionService{db: db, userID: userID}
+}
+
+func NewSessionServiceWithScheduler(db *gorm.DB, userID uint, scheduler *SessionScheduler) *SessionService {
+	return &SessionService{db: db, userID: userID, scheduler: scheduler}
 }
 
 func NewSessionServiceWithLease(db *gorm.DB, userID uint, leaseOwner string) *SessionService {
@@ -50,6 +54,9 @@ const defaultOfflineLimitMin = 1440
 
 // Start 在创建时固定场景快照和完整连续状态，worker 只消费这些持久化输入。
 func (s *SessionService) Start(req StartReq) (*models.Session, error) {
+	if s.scheduler == nil {
+		return nil, ErrSessionSchedulerNotConfigured
+	}
 	style, err := engine.ResolveStyle(req.Style)
 	if err != nil {
 		return nil, err
@@ -162,7 +169,7 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 	}); err != nil {
 		return nil, err
 	}
-	dispatchSessionWorker(s.db, s.userID, sess.ID)
+	s.scheduler.dispatchSessionWorker(s.userID, sess.ID)
 	return &sess, nil
 }
 
@@ -230,44 +237,54 @@ func (s *SessionService) failSession(id uint, cause error) error {
 		if result.RowsAffected != 1 {
 			return nil
 		}
-		snapshot, state, err := decodeSessionAmmoState(sess)
-		if err != nil {
-			return err
+		snapshot, state, snapErr := decodeSessionAmmoState(sess)
+		if snapErr != nil {
+			// 旧版本快照解码失败时必须继续完成失败结算：若在此回滚，
+			// 会话将永远停留在 running 并被调度器死循环重派，用户也无法开新局。
+			log.Printf("session %d 快照解码失败，按无资产异常结束处理: %v", id, snapErr)
 		}
-		// 技术异常只归还最后一次已持久化状态，游戏内失能才执行丢装。
-		if err := settleSessionArmorTx(tx, s.userID, state, false); err != nil {
-			return err
-		}
-		if err := syncLoadoutConsumablesFromCarriedItemsTx(tx, s.userID, sess.CharacterID, state.CarriedItems); err != nil {
-			return err
-		}
-		if err := returnCarriedAmmoTx(tx, s.userID, snapshot, &state); err != nil {
-			return err
-		}
-		if err := returnCarriedItemsTx(tx, s.userID, snapshot, state.CarriedItems); err != nil {
-			return err
+		if snapErr == nil {
+			// 技术异常只归还最后一次已持久化状态，游戏内失能才执行丢装。
+			if err := settleSessionArmorTx(tx, s.userID, state, false); err != nil {
+				return err
+			}
+			if err := syncLoadoutConsumablesFromCarriedItemsTx(tx, s.userID, sess.CharacterID, state.CarriedItems); err != nil {
+				return err
+			}
+			if err := returnCarriedAmmoTx(tx, s.userID, snapshot, &state); err != nil {
+				return err
+			}
+			if err := returnCarriedItemsTx(tx, s.userID, snapshot, state.CarriedItems); err != nil {
+				return err
+			}
+			state.Ammo = engine.CarriedAmmo{}
+			state.CarriedItems = nil
+			state.Consumables = nil
+			state.Carry.UsedSlots = 0
+			state.Carry.UsedWeight = 0
+			if err := updateCharacterFromEngine(tx, s.userID, sess.CharacterID, state.Character); err != nil {
+				return err
+			}
+			if err := createRecoveryPlanTx(tx, s.userID, sess.ID, state.Character, sess.RecoveryPolicyJSON); err != nil {
+				return err
+			}
+			encodedState, err := json.Marshal(state)
+			if err != nil {
+				return fmt.Errorf("序列化失败 Session 状态: %w", err)
+			}
+			if err := tx.Model(&models.Session{}).Where("user_id = ? AND id = ?", s.userID, id).
+				Updates(map[string]interface{}{"state_json": string(encodedState), "weapon_id": state.Loadout.WeaponID, "armor_id": state.Loadout.ArmorID, "armor_instance_id": state.Loadout.ArmorInstanceID, "ammo_id": "", "ammo_rounds": 0, "consumables": ""}).Error; err != nil {
+				return fmt.Errorf("保存失败 Session 弹药状态: %w", err)
+			}
+		} else {
+			// 无快照可还原：不动装备/角色字段，仅清空弹药与补给标记，保持会话行语义干净。
+			if err := tx.Model(&models.Session{}).Where("user_id = ? AND id = ?", s.userID, id).
+				Updates(map[string]interface{}{"ammo_id": "", "ammo_rounds": 0, "consumables": ""}).Error; err != nil {
+				return fmt.Errorf("保存失败 Session 弹药状态: %w", err)
+			}
 		}
 		if err := discardSessionItemInstancesTx(tx, s.userID); err != nil {
 			return fmt.Errorf("清理异常 Session 实例: %w", err)
-		}
-		state.Ammo = engine.CarriedAmmo{}
-		state.CarriedItems = nil
-		state.Consumables = nil
-		state.Carry.UsedSlots = 0
-		state.Carry.UsedWeight = 0
-		if err := updateCharacterFromEngine(tx, s.userID, sess.CharacterID, state.Character); err != nil {
-			return err
-		}
-		if err := createRecoveryPlanTx(tx, s.userID, sess.ID, state.Character, sess.RecoveryPolicyJSON); err != nil {
-			return err
-		}
-		encodedState, err := json.Marshal(state)
-		if err != nil {
-			return fmt.Errorf("序列化失败 Session 状态: %w", err)
-		}
-		if err := tx.Model(&models.Session{}).Where("user_id = ? AND id = ?", s.userID, id).
-			Updates(map[string]interface{}{"state_json": string(encodedState), "weapon_id": state.Loadout.WeaponID, "armor_id": state.Loadout.ArmorID, "armor_instance_id": state.Loadout.ArmorInstanceID, "ammo_id": "", "ammo_rounds": 0, "consumables": ""}).Error; err != nil {
-			return fmt.Errorf("保存失败 Session 弹药状态: %w", err)
 		}
 		runIndex := sess.PendingRunIndex
 		if runIndex <= 0 {
@@ -276,9 +293,13 @@ func (s *SessionService) failSession(id uint, cause error) error {
 		if runIndex <= 0 {
 			runIndex = 1
 		}
-		return appendSessionEventTx(tx, s.userID, id, runIndex, sessionEventSessionFailed, sess.ElapsedSec, now, "", "", map[string]interface{}{
+		payload := map[string]interface{}{
 			"status": "failed", "reason": cause.Error(),
-		})
+		}
+		if snapErr != nil {
+			payload["snapshotDecodeFailed"] = true
+		}
+		return appendSessionEventTx(tx, s.userID, id, runIndex, sessionEventSessionFailed, sess.ElapsedSec, now, "", "", payload)
 	})
 }
 
@@ -298,21 +319,6 @@ func (s *SessionService) ListSessions() ([]models.Session, error) {
 	var list []models.Session
 	err := s.db.Where("user_id = ?", s.userID).Order("id desc").Limit(20).Find(&list).Error
 	return list, err
-}
-
-func splitIDs(value string) []string {
-	if value == "" {
-		return nil
-	}
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			result = append(result, part)
-		}
-	}
-	return result
 }
 
 func maxInt(value, floor int) int {
