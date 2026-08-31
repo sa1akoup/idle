@@ -26,6 +26,13 @@ const emit = defineEmits<{
 const nodeByID = computed(() => new Map(props.graph.nodes.map((node) => [node.id, node])))
 const visited = computed(() => new Set(props.visitedNodeIds))
 const route = computed(() => new Set(props.routeNodeIds))
+const routeSegments = computed(() => {
+  const segments = new Set<string>()
+  for (let index = 1; index < props.routeNodeIds.length; index += 1) {
+    segments.add(routeSegmentKey(props.routeNodeIds[index - 1], props.routeNodeIds[index]))
+  }
+  return segments
+})
 
 function nodePosition(node: MapNode): { left: string; top: string } {
   const columns = Math.max(props.graph.map.layoutColumns, 1)
@@ -43,6 +50,15 @@ function nodeNumber(node: MapNode): string {
 
 function nodeAt(id: string): MapNode | undefined {
   return nodeByID.value.get(id)
+}
+
+function routeSegmentKey(fromNodeId: string, toNodeId: string): string {
+  return `${fromNodeId}\u0000${toNodeId}`
+}
+
+function isRouteEdgeHighlighted(edge: MapGraph['edges'][number]): boolean {
+  if (routeSegments.value.has(routeSegmentKey(edge.fromNodeId, edge.toNodeId))) return true
+  return edge.bidirectional && routeSegments.value.has(routeSegmentKey(edge.toNodeId, edge.fromNodeId))
 }
 
 function pointPosition(anchorNodeId: string): { left: string; top: string } {
@@ -68,7 +84,7 @@ function pointPosition(anchorNodeId: string): { left: string; top: string } {
       <line
         v-for="edge in graph.edges"
         :key="edge.id"
-        :class="{ highlighted: route.has(edge.fromNodeId) && route.has(edge.toNodeId) }"
+        :class="{ highlighted: isRouteEdgeHighlighted(edge) }"
         :x1="(nodeAt(edge.fromNodeId)?.positionX ?? 0) + 0.5"
         :y1="(nodeAt(edge.fromNodeId)?.positionY ?? 0) + 0.5"
         :x2="(nodeAt(edge.toNodeId)?.positionX ?? 0) + 0.5"

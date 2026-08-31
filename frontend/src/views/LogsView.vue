@@ -1,7 +1,7 @@
 <!-- 日志页：浏览历史挂机会话、单局摘要与可解释行动报告。 -->
 <script setup lang="ts">
-import { computed, ref, watchEffect } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { Document, Select, Warning } from '@element-plus/icons-vue'
 import api, { getApiError } from '../api'
 import SessionTimeline from '../components/SessionTimeline.vue'
@@ -17,13 +17,12 @@ const selectedId = ref<number | null>(null)
 const detail = ref<SessionDetail | null>(null)
 const events = ref<SessionEvent[]>([])
 const loading = ref(false)
+let requestToken = 0
 
-watchEffect(() => {
-  if (!props.sessions.some((item) => item.id === selectedId.value)) {
-    selectedId.value = props.sessions[0]?.id ?? null
-  }
-  if (selectedId.value && detail.value?.session.id !== selectedId.value) void loadSession(selectedId.value)
-})
+watch(() => props.sessions.map((item) => item.id), (ids) => {
+  if (!ids.includes(selectedId.value ?? -1)) selectedId.value = ids[0] ?? null
+}, { immediate: true })
+watch(selectedId, (id) => { void loadSession(id) }, { immediate: true })
 
 const runs = computed<SessionRun[]>(() => (detail.value?.runs ?? []).map((run) => ({
   ...run,
@@ -68,21 +67,30 @@ function styleLabel(style: ActionStyle | string) {
   return ({ balanced: '均衡型', stealth: '隐秘型', aggressive: '激进型', greedy: '贪婪型' } as Record<string, string>)[style] || style || '均衡型'
 }
 
-async function loadSession(id: number) {
-  selectedId.value = id
-  loading.value = true
+async function loadSession(id: number | null) {
+  const token = ++requestToken
+  detail.value = null
   events.value = []
+  if (id === null) {
+    loading.value = false
+    return
+  }
+  loading.value = true
   try {
     const [detailResponse, eventResponse] = await Promise.all([
       api.get<SessionDetail>(`/session/${id}`),
       api.get<SessionEvent[]>(`/session/${id}/events`),
     ])
+    if (token !== requestToken || selectedId.value !== id) return
     detail.value = detailResponse.data
     events.value = eventResponse.data
   } catch (error) {
+    if (token !== requestToken || selectedId.value !== id) return
+    detail.value = null
+    events.value = []
     ElMessage.error(getApiError(error, '行动日志读取失败'))
   } finally {
-    loading.value = false
+    if (token === requestToken) loading.value = false
   }
 }
 
@@ -93,7 +101,7 @@ async function loadSession(id: number) {
     <header class="page-heading"><div><span class="eyebrow">行动记录</span><h1>日志</h1><p>复盘关键判定、战斗代价和每次撤离结果。</p></div></header>
     <div v-if="sessions.length" class="logs-layout">
       <aside class="session-list">
-        <button v-for="session in sessions" :key="session.id" type="button" :class="{ active: session.id === selectedId }" @click="loadSession(session.id)">
+        <button v-for="session in sessions" :key="session.id" type="button" :class="{ active: session.id === selectedId }" @click="selectedId = session.id">
           <span>#{{ session.id.toString().padStart(4, '0') }}</span>
           <strong>{{ styleLabel(session.style) }}</strong>
           <small>{{ formatTime(session.startTime) }} · {{ session.totalRuns }} 局</small>

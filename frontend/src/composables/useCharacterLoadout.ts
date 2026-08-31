@@ -1,5 +1,5 @@
 // 角色装备逻辑：维护当前装备、三套预设、选项弹窗和携行容量计算。
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { emptySet, fromLoadout, gridRows, presetFromLoadout, slotDefs, type EquipSet, type SlotKey } from './characterLoadoutHelpers'
 import type {
   Ammo,
@@ -10,6 +10,8 @@ import type {
   Headset,
   Helmet,
   InventoryItem,
+  ItemInstance,
+  Merchant,
   Player,
   PlayerLoadout,
   SaveLoadoutRequest,
@@ -22,8 +24,10 @@ export interface CharacterProps {
   inventory: InventoryItem[]
   weapons: Weapon[]
   ammos: Ammo[]
+  merchants: Merchant[]
   armors: Armor[]
   consumables: Consumable[]
+  itemInstances: ItemInstance[]
   chestRigs: ChestRig[]
   backpacks: Backpack[]
   helmets: Helmet[]
@@ -39,7 +43,7 @@ export type CharacterEmit = {
 
 export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) {
 
-  
+
   const editing = ref(false)
   const nameDraft = ref(props.player.name)
   
@@ -77,6 +81,9 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
   ] as const)
   
   const ownedItemIds = computed(() => new Set(props.inventory.filter((item) => item.itemId !== 'cash' && item.quantity > 0).map((item) => item.itemId)))
+  const usableInstanceItemIds = computed(() => new Set(props.itemInstances
+    .filter((instance) => instance.locationType === 'inventory' && instance.status === 'normal' && instance.currentDurability > 0)
+    .map((instance) => instance.itemId)))
   
   // 归一化的部位候选（完整目录），ownedOnly=true 时仅取仓库内已有
   function repTag(req: number): string {
@@ -148,7 +155,7 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
   const pickerList = computed(() => {
     if (pickerKind.value === 'consumable') {
       return props.consumables
-        .filter((c) => c.usableInSession)
+        .filter((c) => c.usableInSession && (pickerContext.value === 'preset' || ownedItemIds.value.has(c.id) || usableInstanceItemIds.value.has(c.id)))
         .map((c) => ({ id: c.id, name: c.name, detail: `${c.desc} · ${c.weight}kg` }))
     }
     return pickerContext.value === 'current' ? currentOptions(pickerKey.value) : slotOptions(pickerKey.value)
@@ -160,12 +167,22 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
     return `${slotDefs.find((s) => s.key === pickerKey.value)?.label} · ${pickerContext.value === 'current' ? '仓库装备' : '商人装备'}`
   })
   
+  // 武器商人当前好感度
+  const weaponMerchantReputation = computed(() =>
+    props.merchants.find((item) => item.category === 'weapon')?.reputation ?? 0
+  )
+  // 商人可售弹药：武器商人开放、同口径、等级 ≤ 4、好感度达标（与后端 scenario_snapshot.go 的 Available 规则一致）
+  function merchantAmmoOptions(caliberId: string | undefined): Ammo[] {
+    if (!caliberId) return []
+    const rep = weaponMerchantReputation.value
+    return props.ammos
+      .filter((item) => item.caliberId === caliberId && item.level <= 4 && item.repRequirement <= rep)
+      .sort((left, right) => left.level - right.level)
+  }
+
   const activePresetWeapon = computed(() => props.weapons.find((item) => item.id === presets.value[presetIndex.value].weaponId))
-  const activePresetAmmoOptions = computed(() => {
-    const caliberId = activePresetWeapon.value?.caliberId
-    return caliberId ? props.ammos.filter((item) => item.caliberId === caliberId).sort((left, right) => left.level - right.level) : []
-  })
-  
+  const activePresetAmmoOptions = computed(() => merchantAmmoOptions(activePresetWeapon.value?.caliberId))
+
   function normalizePresetAmmo(set: EquipSet) {
     const weapon = props.weapons.find((item) => item.id === set.weaponId)
     if (!weapon || weapon.ammoPerRound <= 0) {
@@ -173,7 +190,7 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
       set.ammoRounds = 0
       return
     }
-    const compatible = props.ammos.filter((item) => item.caliberId === weapon.caliberId)
+    const compatible = merchantAmmoOptions(weapon.caliberId)
     if (!compatible.some((item) => item.id === set.ammoId)) set.ammoId = compatible.find((item) => item.level === 4)?.id ?? compatible[0]?.id ?? ''
     if (set.ammoRounds < weapon.ammoPerRound) set.ammoRounds = Math.max(weapon.ammoPerRound, 60)
   }
@@ -256,8 +273,14 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
   watch(() => current.value, () => {
     if (syncing) return
     if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => submitLoadout(true), 600)
+    saveTimer = setTimeout(() => {
+      saveTimer = undefined
+      submitLoadout(true)
+    }, 600)
   }, { deep: true })
+  onUnmounted(() => {
+    if (saveTimer) clearTimeout(saveTimer)
+  })
 
   return {
     editing, nameDraft, current, presets, presetIndex, gridRows, slotDefs,

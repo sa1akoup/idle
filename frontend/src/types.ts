@@ -18,8 +18,6 @@ export interface User {
 	updatedAt: string
 }
 
-export type ActionStyle = 'balanced' | 'stealth' | 'aggressive' | 'greedy'
-
 export interface Player {
   id: number
   name: string
@@ -42,13 +40,22 @@ export interface Player {
   shotgunProf: number
   rifleProf: number
   sniperProf: number
-  trait: string
   hp: number
   energy: number
   hydration: number
   needsUpdatedAt: string
   stress: number
   createdAt: string
+  hpMax: number
+  energyMax: number
+  hydrationMax: number
+  stressMax: number
+  recoveryPerHour: {
+    hp: number
+    energy: number
+    hydration: number
+    stress: number
+  }
 }
 
 export interface Weapon {
@@ -160,17 +167,6 @@ export interface Headset {
   repRequirement: number
 }
 
-export interface CarryCapacity {
-  baseSlots: number
-  bonusSlots: number
-  totalSlots: number
-  baseWeight: number
-  bonusWeight: number
-  totalWeight: number
-  usedSlots: number
-  usedWeight: number
-}
-
 export interface StorageCapacity {
   capacity: number
   used: number
@@ -279,6 +275,36 @@ export interface HideoutSnapshot {
   generator: GeneratorView | null
 }
 
+export interface CraftingMaterial {
+  itemId: string
+  name: string
+  need: number
+  have: number
+  satisfied: boolean
+}
+
+export interface CraftingOutput {
+  itemId: string
+  name: string
+  kind: string
+  quantity: number
+  instanceRequired: boolean
+}
+
+export interface CraftingRecipe {
+  id: string
+  name: string
+  requiredLevel: number
+  craftSeconds: number
+  craftMinutes: number
+  output: CraftingOutput
+  inputs: CraftingMaterial[]
+  workbenchLevel: number
+  workbenchBusy: boolean
+  canStart: boolean
+  reason?: string
+}
+
 export interface ArmorInstance {
   id: number
   armorId: string
@@ -344,28 +370,6 @@ export interface Consumable {
   instanceRequired: boolean
   usableInSession: boolean
   usableInHideout: boolean
-}
-
-export interface LootItem {
-  id: string
-  name: string
-  category: 'tool' | 'material' | 'electronics' | 'info' | 'medical' | 'food' | 'valuable' | 'fuel' | 'weaponpart'
-  desc: string
-  price: number
-  weight: number
-  slots: number
-  merchantCategory: string
-  repRequirement: number
-}
-
-export interface LootSummary {
-  id: string
-  itemId: string
-  name: string
-  category: string
-  quantity: number
-  containerId: string
-  source: string
 }
 
 export interface GameMap {
@@ -437,19 +441,34 @@ export interface MapGraph {
 export interface Enemy {
   id: string
   name: string
-  hp: number
-  stressThreshold: number
-  perception: number
-  stealth: number
-  agility: number
-  weaponId: string
-  armorId: string
-  ammoId: string
-  ammoRounds: number
-  evasion: number
-  mobility: number
-  suppress: number
-  backpackContainerId: string
+  kind: string
+  spawnTags: string[]
+  tier: number
+  hpBase: number
+  hpFlux: number
+  hpFloor: number
+  hpCap: number
+  stressBase: number
+  stressFlux: number
+  stressFloor: number
+  stressCap: number
+  perceptionBase: number
+  stealthBase: number
+  agilityBase: number
+  evasionBase: number
+  mobilityBase: number
+  suppressBase: number
+  weaponPool: { ref: string; weight: number }[]
+  armorPool: { ref: string; weight: number }[]
+  ammoLevelMin: number
+  ammoLevelMax: number
+  ammoRoundsBase: number
+  ammoRoundsMult: number
+  backpackPool: { ref: string; weight: number }[]
+  bossWeaponId: string
+  bossArmorId: string
+  bossName: string
+  sortOrder: number
 }
 
 
@@ -471,4 +490,5 @@ export type {
   RecoveryMethod,
   RecoveryPolicy,
 } from './types_inventory'
+export type { ActionStyle, LootSummary } from './types_common'
 export { presetOf } from './types_inventory'
