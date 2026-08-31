@@ -3,30 +3,6 @@ package engine
 
 import "sort"
 
-func hasStyle(styles []StylePolicy, style string) bool {
-	for _, policy := range styles {
-		if policy.ID == style {
-			return true
-		}
-	}
-	return false
-}
-
-func validCondition(condition EventCondition) bool {
-	validType := map[string]bool{"hp_ratio": true, "stress_ratio": true, "ammo": true, "heat": true, "carry_ratio": true, "has_item": true, "flag": true}
-	validOperator := map[string]bool{"eq": true, "ne": true, "lt": true, "lte": true, "gt": true, "gte": true}
-	return validType[condition.Type] && validOperator[condition.Operator]
-}
-
-func validEffect(effect EventEffect) bool {
-	switch effect.Type {
-	case "hp", "stress", "heat", "time", "armor", "ammo", "container", "container_pool", "encounter", "skip_combat", "skip_search", "start_evacuation", "set_flag", "consume_item", "discard_loot", "evac_shortcut":
-		return true
-	default:
-		return false
-	}
-}
-
 func hasAnyContainerPool(assignments []NodeContainerAssignment, pool string) bool {
 	for _, assignment := range assignments {
 		assignmentPool := assignment.Pool

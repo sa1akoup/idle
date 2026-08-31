@@ -10,63 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	runModeExploring  = "exploring"
-	runModeEvacuating = "evacuating"
-
-	eventPhaseEnterNode              = "enter_node"
-	eventPhasePreEncounter           = "pre_encounter"
-	eventPhasePostEncounter          = "post_encounter"
-	eventPhasePreSearch              = "pre_search"
-	eventPhasePostSearch             = "post_search"
-	eventPhaseEvacStart              = "evac_start"
-	eventPhaseEvacStep               = "evac_step"
-	eventPhaseExtractionApproach     = "extraction_approach"
-	eventPhaseExtractionPointReached = "extraction_point_reached"
-	eventPhaseAtExtraction           = "at_extraction"
-)
-
-var supportedEventPhases = map[string]bool{
-	eventPhaseEnterNode: true, eventPhasePreEncounter: true, eventPhasePostEncounter: true,
-	eventPhasePreSearch: true, eventPhasePostSearch: true, eventPhaseEvacStart: true,
-	eventPhaseEvacStep: true, eventPhaseExtractionApproach: true, eventPhaseExtractionPointReached: true,
-	eventPhaseAtExtraction: true,
-}
-
-var supportedEventEffects = map[string]bool{
-	"hp": true, "stress": true, "heat": true, "time": true, "armor": true, "ammo": true,
-	"container": true, "container_pool": true, "encounter": true, "skip_combat": true, "skip_search": true,
-	"start_evacuation": true, "set_flag": true, "consume_item": true,
-	"discard_loot": true, "evac_shortcut": true,
-}
-
-var supportedEventAttributes = map[string]bool{
-	"strength": true, "agility": true, "intellect": true, "charisma": true,
-	"stealth": true, "perception": true, "negotiation": true, "luck": true,
-	"survival": true, "resist": true, "engineering": true, "medical": true,
-}
-
-var supportedEventConditions = map[string]bool{
-	"hp_ratio": true, "stress_ratio": true, "ammo": true, "heat": true,
-	"carry_ratio": true, "has_item": true, "flag": true,
-}
-
-var supportedEventIntents = map[string]bool{
-	"bypass": true, "ambush": true, "engage": true, "force": true,
-	"conceal": true, "secure": true, "search": true, "loot": true,
-	"intel": true, "unlock": true, "rush": true, "withdraw": true,
-	"treat": true, "drop": true, "reroute": true, "wait": true,
-}
-
-var supportedConditionOperators = map[string]bool{
-	"eq": true, "ne": true, "lt": true, "lte": true, "gt": true, "gte": true,
-}
-
-var supportedEvacuationReasons = map[string]bool{
-	"health": true, "stress": true, "ammo": true, "armor": true,
-	"carry_full": true, "target_acquired": true, "event": true,
-}
-
 // ValidateEventConfig 在服务启动时检查事件引用、概率、作用域与地图撤离可达性。
 func ValidateEventConfig(db *gorm.DB) error {
 	var definitions []models.EventDef
@@ -75,27 +18,6 @@ func ValidateEventConfig(db *gorm.DB) error {
 	}
 	definitionByID := make(map[string]models.EventDef, len(definitions))
 	for _, definition := range definitions {
-		if len(definition.Options) == 0 {
-			return fmt.Errorf("事件 %s 没有处理方案", definition.ID)
-		}
-		for _, option := range definition.Options {
-			for _, effect := range append(append([]models.EventEffect{}, option.SuccessEffects...), option.FailureEffects...) {
-				if !supportedEventEffects[effect.Type] {
-					return fmt.Errorf("事件 %s 使用未知效果 %s", definition.ID, effect.Type)
-				}
-			}
-			for _, style := range option.Styles {
-				if _, err := engine.ResolveStyle(style); err != nil {
-					return fmt.Errorf("事件 %s 使用未知行动风格 %s", definition.ID, style)
-				}
-			}
-			if option.Intent != "" && !supportedEventIntents[option.Intent] {
-				return fmt.Errorf("事件 %s 使用未知决策意图 %s", definition.ID, option.Intent)
-			}
-			if option.RiskTier < 0 || option.RiskTier > 5 || option.ValueTier < 0 || option.ValueTier > 5 {
-				return fmt.Errorf("事件 %s 的风险或收益等级无效", definition.ID)
-			}
-		}
 		definitionByID[definition.ID] = definition
 	}
 
@@ -105,7 +27,7 @@ func ValidateEventConfig(db *gorm.DB) error {
 	var edges []models.MapEdgeDef
 	var extractionPoints []models.ExtractionPointDef
 	var pools []models.EncounterPoolEntry
-	var enemies []models.EnemyDef
+	var enemyTemplates []models.EnemyTemplateDef
 	var containers []models.LootContainerDef
 	var nodeContainers []models.NodeContainerDef
 	var consumables []models.ConsumableDef
@@ -118,6 +40,24 @@ func ValidateEventConfig(db *gorm.DB) error {
 	if err := db.Find(&bindings).Error; err != nil {
 		return fmt.Errorf("校验事件绑定: %w", err)
 	}
+	eventCatalog := engine.EventCatalog{Definitions: make(map[string]engine.EventDefinition, len(definitions)), Bindings: make([]engine.EventBinding, 0, len(bindings))}
+	for _, definition := range definitions {
+		converted := engine.EventDefinition{}
+		if err := convertJSON(definition, &converted); err != nil {
+			return fmt.Errorf("转换事件 %s: %w", definition.ID, err)
+		}
+		eventCatalog.Definitions[converted.ID] = converted
+	}
+	for _, binding := range bindings {
+		converted := engine.EventBinding{}
+		if err := convertJSON(binding, &converted); err != nil {
+			return fmt.Errorf("转换事件绑定 %s: %w", binding.ID, err)
+		}
+		eventCatalog.Bindings = append(eventCatalog.Bindings, converted)
+	}
+	if err := engine.ValidateEventCatalog(eventCatalog, engine.DefaultStylePolicies()); err != nil {
+		return fmt.Errorf("校验事件结构: %w", err)
+	}
 	if err := db.Find(&edges).Error; err != nil {
 		return fmt.Errorf("校验地图边: %w", err)
 	}
@@ -127,8 +67,8 @@ func ValidateEventConfig(db *gorm.DB) error {
 	if err := db.Find(&pools).Error; err != nil {
 		return fmt.Errorf("校验遭遇池: %w", err)
 	}
-	if err := db.Find(&enemies).Error; err != nil {
-		return fmt.Errorf("校验敌人引用: %w", err)
+	if err := db.Find(&enemyTemplates).Error; err != nil {
+		return fmt.Errorf("校验敌人模板: %w", err)
 	}
 	if err := db.Find(&containers).Error; err != nil {
 		return fmt.Errorf("校验容器引用: %w", err)
@@ -195,8 +135,8 @@ func ValidateEventConfig(db *gorm.DB) error {
 			extractionTags[tag] = true
 		}
 	}
-	for _, enemy := range enemies {
-		enemyIDs[enemy.ID] = true
+	for _, template := range enemyTemplates {
+		enemyIDs[template.ID] = true
 	}
 	for _, node := range nodes {
 		if node.EnemyID != "" && !enemyIDs[node.EnemyID] {
@@ -239,24 +179,10 @@ func ValidateEventConfig(db *gorm.DB) error {
 
 	for _, definition := range definitions {
 		for _, option := range definition.Options {
-			if option.Check.Type != "" && option.Check.Type != "none" && option.Check.Type != "fixed" && option.Check.Type != "attribute" {
-				return fmt.Errorf("事件 %s 使用未知判定类型 %s", definition.ID, option.Check.Type)
-			}
-			if option.Check.Type == "attribute" && !supportedEventAttributes[option.Check.Attribute] {
-				return fmt.Errorf("事件 %s 使用未知判定属性 %s", definition.ID, option.Check.Attribute)
-			}
 			if option.Check.ItemBonusRef != "" && !consumableIDs[option.Check.ItemBonusRef] {
 				return fmt.Errorf("事件 %s 的判定加成引用不存在的消耗品 %s", definition.ID, option.Check.ItemBonusRef)
 			}
-			for _, mode := range option.Modes {
-				if mode != runModeExploring && mode != runModeEvacuating {
-					return fmt.Errorf("事件 %s 使用未知模式 %s", definition.ID, mode)
-				}
-			}
 			for _, condition := range option.Conditions {
-				if !supportedEventConditions[condition.Type] || !supportedConditionOperators[condition.Operator] {
-					return fmt.Errorf("事件 %s 使用未知条件 %s/%s", definition.ID, condition.Type, condition.Operator)
-				}
 				if condition.Type == "has_item" && (condition.Ref == "" || !consumableIDs[condition.Ref]) {
 					return fmt.Errorf("事件 %s 的物品条件引用无效 %s", definition.ID, condition.Ref)
 				}
@@ -270,9 +196,6 @@ func ValidateEventConfig(db *gorm.DB) error {
 	for _, binding := range bindings {
 		if _, ok := definitionByID[binding.EventID]; !ok {
 			return fmt.Errorf("事件绑定 %s 引用不存在的事件 %s", binding.ID, binding.EventID)
-		}
-		if !supportedEventPhases[binding.Phase] || binding.TriggerBP < 0 || binding.TriggerBP > 10000 || binding.Weight < 0 || binding.MaxPerRun < 0 || binding.CooldownNodes < 0 {
-			return fmt.Errorf("事件绑定 %s 的阶段、概率或限制无效", binding.ID)
 		}
 		scopeValid := binding.ScopeType == "global" ||
 			(binding.ScopeType == "map" && mapIDs[binding.ScopeID]) ||
@@ -323,14 +246,6 @@ func ValidateEventConfig(db *gorm.DB) error {
 				case "set_flag":
 					if effect.Ref == "" {
 						return fmt.Errorf("事件 %s 的标记效果缺少名称", definition.ID)
-					}
-				case "start_evacuation":
-					if effect.Ref != "" && !supportedEvacuationReasons[effect.Ref] {
-						return fmt.Errorf("事件 %s 使用未知撤离原因 %s", definition.ID, effect.Ref)
-					}
-				case "evac_shortcut":
-					if effect.Value <= 0 {
-						return fmt.Errorf("事件 %s 的撤离捷径缩短时间必须为正数", definition.ID)
 					}
 				}
 			}

@@ -190,7 +190,6 @@ func selectEventOption(definition EventDefinition, state *eventRunState) (EventO
 	sort.SliceStable(options, func(i, j int) bool { return options[i].ID < options[j].ID })
 	eligible := make([]EventOption, 0, len(options))
 	for _, option := range options {
-		option = normalizeEventOption(definition, option)
 		if len(option.Modes) > 0 && !containsString(option.Modes, state.Mode) {
 			continue
 		}
@@ -316,9 +315,6 @@ func (manager *eventManager) resolveEvent(candidate eventCandidate, state *event
 	state.EventCounts[candidate.def.ID]++
 	state.LastEventVisit[candidate.def.ID] = state.VisitSequence
 	intent := candidate.option.Intent
-	if intent == "" {
-		intent = inferEventIntent(candidate.def, candidate.option.ID)
-	}
 	*state.Lines = append(*state.Lines, fmt.Sprintf("  [事件/%s/%s] %s，风格%s，触发 %d/10000，掷 %d，采用方案 %s(%s，风险%d/收益%d)", phase, candidate.binding.ScopeType, candidate.def.Name, state.Style, candidate.binding.TriggerBP, candidate.roll, candidate.option.ID, intent, candidate.option.RiskTier, candidate.option.ValueTier))
 	success, checkLine := resolveEventCheck(candidate.option.Check, candidate.option, state, rng)
 	if checkLine != "" {

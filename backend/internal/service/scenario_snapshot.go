@@ -4,6 +4,8 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"time"
 
 	"idle/internal/engine"
 	"idle/internal/models"
@@ -105,9 +107,9 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 	if err := db.Order("id asc").Find(&headsets).Error; err != nil {
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取耳机目录: %w", err)
 	}
-	var enemies []models.EnemyDef
-	if err := db.Order("id asc").Find(&enemies).Error; err != nil {
-		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取敌人目录: %w", err)
+	var enemyTemplates []models.EnemyTemplateDef
+	if err := db.Order("sort_order asc, id asc").Find(&enemyTemplates).Error; err != nil {
+		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取敌人模板: %w", err)
 	}
 	var eventDefs []models.EventDef
 	if err := db.Order("id asc").Find(&eventDefs).Error; err != nil {
@@ -137,7 +139,7 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		Ammos:                    make(map[string]engine.Ammo, len(ammos)),
 		AmmoSupplies:             make(map[string]engine.AmmoSupply, len(ammos)),
 		Armors:                   make(map[string]engine.Armor, len(armors)),
-		Enemies:                  make(map[string]engine.Enemy, len(enemies)),
+		Enemies:                  make(map[string]engine.Enemy, len(enemyTemplates)*2),
 		Events: engine.EventCatalog{
 			Definitions:    make(map[string]engine.EventDefinition, len(eventDefs)),
 			Bindings:       make([]engine.EventBinding, 0, len(bindings)),
@@ -145,6 +147,28 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		},
 		Styles: engine.DefaultStylePolicies(),
 	}
+
+	// 敌人生成：模板 → 变体（确定性 RNG），重写节点与遭遇池引用。
+	// Heat/PlayerLevel 在快照构建期不可得，缩放仅用节点价值档（温和缩放）。
+	generatedEnemies, nodeEnemyIDs, poolEnemyIDs, err := materializeEnemies(
+		enemyTemplates, nodes, encounterPools, weapons, armors, ammos, containerDefs,
+	)
+	if err != nil {
+		return engine.ScenarioSnapshot{}, "", "", err
+	}
+	for i, node := range nodes {
+		if id, ok := nodeEnemyIDs[node.ID]; ok {
+			node.EnemyID = id
+			nodes[i] = node
+		}
+	}
+	for i, entry := range encounterPools {
+		if id, ok := poolEnemyIDs[entry.ID]; ok {
+			entry.EnemyID = id
+			encounterPools[i] = entry
+		}
+	}
+
 	for _, node := range nodes {
 		snapshot.Nodes = append(snapshot.Nodes, convertNode(node))
 	}
@@ -268,12 +292,8 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		item.Kind = "headset"
 		snapshot.Items[item.ID] = item
 	}
-	for _, definition := range enemies {
-		item := engine.Enemy{}
-		if err := convertJSON(definition, &item); err != nil {
-			return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("转换敌人 %s: %w", definition.ID, err)
-		}
-		snapshot.Enemies[item.ID] = item
+	for _, definition := range generatedEnemies {
+		snapshot.Enemies[definition.ID] = definition
 	}
 	for _, definition := range eventDefs {
 		item := engine.EventDefinition{}
@@ -310,6 +330,95 @@ func convertMap(definition models.MapDef) engine.Map {
 
 func convertNode(definition models.NodeDef) engine.Node {
 	return engine.Node{ID: definition.ID, MapID: definition.MapID, Name: definition.Name, PositionX: definition.PositionX, PositionY: definition.PositionY, ExploreTime: definition.ExploreTime, Distance: definition.Distance, EnemyID: definition.EnemyID, EncounterRole: definition.EncounterRole, ContainerSlots: definition.ContainerSlots, ValueTier: definition.ValueTier, Tags: append([]string(nil), definition.Tags...)}
+}
+
+// materializeEnemies 把模板引用物化为敌人变体：为每个引用（节点/遭遇池）生成独立变体，
+// 并返回 变体列表 + 节点ID→变体ID + 遭遇池ID→变体ID 映射。
+// 目录来自快照构建主流程已读取的 models 切片。
+func materializeEnemies(
+	templates []models.EnemyTemplateDef,
+	nodes []models.NodeDef,
+	pools []models.EncounterPoolEntry,
+	weapons []models.WeaponDef,
+	armors []models.ArmorDef,
+	ammos []models.AmmoDef,
+	containers []models.LootContainerDef,
+) ([]engine.Enemy, map[string]string, map[string]string, error) {
+	templatesByID := make(map[string]models.EnemyTemplateDef, len(templates))
+	for _, t := range templates {
+		templatesByID[t.ID] = t
+	}
+	catalog := EnemyGenerator{
+		Weapons:   make(map[string]engine.Weapon, len(weapons)),
+		Armors:    make(map[string]engine.Armor, len(armors)),
+		Ammos:     make(map[string]engine.Ammo, len(ammos)),
+		Containers: make(map[string]engine.Container, len(containers)),
+	}
+	for i := range weapons {
+		item := engine.Weapon{}
+		if err := convertJSON(&weapons[i], &item); err != nil {
+			return nil, nil, nil, fmt.Errorf("转换武器 %s: %w", weapons[i].ID, err)
+		}
+		catalog.Weapons[item.ID] = item
+	}
+	for i := range armors {
+		item := engine.Armor{}
+		if err := convertJSON(&armors[i], &item); err != nil {
+			return nil, nil, nil, fmt.Errorf("转换护甲 %s: %w", armors[i].ID, err)
+		}
+		catalog.Armors[item.ID] = item
+	}
+	for i := range ammos {
+		item := engine.Ammo{}
+		if err := convertJSON(&ammos[i], &item); err != nil {
+			return nil, nil, nil, fmt.Errorf("转换弹药 %s: %w", ammos[i].ID, err)
+		}
+		catalog.Ammos[item.ID] = item
+	}
+	for i := range containers {
+		item := engine.Container{}
+		if err := convertJSON(&containers[i], &item); err != nil {
+			return nil, nil, nil, fmt.Errorf("转换容器 %s: %w", containers[i].ID, err)
+		}
+		catalog.Containers[item.ID] = item
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	var generated []engine.Enemy
+	nodeEnemyIDs := make(map[string]string)
+	poolEnemyIDs := make(map[string]string)
+	ctx := GenerateContext{}
+
+	// 节点引用：每个节点生成独立变体，ValueTier 作为缩放输入
+	for _, node := range nodes {
+		template, ok := templatesByID[node.EnemyID]
+		if !ok || node.EnemyID == "" {
+			continue
+		}
+		ctx.NodeValueTier = node.ValueTier
+		enemy, err := GenerateEnemy(rng, template, ctx, catalog)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("节点 %s 生成敌人失败: %w", node.ID, err)
+		}
+		generated = append(generated, enemy)
+		nodeEnemyIDs[node.ID] = enemy.ID
+	}
+
+	// 遭遇池引用：每个池条目生成独立变体
+	for _, entry := range pools {
+		template, ok := templatesByID[entry.EnemyID]
+		if !ok || entry.EnemyID == "" {
+			continue
+		}
+		enemy, err := GenerateEnemy(rng, template, ctx, catalog)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("遭遇池 %s 生成敌人失败: %w", entry.ID, err)
+		}
+		generated = append(generated, enemy)
+		poolEnemyIDs[entry.ID] = enemy.ID
+	}
+
+	return generated, nodeEnemyIDs, poolEnemyIDs, nil
 }
 
 func convertJSON(source interface{}, target interface{}) error {

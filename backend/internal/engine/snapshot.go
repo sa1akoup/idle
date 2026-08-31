@@ -57,6 +57,9 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 			return fmt.Errorf("场景快照缺少行动风格 %s", requiredStyle)
 		}
 	}
+	if err := ValidateEventCatalog(snapshot.Events, snapshot.Styles); err != nil {
+		return err
+	}
 	nodeIDs := make(map[string]bool, len(snapshot.Nodes))
 	for _, node := range snapshot.Nodes {
 		nodeIDs[node.ID] = true
@@ -221,27 +224,6 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 			}
 		}
 	}
-	bindingIDs := make(map[string]bool, len(snapshot.Events.Bindings))
-	for _, entry := range snapshot.Events.Bindings {
-		if entry.ID == "" || bindingIDs[entry.ID] {
-			return fmt.Errorf("事件绑定缺少 ID")
-		}
-		bindingIDs[entry.ID] = true
-		if _, ok := snapshot.Events.Definitions[entry.EventID]; !ok {
-			return fmt.Errorf("事件绑定 %s 引用不存在事件 %s", entry.ID, entry.EventID)
-		}
-		if !supportedEventPhase(entry.Phase) {
-			return fmt.Errorf("事件绑定 %s 使用未知阶段 %s", entry.ID, entry.Phase)
-		}
-		if entry.TriggerBP < 0 || entry.TriggerBP > 10000 || entry.Weight < 0 || entry.MaxPerRun < 0 || entry.CooldownNodes < 0 {
-			return fmt.Errorf("事件绑定 %s 的概率或限制无效", entry.ID)
-		}
-		switch entry.ScopeType {
-		case "global", "map", "map_tag", "node", "node_tag", "extraction", "extraction_tag":
-		default:
-			return fmt.Errorf("事件绑定 %s 使用未知作用域 %s", entry.ID, entry.ScopeType)
-		}
-	}
 	for role, entries := range snapshot.Events.EncounterPools {
 		if role == "" {
 			return fmt.Errorf("遭遇池角色不能为空")
@@ -265,23 +247,7 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 	}
 	for definitionID, definition := range snapshot.Events.Definitions {
 		for _, option := range definition.Options {
-			if option.Check.Type != "" && option.Check.Type != "none" && option.Check.Type != "fixed" && option.Check.Type != "attribute" {
-				return fmt.Errorf("事件 %s 使用未知判定类型 %s", definitionID, option.Check.Type)
-			}
-			for _, mode := range option.Modes {
-				if mode != "exploring" && mode != "evacuating" {
-					return fmt.Errorf("事件 %s 使用未知模式 %s", definitionID, mode)
-				}
-			}
-			for _, style := range option.Styles {
-				if !hasStyle(snapshot.Styles, style) {
-					return fmt.Errorf("事件 %s 使用未知行动风格 %s", definitionID, style)
-				}
-			}
 			for _, condition := range option.Conditions {
-				if !validCondition(condition) {
-					return fmt.Errorf("事件 %s 使用未知条件 %s/%s", definitionID, condition.Type, condition.Operator)
-				}
 				if condition.Type == "has_item" {
 					item, ok := snapshot.Items[condition.Ref]
 					if !ok || item.Kind != "consumable" {
@@ -296,9 +262,6 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 				}
 			}
 			for _, effect := range append(append([]EventEffect{}, option.SuccessEffects...), option.FailureEffects...) {
-				if !validEffect(effect) {
-					return fmt.Errorf("事件 %s 使用未知效果 %s", definitionID, effect.Type)
-				}
 				switch effect.Type {
 				case "container":
 					if _, ok := snapshot.Containers[effect.Ref]; !ok {
