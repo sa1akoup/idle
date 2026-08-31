@@ -2,7 +2,9 @@
 ALTER TABLE characters ADD COLUMN hp REAL NOT NULL DEFAULT 100;
 ALTER TABLE characters ADD COLUMN energy REAL NOT NULL DEFAULT 100;
 ALTER TABLE characters ADD COLUMN hydration REAL NOT NULL DEFAULT 100;
-ALTER TABLE characters ADD COLUMN needs_updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP;
+-- SQLite 不允许 ALTER TABLE 新增列时使用非字面量默认值。
+ALTER TABLE characters ADD COLUMN needs_updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';
+UPDATE characters SET needs_updated_at = CURRENT_TIMESTAMP;
 
 ALTER TABLE sessions ADD COLUMN terminal_reason TEXT;
 ALTER TABLE sessions ADD COLUMN recovery_policy_json TEXT;

@@ -11,6 +11,7 @@ import (
 
 	"idle/internal/engine"
 	"idle/internal/models"
+	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -42,29 +43,37 @@ const (
 )
 
 func defaultRecoveryPolicyJSON() string {
-	policy := RecoveryPolicy{
+	encoded, _ := json.Marshal(defaultRecoveryPolicy())
+	return string(encoded)
+}
+
+func defaultRecoveryPolicy() RecoveryPolicy {
+	return RecoveryPolicy{
 		HP:             RecoveryChoice{TargetPercent: 100, PrimaryMethod: "inventory", FallbackMethod: "hideout"},
 		Energy:         RecoveryChoice{TargetPercent: 80, PrimaryMethod: "inventory", FallbackMethod: "hideout"},
 		Hydration:      RecoveryChoice{TargetPercent: 80, PrimaryMethod: "inventory", FallbackMethod: "hideout"},
 		MerchantEnable: true,
 	}
-	encoded, _ := json.Marshal(policy)
-	return string(encoded)
 }
 
-func decodeRecoveryPolicy(value string) RecoveryPolicy {
-	policy := RecoveryPolicy{}
-	if value == "" || json.Unmarshal([]byte(value), &policy) != nil {
-		_ = json.Unmarshal([]byte(defaultRecoveryPolicyJSON()), &policy)
+func decodeRecoveryPolicy(value string) (RecoveryPolicy, error) {
+	var policy RecoveryPolicy
+	if err := json.Unmarshal([]byte(value), &policy); err != nil {
+		return RecoveryPolicy{}, fmt.Errorf("解析恢复策略 JSON: %w", err)
 	}
-	return policy
+	for resource, choice := range map[string]RecoveryChoice{"hp": policy.HP, "energy": policy.Energy, "hydration": policy.Hydration} {
+		if err := validateRecoveryChoice(resource, choice); err != nil {
+			return RecoveryPolicy{}, fmt.Errorf("恢复策略字段无效: %w", err)
+		}
+	}
+	return policy, nil
 }
 
 func recoveryPolicyJSONForStart(input *RecoveryPolicy) (string, error) {
 	if input == nil {
 		return defaultRecoveryPolicyJSON(), nil
 	}
-	defaults := decodeRecoveryPolicy(defaultRecoveryPolicyJSON())
+	defaults := defaultRecoveryPolicy()
 	policy := *input
 	policy.HP = normalizeRecoveryChoice(policy.HP, defaults.HP)
 	policy.Energy = normalizeRecoveryChoice(policy.Energy, defaults.Energy)
@@ -124,10 +133,17 @@ func validRecoveryMethod(method string) bool {
 }
 
 func createRecoveryPlanTx(tx *gorm.DB, userID, sessionID uint, state engine.CharacterState, policyJSON string) error {
+	var policy RecoveryPolicy
 	if policyJSON == "" {
+		policy = defaultRecoveryPolicy()
 		policyJSON = defaultRecoveryPolicyJSON()
+	} else {
+		var err error
+		policy, err = decodeRecoveryPolicy(policyJSON)
+		if err != nil {
+			return fmt.Errorf("读取恢复策略: %w", err)
+		}
 	}
-	policy := decodeRecoveryPolicy(policyJSON)
 	now := time.Now()
 	var existing models.RecoveryPlan
 	if err := tx.Where("user_id = ? AND source_session_id = ?", userID, sessionID).First(&existing).Error; err == nil {
@@ -135,7 +151,7 @@ func createRecoveryPlanTx(tx *gorm.DB, userID, sessionID uint, state engine.Char
 	} else if err != gorm.ErrRecordNotFound {
 		return fmt.Errorf("读取恢复计划: %w", err)
 	}
-	maxHP := characterMaxHP(state.Strength)
+	maxHP := engine.CalcMaxHP(state.Strength)
 	targets := map[string]float64{
 		"hp":        maxHP * float64(policy.HP.TargetPercent) / 100,
 		"energy":    100 * float64(policy.Energy.TargetPercent) / 100,
@@ -169,11 +185,12 @@ func createRecoveryPlanTx(tx *gorm.DB, userID, sessionID uint, state engine.Char
 		if actualMethod == recoveryMethodHideout {
 			rate = ratesByResource[resource]
 		}
-		status := "running"
+		status := "failed"
 		var completeAt *time.Time
 		if current >= target {
 			status = "completed"
 		} else if rate > 0 {
+			status = "running"
 			complete := now.Add(time.Duration(math.Ceil((target - current) / rate * float64(time.Hour))))
 			completeAt = &complete
 		}
@@ -203,6 +220,7 @@ func applyRecoveryPolicyTx(tx *gorm.DB, userID uint, state *engine.CharacterStat
 			methods = append(methods, recoveryMethodMerchant)
 		}
 		attempted := make(map[string]struct{}, len(methods))
+		hideoutAvailable := false
 		for _, method := range methods {
 			if method == recoveryMethodNone {
 				continue
@@ -211,10 +229,10 @@ func applyRecoveryPolicyTx(tx *gorm.DB, userID uint, state *engine.CharacterStat
 				continue
 			}
 			attempted[method] = struct{}{}
-			if method == recoveryMethodHideout && recoveryRateForResource(rates, resource) <= 0 {
+			if method == recoveryMethodHideout {
+				hideoutAvailable = recoveryRateForResource(rates, resource) > 0
 				continue
 			}
-			actualMethod = method
 			used, err := applyRecoveryMethodTx(tx, userID, state, resource, method, targets)
 			if err != nil {
 				return nil, err
@@ -225,6 +243,10 @@ func applyRecoveryPolicyTx(tx *gorm.DB, userID uint, state *engine.CharacterStat
 			if resourceValue(*state, resource) >= targets[resource] {
 				break
 			}
+		}
+		if resourceValue(*state, resource) < targets[resource] && hideoutAvailable {
+			// 藏身处是持续恢复方式，不能被后续失败的即时恢复尝试覆盖。
+			actualMethod = recoveryMethodHideout
 		}
 		actualMethods[resource] = actualMethod
 	}
@@ -248,6 +270,7 @@ type recoveryRates struct {
 	HP        float64
 	Energy    float64
 	Hydration float64
+	Stress    float64
 }
 
 func recoveryRateForResource(rates recoveryRates, resource string) float64 {
@@ -278,7 +301,10 @@ func hideoutRecoveryRatesTx(tx *gorm.DB, userID uint) (recoveryRates, error) {
 	for _, state := range states {
 		var level models.FacilityLevelDef
 		if err := tx.Where("facility_id = ? AND level = ?", state.FacilityID, state.Level).First(&level).Error; err != nil {
-			continue
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return recoveryRates{}, fmt.Errorf("恢复设施 %s 等级 %d 定义不存在", state.FacilityID, state.Level)
+			}
+			return recoveryRates{}, fmt.Errorf("读取恢复设施 %s 等级 %d: %w", state.FacilityID, state.Level, err)
 		}
 		if level.RequiresPower && !generatorEnabled {
 			continue
@@ -286,12 +312,14 @@ func hideoutRecoveryRatesTx(tx *gorm.DB, userID uint) (recoveryRates, error) {
 		rates.HP += level.HPRecoveryPerHour
 		rates.Energy += level.EnergyRecoveryPerHour
 		rates.Hydration += level.HydrationRecoveryPerHour
+		rates.Stress += level.StressRecoveryPerHour
 		speed += level.RecoverySpeedPercent
 	}
 	multiplier := 1 + float64(speed)/100
 	rates.HP *= multiplier
 	rates.Energy *= multiplier
 	rates.Hydration *= multiplier
+	rates.Stress *= multiplier
 	return rates, nil
 }
 
@@ -341,15 +369,26 @@ func applyMerchantRecoveryTx(tx *gorm.DB, userID uint, state *engine.CharacterSt
 		Order("item_id asc").Find(&defs).Error; err != nil {
 		return false, fmt.Errorf("读取商人恢复物品: %w", err)
 	}
+	catalogRepo := catalog.New(tx)
+	itemIDs := make([]string, 0, len(defs))
+	for _, def := range defs {
+		if recoveryEffect(def, resource) > 0 {
+			itemIDs = append(itemIDs, def.ItemID)
+		}
+	}
+	catalogItems, err := catalogRepo.FindByIDs(itemIDs)
+	if err != nil {
+		return false, fmt.Errorf("读取商人恢复商品目录: %w", err)
+	}
 	candidates := make([]merchantRecoveryCandidate, 0, len(defs))
 	for _, def := range defs {
 		effect := recoveryEffect(def, resource)
 		if effect <= 0 {
 			continue
 		}
-		item, err := findCatalogItem(tx, def.ItemID)
-		if err != nil {
-			return false, fmt.Errorf("读取商人恢复商品 %s: %w", def.ItemID, err)
+		item, ok := catalogItems[def.ItemID]
+		if !ok {
+			return false, fmt.Errorf("读取商人恢复商品 %s: %w", def.ItemID, catalog.ErrItemNotFound)
 		}
 		if item.MerchantCategory != "medical" {
 			continue
@@ -434,7 +473,7 @@ func resourceValue(state engine.CharacterState, resource string) float64 {
 }
 
 func applyRecoveryEffects(state *engine.CharacterState, def models.ItemUseDef, ratio float64) {
-	state.HP = clampResource(state.HP+def.HPRecovery*ratio, 0, characterMaxHP(state.Strength))
+	state.HP = clampResource(state.HP+def.HPRecovery*ratio, 0, engine.CalcMaxHP(state.Strength))
 	state.Energy = clampResource(state.Energy+def.EnergyRecovery*ratio, 0, 100)
 	state.Hydration = clampResource(state.Hydration+def.HydrationRecovery*ratio, 0, 100)
 }
@@ -533,11 +572,26 @@ func settleRecoveryForUserTx(tx *gorm.DB, userID uint) error {
 	}
 	ratesByResource := map[string]float64{"hp": rates.HP, "energy": rates.Energy, "hydration": rates.Hydration}
 	for _, task := range tasks {
-		if task.Status == "completed" {
+		if task.Status == "completed" || task.Status == "failed" {
 			continue
 		}
 		rate := 0.0
-		if task.ActualMethod == recoveryMethodHideout {
+		if task.CurrentValue < task.TargetValue {
+			if ratesByResource[task.ResourceType] <= 0 {
+				// 旧版本可能把失败的即时恢复方式写成 running，必须转为终态。
+				task.Status = "failed"
+				task.RatePerHour = 0
+				task.StartedAt = now
+				task.CompleteAt = nil
+				if err := tx.Model(&models.RecoveryTask{}).Where("id = ? AND user_id = ?", task.ID, userID).Updates(map[string]interface{}{
+					"actual_method": task.ActualMethod, "rate_per_hour": task.RatePerHour, "started_at": task.StartedAt, "complete_at": task.CompleteAt, "status": task.Status,
+				}).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			// 旧版本可能已经记录了即时方式；只要当前有持续速率，就切换到藏身处等待。
+			task.ActualMethod = recoveryMethodHideout
 			rate = ratesByResource[task.ResourceType]
 		}
 		elapsed := now.Sub(task.StartedAt).Hours()
@@ -561,7 +615,7 @@ func settleRecoveryForUserTx(tx *gorm.DB, userID uint) error {
 			}
 		}
 		if err := tx.Model(&models.RecoveryTask{}).Where("id = ? AND user_id = ?", task.ID, userID).Updates(map[string]interface{}{
-			"current_value": task.CurrentValue, "rate_per_hour": task.RatePerHour, "started_at": task.StartedAt, "complete_at": task.CompleteAt, "status": task.Status,
+			"current_value": task.CurrentValue, "actual_method": task.ActualMethod, "rate_per_hour": task.RatePerHour, "started_at": task.StartedAt, "complete_at": task.CompleteAt, "status": task.Status,
 		}).Error; err != nil {
 			return err
 		}
@@ -600,7 +654,7 @@ func ensureRecoveryReadyForStartTx(tx *gorm.DB, userID uint) error {
 		return fmt.Errorf("读取恢复任务: %w", err)
 	}
 	for _, task := range tasks {
-		if task.Status == "completed" || resourceValueFromCharacter(character, task.ResourceType) >= task.TargetValue-0.000001 {
+		if task.Status == "completed" || task.Status == "failed" || resourceValueFromCharacter(character, task.ResourceType) >= task.TargetValue-0.000001 {
 			continue
 		}
 		return fmt.Errorf("角色正在恢复%s，当前 %.1f / %.1f", recoveryResourceName(task.ResourceType), resourceValueFromCharacter(character, task.ResourceType), task.TargetValue)
@@ -641,13 +695,21 @@ func SettleRecoveryForUser(db *gorm.DB, userID uint) error {
 
 func completeRecoveryPlanIfDoneTx(tx *gorm.DB, userID, planID uint, now time.Time) error {
 	var pending int64
-	if err := tx.Model(&models.RecoveryTask{}).Where("user_id = ? AND recovery_plan_id = ? AND status <> ?", userID, planID, "completed").Count(&pending).Error; err != nil {
+	if err := tx.Model(&models.RecoveryTask{}).Where("user_id = ? AND recovery_plan_id = ? AND status NOT IN ?", userID, planID, []string{"completed", "failed"}).Count(&pending).Error; err != nil {
 		return err
 	}
-	if pending == 0 {
-		return tx.Model(&models.RecoveryPlan{}).Where("user_id = ? AND id = ?", userID, planID).Updates(map[string]interface{}{"status": "completed", "completed_at": now}).Error
+	if pending > 0 {
+		return nil
 	}
-	return nil
+	var failed int64
+	if err := tx.Model(&models.RecoveryTask{}).Where("user_id = ? AND recovery_plan_id = ? AND status = ?", userID, planID, "failed").Count(&failed).Error; err != nil {
+		return err
+	}
+	status := "completed"
+	if failed > 0 {
+		status = "failed"
+	}
+	return tx.Model(&models.RecoveryPlan{}).Where("user_id = ? AND id = ?", userID, planID).Updates(map[string]interface{}{"status": status, "completed_at": now}).Error
 }
 
 func GetCurrentRecoveryForUser(db *gorm.DB, userID uint) (*RecoveryView, error) {
@@ -655,7 +717,7 @@ func GetCurrentRecoveryForUser(db *gorm.DB, userID uint) (*RecoveryView, error) 
 		return nil, err
 	}
 	var plan models.RecoveryPlan
-	if err := db.Where("user_id = ?").Order("id desc").First(&plan).Error; err != nil {
+	if err := db.Where("user_id = ?", userID).Order("id desc").First(&plan).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
@@ -668,10 +730,6 @@ func GetCurrentRecoveryForUser(db *gorm.DB, userID uint) (*RecoveryView, error) 
 	return &RecoveryView{Plan: plan, Tasks: tasks}, nil
 }
 
-func characterMaxHP(strength int) float64 {
-	return math.Max(90, math.Min(110, 100+float64(strength-50)*0.2))
-}
-
 func clampResource(value, minValue, maxValue float64) float64 {
 	if value < minValue {
 		return minValue
@@ -680,13 +738,4 @@ func clampResource(value, minValue, maxValue float64) float64 {
 		return maxValue
 	}
 	return value
-}
-
-func sortRecoveryDefinitions(defs []models.ItemUseDef) {
-	sort.SliceStable(defs, func(i, j int) bool {
-		if defs[i].UsePriority != defs[j].UsePriority {
-			return defs[i].UsePriority < defs[j].UsePriority
-		}
-		return defs[i].ItemID < defs[j].ItemID
-	})
 }
