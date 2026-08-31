@@ -81,12 +81,12 @@ go run . seed
 
 ~~~powershell
 Set-Location D:\idle\frontend
-npm install
+npm ci
 $env:VITE_API_TARGET = "http://localhost:8081"
 npm run dev
 ~~~
 
-当前仓库未固定 npm lockfile，首次安装使用 **npm install**。后续若提交了 `package-lock.json`，CI 和本地复现环境再改用 **npm ci**。
+当前仓库固定使用 `package-lock.json` 和 `npm@11.9.0`。全新检出或需要按锁定版本重建依赖时使用 **npm ci**；只有主动更新依赖时才使用 **npm install**，并提交更新后的 lockfile。
 
 启动后打开：
 
@@ -105,7 +105,13 @@ Set-Location D:\idle
 .\start.ps1
 ~~~
 
-该脚本会在后台隐藏窗口启动 Go 和 npm 进程。它适合快速打开页面，不适合定位启动错误；调试时优先使用上面的两个可见 PowerShell 窗口。
+该脚本会启动 Go 和 npm 进程并把入口 PID 记录到 `.run/dev.pid`，同时支持停止：
+
+```powershell
+.\start.ps1 -Stop
+```
+
+`-Stop` 会校验 `.run/dev.pid` 中记录的入口 PID 和启动时间，再递归停止对应进程树（包括 `go run` 派生的孙进程）。端口命中但无法证明属于本项目的进程只会提示，不会自动强杀。调试定位启动错误时仍建议使用上面的两个可见 PowerShell 窗口前台运行。
 
 ## 6. 本地测试与构建
 

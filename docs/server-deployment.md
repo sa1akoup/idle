@@ -155,7 +155,7 @@ CGO_ENABLED=1 go build -o /opt/idle/bin/idle .
 
 ~~~bash
 cd /opt/idle/frontend
-npm install
+npm ci
 npm run build
 ~~~
 
@@ -167,7 +167,7 @@ exit
 
 项目同时引入 SQLite driver，Linux 构建安装 **gcc** 并使用 **CGO_ENABLED=1**，避免编译阶段缺少 CGO 环境。
 
-当前仓库未固定 npm lockfile，因此部署示例使用 **npm install**。后续提交 `package-lock.json` 后，应在构建机改用 **npm ci** 保证依赖可复现。
+当前仓库固定使用 `package-lock.json` 和 `npm@11.9.0`，部署时使用 **npm ci** 保证依赖可复现。只有主动更新依赖时才使用 **npm install**，并提交更新后的 lockfile。
 
 ## 8. 备份并执行数据库 migration
 
@@ -479,3 +479,14 @@ sudo install -d -m 750 -o idle -g idle /opt/idle/data
 ~~~
 
 SQLite 连接会自动附加 `_busy_timeout=5000`，用于等待短暂写锁；它仍只适合单 Backend 实例。部署前备份 **idle.db**，不要让多个 Backend 进程同时写同一个文件；需要多实例、独立扩容或更高并发时使用 PostgreSQL。
+
+## 数据库升级
+
+生产升级顺序固定为 `go run . migrate && go run . seed` 后再启动服务：启动时会自动执行版本化
+SQL 迁移、结构完整性校验和对玩家存量数据的幂等适配。适配依赖目录种子——若跳过 seed 启动，
+适配会拒绝执行并提示补种，绝不会在空目录下运行以免误删玩家资产。
+
+SQLite 仅在确有待应用迁移时生成备份 `idle.db.pre-upgrade.bak`，普通启动不触碰该文件；
+因权限等原因无法生成备份时迁移直接中止。PostgreSQL 环境请务必在部署前执行 `pg_dump`。
+迁移内容校验和会检测对已发布迁移文件的任何改动。完整流程与破坏性变更配方见
+[database-upgrade.md](./database-upgrade.md)。

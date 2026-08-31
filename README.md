@@ -83,7 +83,7 @@ go run . seed
 ### 前端 :5173
 ```bash
 cd D:/idle/frontend
-npm install
+npm ci
 npm run dev   # http://localhost:5173 代理 /api -> :8081
 # 或 npm run build + preview
 ```
@@ -95,7 +95,7 @@ npm run dev   # http://localhost:5173 代理 /api -> :8081
 - `GET /api/auth/me` 获取当前登录用户
 - `GET/PUT /api/player`
 - `GET /api/weapons|ammos|armors|armor-instances|consumables|loot`
-- `GET /api/chestrigs|backpacks|helmets|headsets|maps|nodes|enemies`
+- `GET /api/chestrigs|backpacks|helmets|headsets|maps|enemies`
 - `POST /api/session/start` 创建后台挂机会话，返回 `202`，前端随后进入实时行动页
 - `GET /api/session/:id` 查看 Session 与单局报告
 - `GET /api/session/:id/events` 读取已到时间线事件
@@ -107,7 +107,7 @@ npm run dev   # http://localhost:5173 代理 /api -> :8081
 - `GET /api/loadout/capacity` 查看当前携行容量
 - `GET /api/merchants|/api/merchants/:id/catalog` 查看商人与商品
 - `POST /api/merchant/purchase|/api/merchant/sell` 买入或出售物品；建议携带 `Idempotency-Key`
-- `POST /api/armor/repair` 维修归零护甲
+- `POST /api/hideout/repair` 将归零护甲加入维修队列，payload 为 `{"armorInstanceId": number}`
 
 ## 数值验证
 
