@@ -14,7 +14,8 @@ func TestStartSessionRejectsMissingAmmo(t *testing.T) {
 	if err := config.Seed(db); err != nil {
 		t.Fatalf("写入测试种子: %v", err)
 	}
-	service := NewSessionService(db, models.DefaultUserID)
+	scheduler := newStartedTestScheduler(t, db)
+	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	if _, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
 		AmmoID: "ammo_762x39_n4", AmmoRounds: 0,

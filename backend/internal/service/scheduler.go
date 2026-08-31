@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -20,16 +21,11 @@ const (
 	sessionWorkerQueueSize   = sessionDispatchBatchSize * 2
 )
 
-var (
-	activeSessionWorkers sync.Map
-	sessionWorkerQueue   = make(chan sessionWorkerTask, sessionWorkerQueueSize)
-	sessionWorkerPool    sync.Once
-	// sessionSchedulerStop 是调度循环的停止信号；StartSessionScheduler 创建，StopSessionScheduler 关闭。
-	sessionSchedulerStop    chan struct{}
-	sessionSchedulerStopOwn sync.Once
-)
-
 var ErrSessionLeaseLost = errors.New("行动调度 lease 已失效")
+
+var ErrSessionSchedulerStarted = errors.New("行动调度器已启动")
+
+var ErrSessionSchedulerNotConfigured = errors.New("行动调度器未配置")
 
 type sessionWorkerTask struct {
 	db        *gorm.DB
@@ -37,39 +33,179 @@ type sessionWorkerTask struct {
 	sessionID uint
 }
 
+// SessionScheduler 持有单个进程内的行动调度状态，生命周期由应用入口显式管理。
+type SessionScheduler struct {
+	db      *gorm.DB
+	mu      sync.Mutex
+	runtime *schedulerRuntime
+}
+
+type schedulerRuntime struct {
+	queue        chan sessionWorkerTask
+	stop         chan struct{}
+	loopDone     chan struct{}
+	waitComplete chan struct{}
+	workers      sync.WaitGroup
+	stopOnce     sync.Once
+	waitOnce     sync.Once
+	activeWorker sync.Map
+	stopping     bool
+}
+
+func NewSessionScheduler(db *gorm.DB) *SessionScheduler {
+	return &SessionScheduler{db: db}
+}
+
 func sessionWorkerKey(userID, sessionID uint) uint64 {
 	return uint64(userID)<<32 | uint64(sessionID)
 }
 
-func dispatchSessionWorker(db *gorm.DB, userID, sessionID uint) {
-	startSessionWorkerPool()
+// Start 启动调度循环并立即派发当前已到期的行动。
+func (s *SessionScheduler) Start(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("行动调度器启动上下文不能为空")
+	}
+	if s.db == nil {
+		return errors.New("行动调度器数据库连接不能为空")
+	}
+
+	s.mu.Lock()
+	if s.runtime != nil {
+		s.mu.Unlock()
+		return ErrSessionSchedulerStarted
+	}
+	runtime := newSchedulerRuntime()
+	s.runtime = runtime
+	s.mu.Unlock()
+
+	go s.run(ctx, runtime)
+	s.dispatchPendingSessions()
+	return nil
+}
+
+func (s *SessionScheduler) run(ctx context.Context, runtime *schedulerRuntime) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	defer close(runtime.loopDone)
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.requestStop(runtime)
+			return
+		case <-runtime.stop:
+			return
+		case <-ticker.C:
+			s.dispatchPendingSessions()
+		}
+	}
+}
+
+func (s *SessionScheduler) requestStop(runtime *schedulerRuntime) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runtime != runtime {
+		return
+	}
+	runtime.stopping = true
+	runtime.stopOnce.Do(func() { close(runtime.stop) })
+}
+
+// Stop 仅发出停止信号；调用方通过 Wait 等待调度循环和 worker 完整退出。
+func (s *SessionScheduler) Stop() {
+	s.mu.Lock()
+	runtime := s.runtime
+	if runtime != nil {
+		runtime.stopping = true
+		runtime.stopOnce.Do(func() { close(runtime.stop) })
+	}
+	s.mu.Unlock()
+}
+
+// Wait 等待调度循环退出、队列排空和全部 worker 完成。
+func (s *SessionScheduler) Wait() {
+	s.mu.Lock()
+	runtime := s.runtime
+	s.mu.Unlock()
+	if runtime == nil {
+		return
+	}
+
+	runtime.waitOnce.Do(func() {
+		<-runtime.loopDone
+
+		s.mu.Lock()
+		close(runtime.queue)
+		s.mu.Unlock()
+		runtime.workers.Wait()
+
+		s.mu.Lock()
+		if s.runtime == runtime {
+			s.runtime = nil
+		}
+		s.mu.Unlock()
+		close(runtime.waitComplete)
+	})
+	<-runtime.waitComplete
+}
+
+// dispatchSessionWorker 将一个行动加入当前实例的 worker 队列。
+func (s *SessionScheduler) dispatchSessionWorker(userID, sessionID uint) {
+	s.mu.Lock()
+	runtime := s.runtime
+	if runtime == nil || runtime.stopping {
+		s.mu.Unlock()
+		return
+	}
 	key := sessionWorkerKey(userID, sessionID)
-	if _, loaded := activeSessionWorkers.LoadOrStore(key, struct{}{}); loaded {
+	if _, loaded := runtime.activeWorker.LoadOrStore(key, struct{}{}); loaded {
+		s.mu.Unlock()
 		return
 	}
 	select {
-	case sessionWorkerQueue <- sessionWorkerTask{db: db, userID: userID, sessionID: sessionID}:
+	case runtime.queue <- sessionWorkerTask{db: s.db, userID: userID, sessionID: sessionID}:
+		s.mu.Unlock()
 	default:
-		activeSessionWorkers.Delete(key)
+		runtime.activeWorker.Delete(key)
+		s.mu.Unlock()
 		log.Printf("行动 worker 队列已满，稍后重试 session=%d user=%d", sessionID, userID)
 	}
 }
 
-func startSessionWorkerPool() {
-	sessionWorkerPool.Do(func() {
-		for i := 0; i < sessionWorkerPoolSize; i++ {
-			go func() {
-				for task := range sessionWorkerQueue {
-					runSessionWorker(task)
-				}
-			}()
-		}
-	})
+// isSessionWorkerActive 仅供同包测试确认启动后的异步派发已完成。
+func (s *SessionScheduler) isSessionWorkerActive(userID, sessionID uint) bool {
+	s.mu.Lock()
+	runtime := s.runtime
+	s.mu.Unlock()
+	if runtime == nil {
+		return false
+	}
+	_, active := runtime.activeWorker.Load(sessionWorkerKey(userID, sessionID))
+	return active
 }
 
-func runSessionWorker(task sessionWorkerTask) {
+func newSchedulerRuntime() *schedulerRuntime {
+	runtime := &schedulerRuntime{
+		queue:        make(chan sessionWorkerTask, sessionWorkerQueueSize),
+		stop:         make(chan struct{}),
+		loopDone:     make(chan struct{}),
+		waitComplete: make(chan struct{}),
+	}
+	for i := 0; i < sessionWorkerPoolSize; i++ {
+		runtime.workers.Add(1)
+		go func() {
+			defer runtime.workers.Done()
+			for task := range runtime.queue {
+				runSessionWorker(runtime, task)
+			}
+		}()
+	}
+	return runtime
+}
+
+func runSessionWorker(runtime *schedulerRuntime, task sessionWorkerTask) {
 	key := sessionWorkerKey(task.userID, task.sessionID)
-	defer activeSessionWorkers.Delete(key)
+	defer runtime.activeWorker.Delete(key)
 	workerID := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	if !claimSessionLease(task.db, task.userID, task.sessionID, workerID, time.Now()) {
 		return
@@ -79,40 +215,13 @@ func runSessionWorker(task sessionWorkerTask) {
 	service.runSession(task.sessionID)
 }
 
-// StartSessionScheduler 启动后台调度器，并恢复数据库中的未完成行动。
-func StartSessionScheduler(db *gorm.DB) {
-	startSessionWorkerPool()
-	sessionSchedulerStop = make(chan struct{})
-	dispatchPendingSessions(db)
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-sessionSchedulerStop:
-				return
-			case <-ticker.C:
-				dispatchPendingSessions(db)
-			}
-		}
-	}()
-}
-
-// StopSessionScheduler 停止调度循环；已入队的 worker 任务会继续执行完毕。
-func StopSessionScheduler() {
-	if sessionSchedulerStop == nil {
-		return
-	}
-	sessionSchedulerStopOwn.Do(func() { close(sessionSchedulerStop) })
-}
-
-func dispatchPendingSessions(db *gorm.DB) {
+func (s *SessionScheduler) dispatchPendingSessions() {
 	var sessions []struct {
 		ID     uint
 		UserID uint
 	}
 	now := time.Now()
-	if err := db.Table("sessions").
+	if err := s.db.Table("sessions").
 		Select("id, user_id").
 		Where("status = ? AND next_run_at <= ? AND (lease_until IS NULL OR lease_until <= ?)", "running", now, now).
 		Order("next_run_at ASC, id ASC").
@@ -122,7 +231,7 @@ func dispatchPendingSessions(db *gorm.DB) {
 		return
 	}
 	for _, session := range sessions {
-		dispatchSessionWorker(db, session.UserID, session.ID)
+		s.dispatchSessionWorker(session.UserID, session.ID)
 	}
 }
 

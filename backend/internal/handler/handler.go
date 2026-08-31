@@ -15,10 +15,11 @@ import (
 type Handler struct {
 	db           *gorm.DB
 	secureCookie bool
+	scheduler    *service.SessionScheduler
 }
 
-func NewHandler(db *gorm.DB, secureCookie ...bool) *Handler {
-	return &Handler{db: db, secureCookie: len(secureCookie) > 0 && secureCookie[0]}
+func NewHandler(db *gorm.DB, secureCookie bool, scheduler *service.SessionScheduler) *Handler {
+	return &Handler{db: db, secureCookie: secureCookie, scheduler: scheduler}
 }
 
 func (h *Handler) Register(r *gin.Engine) {
@@ -50,6 +51,8 @@ func (h *Handler) Register(r *gin.Engine) {
 	protected.GET("/hideout", h.GetHideout)
 	protected.POST("/hideout/facilities/:id/upgrade", h.StartHideoutUpgrade)
 	protected.POST("/hideout/repair", h.QueueHideoutRepair)
+	protected.GET("/crafting/recipes", h.ListCraftingRecipes)
+	protected.POST("/crafting/start", h.StartCraft)
 	protected.POST("/hideout/generator/toggle", h.ToggleGenerator)
 	protected.POST("/hideout/generator/fuel/load", h.LoadGeneratorFuel)
 	protected.POST("/hideout/generator/fuel/unload", h.UnloadGeneratorFuel)
@@ -65,9 +68,7 @@ func (h *Handler) Register(r *gin.Engine) {
 	protected.GET("/session/:id/events", h.ListSessionEvents)
 	protected.GET("/session/:id/events/stream", h.StreamSessionEvents)
 	protected.GET("/sessions", h.ListSessions)
-	protected.GET("/nodes", h.ListNodes)
 	protected.GET("/enemies", h.ListEnemies)
-	protected.POST("/armor/repair", h.RepairArmor)
 }
 
 // GetPlayer 返回唯一的玩家角色。
@@ -81,7 +82,12 @@ func (h *Handler) GetPlayer(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "玩家角色不存在"})
 		return
 	}
-	c.JSON(http.StatusOK, player)
+	view, err := service.BuildPlayerViewForUser(h.db, player)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, view)
 }
 
 // UpdatePlayer 更新玩家可自定义的基础资料。
@@ -111,7 +117,12 @@ func (h *Handler) UpdatePlayer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "玩家角色读取失败"})
 		return
 	}
-	c.JSON(http.StatusOK, player)
+	view, err := service.BuildPlayerViewForUser(h.db, player)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, view)
 }
 
 // Health for frontend

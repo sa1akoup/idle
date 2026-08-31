@@ -115,5 +115,5 @@ func userID(c *gin.Context) uint {
 }
 
 func (h *Handler) sessionService(c *gin.Context) *service.SessionService {
-	return service.NewSessionService(h.db, userID(c))
+	return service.NewSessionServiceWithScheduler(h.db, userID(c), h.scheduler)
 }

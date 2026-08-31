@@ -44,6 +44,9 @@ func main() {
 	} else if err := database.EnsureMigrated(db, settings.DatabaseDriver); err != nil {
 		log.Fatal(err)
 	}
+	if err := database.VerifySchema(db, settings.DatabaseDriver); err != nil {
+		log.Fatal(err)
+	}
 	if settings.SeedOnStart {
 		if err := seedDatabase(db); err != nil {
 			log.Fatal(err)
@@ -58,12 +61,18 @@ func main() {
 func runCommand(command string, db *gorm.DB, settings config.Settings) error {
 	switch command {
 	case "migrate":
-		return database.Migrate(db, settings.DatabaseDriver)
+		if err := database.Migrate(db, settings.DatabaseDriver); err != nil {
+			return err
+		}
+		return database.VerifySchema(db, settings.DatabaseDriver)
 	case "seed":
 		if err := database.Migrate(db, settings.DatabaseDriver); err != nil {
 			return err
 		}
-		return seedDatabase(db)
+		if err := seedDatabase(db); err != nil {
+			return err
+		}
+		return database.VerifySchema(db, settings.DatabaseDriver)
 	default:
 		return fmt.Errorf("未知命令 %q，可用命令：migrate、seed", command)
 	}
@@ -92,9 +101,22 @@ func startServer(db *gorm.DB, settings config.Settings) error {
 		AllowCredentials: true,
 	}))
 	r.GET("/api/health", handler.Health)
-	h := handler.NewHandler(db, settings.Environment == "production")
+	scheduler := service.NewSessionScheduler(db)
+	h := handler.NewHandler(db, settings.Environment == "production", scheduler)
 	h.Register(r)
-	service.StartSessionScheduler(db)
+
+	if _, err := service.RunUserDataUpgrades(db); err != nil {
+		return fmt.Errorf("玩家存量数据适配失败: %w", err)
+	}
+	shutdownContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	if err := scheduler.Start(shutdownContext); err != nil {
+		return fmt.Errorf("启动行动调度器失败: %w", err)
+	}
+	defer func() {
+		scheduler.Stop()
+		scheduler.Wait()
+	}()
 
 	srv := &http.Server{
 		Addr:              settings.HTTPAddr,
@@ -102,11 +124,10 @@ func startServer(db *gorm.DB, settings config.Settings) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
+		<-shutdownContext.Done()
 		log.Printf("收到退出信号，开始优雅关停")
-		service.StopSessionScheduler()
+		scheduler.Stop()
+		scheduler.Wait()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(ctx); err != nil {

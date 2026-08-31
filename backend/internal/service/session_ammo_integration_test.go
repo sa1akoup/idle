@@ -30,7 +30,8 @@ func TestSessionReservesAndReturnsCarriedAmmo(t *testing.T) {
 		ammoID        = "ammo_762x39_n4"
 		carriedRounds = 60
 	)
-	service := NewSessionService(db, models.DefaultUserID)
+	scheduler := newStartedTestScheduler(t, db)
+	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	sess, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
 		AmmoID: ammoID, AmmoRounds: carriedRounds,
@@ -63,7 +64,7 @@ func TestSessionReservesAndReturnsCarriedAmmo(t *testing.T) {
 	if snapshot.SchemaVersion != engine.SchemaVersion || snapshot.AmmoSupplies[ammoID].UnitPrice <= 0 {
 		t.Fatalf("Session 弹药补给快照异常: %+v", snapshot.AmmoSupplies[ammoID])
 	}
-	waitSessionWorker(t, sess.ID)
+	waitSessionWorker(t, scheduler, sess.ID)
 
 	if err := service.failSession(sess.ID, fmt.Errorf("test cleanup")); err != nil {
 		t.Fatalf("异常归还 Session: %v", err)
@@ -101,7 +102,8 @@ func TestSessionSettlementRefillsAmmoAndWritesEvent(t *testing.T) {
 		t.Fatalf("写入测试种子: %v", err)
 	}
 
-	service := NewSessionService(db, models.DefaultUserID)
+	scheduler := newStartedTestScheduler(t, db)
+	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	sess, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
 		AmmoID: "ammo_762x39_n4", AmmoRounds: 60,
@@ -109,7 +111,7 @@ func TestSessionSettlementRefillsAmmoAndWritesEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("启动 Session: %v", err)
 	}
-	waitSessionWorker(t, sess.ID)
+	waitSessionWorker(t, scheduler, sess.ID)
 
 	var snapshot engine.ScenarioSnapshot
 	var state engine.EngineState
@@ -173,7 +175,8 @@ func TestSessionSettlementAmmoPurchaseFailureReturnsCarriedAmmoOnce(t *testing.T
 		t.Fatalf("写入测试种子: %v", err)
 	}
 
-	service := NewSessionService(db, models.DefaultUserID)
+	scheduler := newStartedTestScheduler(t, db)
+	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	sess, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
 		AmmoID: "ammo_762x39_n4", AmmoRounds: 60,
@@ -181,7 +184,7 @@ func TestSessionSettlementAmmoPurchaseFailureReturnsCarriedAmmoOnce(t *testing.T
 	if err != nil {
 		t.Fatalf("启动 Session: %v", err)
 	}
-	waitSessionWorker(t, sess.ID)
+	waitSessionWorker(t, scheduler, sess.ID)
 
 	var snapshot engine.ScenarioSnapshot
 	var state engine.EngineState
@@ -231,12 +234,11 @@ func TestSessionSettlementAmmoPurchaseFailureReturnsCarriedAmmoOnce(t *testing.T
 	assertAmmoQuantity(t, db, models.DefaultUserID, "ammo_762x39_n4", 122)
 }
 
-func waitSessionWorker(t *testing.T, sessionID uint) {
+func waitSessionWorker(t *testing.T, scheduler *SessionScheduler, sessionID uint) {
 	t.Helper()
-	workerKey := sessionWorkerKey(models.DefaultUserID, sessionID)
 	workerDeadline := time.Now().Add(time.Second)
 	for {
-		if _, active := activeSessionWorkers.Load(workerKey); !active {
+		if !scheduler.isSessionWorkerActive(models.DefaultUserID, sessionID) {
 			return
 		}
 		if time.Now().After(workerDeadline) {
