@@ -230,8 +230,16 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
     push(current.value.backpackId, props.backpacks)
     for (const id of current.value.consumables) push(id, props.consumables)
   
-    const usedWeight = items.reduce((s, i) => s + i.weight, 0)
-    const usedSlots = items.reduce((s, i) => s + i.slots, 0)
+    let usedWeight = items.reduce((s, i) => s + i.weight, 0)
+    let usedSlots = items.reduce((s, i) => s + i.slots, 0)
+    // 角色页容量与后端展示口径一致：额外计入第 1 套预设弹药的整组占用。
+    const presetAmmo = presets.value[0]
+    const ammo = props.ammos.find((item) => item.id === presetAmmo.ammoId)
+    if (ammo && presetAmmo.ammoRounds > 0 && ammo.roundsPerSlot > 0) {
+      const groups = Math.ceil(presetAmmo.ammoRounds / ammo.roundsPerSlot)
+      usedSlots += groups
+      usedWeight += groups * 0.5
+    }
     return {
       baseSlots, bonusSlots, totalSlots: baseSlots + bonusSlots,
       baseWeight, bonusWeight, totalWeight: baseWeight + bonusWeight,
