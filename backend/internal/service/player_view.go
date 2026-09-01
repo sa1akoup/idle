@@ -34,10 +34,11 @@ func BuildPlayerViewForUser(db *gorm.DB, character models.Character) (PlayerView
 	}
 	return PlayerView{
 		Character:    character,
-		HPMax:        engine.CalcMaxHP(character.Strength),
+		HPMax:        engine.CalcMaxHP(engine.DefaultTuning(), character.Strength),
+		// 能量与水分上限固定为 100，不由角色属性推导
 		EnergyMax:    100,
 		HydrationMax: 100,
-		StressMax:    engine.CalcStressThreshold(engine.EffectiveSkill(character.Resist, character.Strength)),
+		StressMax:    engine.CalcStressThreshold(engine.DefaultTuning(), engine.EffectiveSkill(engine.DefaultTuning(), character.Resist, character.Strength)),
 		RecoveryPerHour: RecoveryPerHourView{
 			HP:        rates.HP,
 			Energy:    rates.Energy,

@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"idle/internal/config"
+	"idle/internal/engine"
 	"idle/internal/models"
 
 	"gorm.io/gorm"
 )
 
-const currentUserDataUpgradeVersion = 1
+const currentUserDataUpgradeVersion = 2
 
 type userDataUpgradeRecord struct {
 	Version          int       `gorm:"primaryKey;column:version"`
@@ -25,6 +26,7 @@ type userDataUpgradeRecord struct {
 	StrippedRefs     int       `gorm:"column:stripped_refs"`
 }
 
+// TableName 持久化到 user_data_migrations，把"执行过哪个版本"落库，保证只跑一次。
 func (userDataUpgradeRecord) TableName() string {
 	return "user_data_migrations"
 }
@@ -32,6 +34,7 @@ func (userDataUpgradeRecord) TableName() string {
 // RunUserDataUpgrades 对当前版本的存量数据适配只执行一次，返回首次处理的用户数。
 func RunUserDataUpgrades(db *gorm.DB) (int, error) {
 	var record userDataUpgradeRecord
+	// 版本已记录过则本次启动跳过，防止同一用户的存量数据被重复适配
 	if err := db.Where("version = ?", currentUserDataUpgradeVersion).First(&record).Error; err == nil {
 		return record.ProcessedUsers, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -66,6 +69,9 @@ func RunUserDataUpgrades(db *gorm.DB) (int, error) {
 			if err := config.MigrateUserSurvivalData(tx, userID); err != nil {
 				return fmt.Errorf("回填耐久实例: %w", err)
 			}
+			if err := clampCharacterHPForCurrentRules(tx, userID); err != nil {
+				return err
+			}
 			after, err := countUserItemInstancesTx(tx, userID)
 			if err != nil {
 				return err
@@ -91,6 +97,32 @@ func RunUserDataUpgrades(db *gorm.DB) (int, error) {
 	}
 	log.Printf("[数据适配] 已处理 %d 个用户：换算耐久实例 %d 件，摘除悬空引用 %d 处", len(userIDs), createdInstances, strippedRefs)
 	return len(userIDs), nil
+}
+
+// clampCharacterHPForCurrentRules 将存量角色生命值限制在当前力量对应的合法区间内。
+func clampCharacterHPForCurrentRules(tx *gorm.DB, userID uint) error {
+	var character models.Character
+	if err := tx.Where("user_id = ?", userID).First(&character).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("读取角色生命值: %w", err)
+	}
+	maxHP := engine.CalcMaxHP(engine.DefaultTuning(), character.Strength)
+	hp := character.HP
+	if hp < 0 {
+		hp = 0
+	}
+	if hp > maxHP {
+		hp = maxHP
+	}
+	if hp == character.HP {
+		return nil
+	}
+	if err := tx.Model(&models.Character{}).Where("user_id = ? AND id = ?", userID, character.ID).Update("hp", hp).Error; err != nil {
+		return fmt.Errorf("修正角色生命值: %w", err)
+	}
+	return nil
 }
 
 // listUpgradableUserIDs 汇总出现过的用户：以 characters 为准（兼容认证改造前的纯本地存档），并并入 users 表。
@@ -120,6 +152,7 @@ func listUpgradableUserIDs(db *gorm.DB) ([]uint, error) {
 	return result, nil
 }
 
+// countUserItemInstancesTx 统计某用户当前的物品实例总数，用于度量本次迁移回填的数量。
 func countUserItemInstancesTx(tx *gorm.DB, userID uint) (int64, error) {
 	var count int64
 	if err := tx.Model(&models.ItemInstance{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
@@ -162,6 +195,7 @@ func requireSeededCatalogForUpgrade(db *gorm.DB) error {
 	return nil
 }
 
+// has 判断物品 ID 是否仍在目录中，用于悬空引用清理。
 func (c upgradeCatalog) has(itemID string) bool {
 	_, ok := c.ids[itemID]
 	return ok
@@ -342,6 +376,7 @@ func stripDanglingCatalogRefsTx(tx *gorm.DB, userID uint, catalog upgradeCatalog
 	return stripped, nil
 }
 
+// loadOwnedInstanceIDsTx 收集用户当前持有的全部物品实例 ID，供清理补给引用时判断实例是否仍存在。
 func loadOwnedInstanceIDsTx(tx *gorm.DB, userID uint) (map[uint]bool, error) {
 	type row struct {
 		ID uint `gorm:"column:id"`
