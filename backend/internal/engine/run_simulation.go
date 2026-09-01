@@ -68,10 +68,24 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	} else if input.State.Ammo.ID != "" || input.State.Ammo.Rounds != 0 || input.State.Ammo.PreferredID != "" || input.State.Ammo.PreferredLevel != 0 || input.State.Ammo.TargetRounds != 0 {
 		return RunResult{}, fmt.Errorf("近战武器不能携带弹药")
 	}
-	freeSlots := input.State.Carry.TotalSlots - input.State.Carry.UsedSlots
-	freeWeight := input.State.Carry.TotalWeight - input.State.Carry.UsedWeight
+	usedSlots, usedWeight, err := LoadoutUsage(snapshot, input.State.Loadout, input.State.Consumables, input.State.Ammo)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("计算当前配装容量: %w", err)
+	}
+	if usedSlots > input.State.Carry.TotalSlots || usedWeight > input.State.Carry.TotalWeight+1e-9 {
+		return RunResult{}, fmt.Errorf("当前配装超过携行容量：%d/%d 格，%.1f/%.1fkg", usedSlots, input.State.Carry.TotalSlots, usedWeight, input.State.Carry.TotalWeight)
+	}
+	freeSlots := input.State.Carry.TotalSlots - usedSlots
+	freeWeight := input.State.Carry.TotalWeight - usedWeight
+	// 耳机听力等级：来自快照内的耳机目录（装备丢失/未佩戴时为 0）。
+	hearing := 0
+	if input.State.Loadout.HeadsetID != "" {
+		if headset, ok := snapshot.Headsets[input.State.Loadout.HeadsetID]; ok {
+			hearing = headset.HearingLevel
+		}
+	}
 	rng := rand.New(rand.NewSource(sessionRunSeed(input.SessionSeed, input.RunIndex)))
-	outcome, err := simulateSingleRun(snapshot, input.State.Character, weapon, armor, input.State.ArmorDurability, ammo, input.State.Ammo.Rounds, input.State.Consumables, input.State.CarriedItems, snapshot.ItemUseDefs, snapshot.Nodes, rng, style, freeSlots, freeWeight, input.RunIndex)
+	outcome, err := simulateSingleRun(snapshot, input.State.Character, weapon, armor, input.State.ArmorDurability, ammo, input.State.Ammo.Rounds, input.State.Consumables, input.State.CarriedItems, snapshot.ItemUseDefs, snapshot.Nodes, rng, style, freeSlots, freeWeight, input.RunIndex, hearing)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -89,7 +103,10 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	remaining := subtractItemStacks(nextState.Consumables, outcome.consumedItems)
 	nextState.Consumables = remaining
 	nextState.Ammo.Rounds = outcome.ammoRounds
-	nextState.Carry.UsedSlots, nextState.Carry.UsedWeight = loadoutUsage(snapshot, nextState.Loadout, nextState.Consumables)
+	nextState.Carry.UsedSlots, nextState.Carry.UsedWeight, err = LoadoutUsage(snapshot, nextState.Loadout, nextState.Consumables, nextState.Ammo)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("计算单局后配装容量: %w", err)
+	}
 
 	return RunResult{
 		Result:                  outcome.result,
@@ -123,16 +140,20 @@ func SimulateRunVersion(version string, snapshot ScenarioSnapshot, input RunInpu
 	}
 }
 
+// cloneEngineState 深拷贝输入状态，后续模拟对副本修改而不污染调用方数据。
 func cloneEngineState(state EngineState) EngineState {
 	state.Consumables = cloneItemStacks(state.Consumables)
 	state.CarriedItems = CloneCarriedItems(state.CarriedItems)
 	return state
 }
 
+// sessionRunSeed 由会话种子按局次序派生独立随机种子，保证每局可单独重放。
 func sessionRunSeed(seed int64, runIndex int) int64 {
+	// 7919 为质数步进，不同局次的种子互不重叠。
 	return seed + int64(runIndex)*7919
 }
 
+// increaseWeaponProf 撤离成功时给对应武器类别熟练度 +1，封顶 100。
 func increaseWeaponProf(character *CharacterState, category string) {
 	value := func(current int) int {
 		if current >= 100 {
@@ -156,6 +177,7 @@ func increaseWeaponProf(character *CharacterState, category string) {
 	}
 }
 
+// itemCountsToStacks 把消耗计数表转换成按 ID 排序的物品堆叠列表，保证输出顺序确定。
 func itemCountsToStacks(counts map[string]int) []ItemStack {
 	ids := make([]string, 0, len(counts))
 	for id, quantity := range counts {
@@ -171,6 +193,7 @@ func itemCountsToStacks(counts map[string]int) []ItemStack {
 	return result
 }
 
+// subtractItemStacks 按消耗数量扣除物品堆叠，扣完的堆叠从结果中移除。
 func subtractItemStacks(stacks []ItemStack, consumed map[string]int) []ItemStack {
 	result := make([]ItemStack, 0, len(stacks))
 	for _, stack := range stacks {
@@ -182,21 +205,38 @@ func subtractItemStacks(stacks []ItemStack, consumed map[string]int) []ItemStack
 	return result
 }
 
-func loadoutUsage(snapshot ScenarioSnapshot, loadout LoadoutState, consumables []ItemStack) (int, float64) {
+// LoadoutUsage 统计当前配装、消耗品和自带弹药占用的格子与负重。
+func LoadoutUsage(snapshot ScenarioSnapshot, loadout LoadoutState, consumables []ItemStack, ammo CarriedAmmo) (int, float64, error) {
 	ids := []string{loadout.WeaponID, loadout.ArmorID, loadout.ChestRigID, loadout.BackpackID, loadout.HelmetID, loadout.HeadsetID}
-	for _, stack := range consumables {
-		for i := 0; i < stack.Quantity; i++ {
-			ids = append(ids, stack.ItemID)
-		}
-	}
 	slots, weight := 0, 0.0
 	for _, itemID := range ids {
+		if itemID == "" {
+			continue
+		}
 		item, ok := snapshot.Items[itemID]
 		if !ok {
-			continue
+			return 0, 0, fmt.Errorf("配装物品 %s 不在场景快照目录中", itemID)
 		}
 		slots += item.Slots
 		weight += float64(item.Weight)
 	}
-	return slots, weight
+	for _, stack := range consumables {
+		if stack.Quantity <= 0 {
+			continue
+		}
+		item, ok := snapshot.Items[stack.ItemID]
+		if !ok {
+			return 0, 0, fmt.Errorf("补给物品 %s 不在场景快照目录中", stack.ItemID)
+		}
+		if item.Kind == "ammo" {
+			return 0, 0, fmt.Errorf("弹药 %s 不能作为普通补给携带", stack.ItemID)
+		}
+		slots += item.Slots * stack.Quantity
+		weight += float64(item.Weight * stack.Quantity)
+	}
+	ammoSlots, ammoWeight, err := ammoUsage(snapshot, ammo.ID, ammo.Rounds)
+	if err != nil {
+		return 0, 0, err
+	}
+	return slots + ammoSlots, weight + ammoWeight, nil
 }

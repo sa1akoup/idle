@@ -37,6 +37,7 @@ type graphNeighbor struct {
 	moveTime int
 }
 
+// maxInt 返回 value 与 floor 中的较大值（最小值下限约束）。
 func maxInt(value, floor int) int {
 	if value < floor {
 		return floor
@@ -44,6 +45,7 @@ func maxInt(value, floor int) int {
 	return value
 }
 
+// clamp 把浮点值钳制到 [min, max] 区间。
 func clamp(value, min, max float64) float64 {
 	if value < min {
 		return min
@@ -54,6 +56,7 @@ func clamp(value, min, max float64) float64 {
 	return value
 }
 
+// containsString 判断切片中是否存在指定字符串。
 func containsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
@@ -63,6 +66,7 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
+// sortedNodes 按 Y、X、ID 稳定排序节点，保证枚举顺序确定、可重放。
 func sortedNodes(nodes []Node) []Node {
 	result := append([]Node(nil), nodes...)
 	sort.SliceStable(result, func(i, j int) bool {
@@ -95,6 +99,9 @@ func ValidateMapGraph(gameMap Map, nodes []Node, edges []MapEdge, points []Extra
 		}
 		if node.ExploreTime < 0 {
 			return fmt.Errorf("节点 %s 的探索时间无效", node.ID)
+		}
+		if node.EncounterChance < 0 || node.EncounterChance > 100 {
+			return fmt.Errorf("节点 %s 的遇敌概率无效", node.ID)
 		}
 		byID[node.ID] = node
 	}
@@ -172,6 +179,7 @@ func ValidateMapGraph(gameMap Map, nodes []Node, edges []MapEdge, points []Extra
 	return nil
 }
 
+// addGraphArc 向邻接表追加一条有向边，重复的 from->to 返回 false。
 func addGraphArc(adjacency map[string][]graphNeighbor, seen map[string]bool, from, to string, moveTime int) bool {
 	key := from + "\x00" + to
 	if seen[key] {
@@ -182,6 +190,7 @@ func addGraphArc(adjacency map[string][]graphNeighbor, seen map[string]bool, fro
 	return true
 }
 
+// reachableNodes 用 BFS 求起点可达的节点集合。
 func reachableNodes(start string, adjacency map[string][]graphNeighbor) map[string]bool {
 	seen := map[string]bool{start: true}
 	queue := []string{start}
@@ -284,6 +293,7 @@ func PlanRoute(snapshot ScenarioSnapshot, style string, rng *rand.Rand, options 
 	return best[selected].plan, nil
 }
 
+// buildAdjacency 由边列表构建邻接表，并对每个节点的邻接排序保证确定性。
 func buildAdjacency(edges []MapEdge) map[string][]graphNeighbor {
 	adjacency := make(map[string][]graphNeighbor)
 	for _, edge := range edges {
@@ -303,6 +313,7 @@ func buildAdjacency(edges []MapEdge) map[string][]graphNeighbor {
 	return adjacency
 }
 
+// enumerateRoutes 受限 DFS 枚举从起点到锚点的无重复节点路径，并累计各维度代价。
 func enumerateRoutes(current, anchor string, path []string, visited map[string]bool, adjacency map[string][]graphNeighbor, nodesByID map[string]Node, point ExtractionPoint, options RoutePlannerOptions, candidates *[]routeCandidate) {
 	if len(*candidates) >= options.MaxCandidates || len(path) > options.MaxRouteNodes {
 		return
@@ -335,6 +346,7 @@ func enumerateRoutes(current, anchor string, path []string, visited map[string]b
 	}
 }
 
+// filterDetours 以同一撤离点的最短耗时做基准，剔除移动耗时超比例的绕行路线。
 func filterDetours(candidates []routeCandidate, ratio float64) []routeCandidate {
 	if ratio <= 0 || math.IsInf(ratio, 0) || math.IsNaN(ratio) {
 		return candidates
@@ -345,6 +357,7 @@ func filterDetours(candidates []routeCandidate, ratio float64) []routeCandidate 
 			minimum[candidate.plan.ExtractionID] = candidate.moveTime
 		}
 	}
+	// 以每个撤离点的最短移动耗时作为基准线，保留未超过 ratio 倍的路线。
 	filtered := make([]routeCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		if float64(candidate.moveTime) <= float64(minimum[candidate.plan.ExtractionID])*ratio {
@@ -354,6 +367,7 @@ func filterDetours(candidates []routeCandidate, ratio float64) []routeCandidate 
 	return filtered
 }
 
+// normalizeCandidateScores 按行动风格权重把各维度归一化后合并成路线得分。
 func normalizeCandidateScores(candidates []routeCandidate, policy StylePolicy) {
 	maxValue, maxRisk, maxMove, maxExplore, maxLength := 1, 1, 1, 1, 1
 	for _, candidate := range candidates {
@@ -365,6 +379,7 @@ func normalizeCandidateScores(candidates []routeCandidate, policy StylePolicy) {
 	}
 	for index := range candidates {
 		candidate := &candidates[index]
+		// 各维度先按最大值归一到 0-1000 再按权重加权，避免量纲差异主导评分。
 		value := int64(candidate.value * 1000 / maxValue)
 		risk := int64(candidate.risk * 1000 / maxRisk)
 		move := int64(candidate.moveTime * 1000 / maxMove)
@@ -375,6 +390,7 @@ func normalizeCandidateScores(candidates []routeCandidate, policy StylePolicy) {
 	}
 }
 
+// nodeRisk 按遭遇角色返回风险等级，用于路线评分惩罚高危节点。
 func nodeRisk(node Node) int {
 	switch node.EncounterRole {
 	case "elite":
@@ -392,6 +408,7 @@ func nodeRisk(node Node) int {
 	}
 }
 
+// edgeMoveTime 查邻接表取两点间的移动耗时，不存在边时返回 0。
 func edgeMoveTime(neighbors []graphNeighbor, target string) int {
 	for _, neighbor := range neighbors {
 		if neighbor.nodeID == target {
@@ -401,6 +418,7 @@ func edgeMoveTime(neighbors []graphNeighbor, target string) int {
 	return 0
 }
 
+// extractionPointByID 按 ID 查找撤离点，未找到时返回 false。
 func extractionPointByID(points []ExtractionPoint, id string) (ExtractionPoint, bool) {
 	for _, point := range points {
 		if point.ID == id {

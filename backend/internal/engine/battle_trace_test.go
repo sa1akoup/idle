@@ -20,7 +20,7 @@ func TestBattleTraceOffsetsIncrease(t *testing.T) {
 		StealthEff: 40, Agility: 50, ResistEff: 40, WeaponControl: 50, AmmoRounds: 10,
 	}
 	policy := DefaultStylePolicies()[0]
-	result := simulateEncounter(player, enemy, "mid", 0, false, EncounterApproachEngage, policy, policy, false, rand.New(rand.NewSource(20260825)))
+	result := simulateEncounter(DefaultTuning(), player, enemy, "mid", 0, false, EncounterApproachEngage, policy, policy, false, rand.New(rand.NewSource(20260825)))
 	if len(result.Trace) < 2 {
 		t.Fatalf("战斗事件数量 = %d，期望至少 2 个事件", len(result.Trace))
 	}

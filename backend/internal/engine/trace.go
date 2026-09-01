@@ -36,6 +36,7 @@ type TraceEvent struct {
 	Payload   map[string]interface{} `json:"payload,omitempty"`
 }
 
+// appendTraceEvent 向轨迹追加一条事件并自动分配递增序号，空轨迹指针安全跳过。
 func appendTraceEvent(events *[]TraceEvent, eventType TraceEventType, offsetSec int64, nodeID, subjectID string, payload map[string]interface{}) {
 	if events == nil {
 		return

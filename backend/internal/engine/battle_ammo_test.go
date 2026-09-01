@@ -1,4 +1,4 @@
-// 分级弹药战斗测试：覆盖穿透/未穿透与护甲区/无甲四肢区四种核心组合。
+﻿// 分级弹药战斗测试：覆盖穿透/未穿透与护甲区/无甲四肢区四种核心组合。
 package engine
 
 import (
@@ -35,7 +35,7 @@ func TestAttackUsesAmmoLevelAndHitLocation(t *testing.T) {
 				ArmorDurability: 1000, ArmorMaxDur: 1000,
 			}
 			lines := []string{}
-			result := attack(&attacker, &defender, 0, 0, rand.New(rand.NewSource(1)), &lines)
+			result := attack(DefaultTuning(), &attacker, &defender, 0, 0, rand.New(rand.NewSource(1)), &lines)
 
 			if !result.Hit {
 				t.Fatal("固定 RNG 下攻击应命中")
@@ -72,7 +72,7 @@ func TestEffectiveArmorLevelFollowsDurabilityBands(t *testing.T) {
 		{durability: 0, want: 0},
 	}
 	for _, tt := range tests {
-		if got := effectiveArmorLevel(armor, tt.durability, 100); got != tt.want {
+		if got := effectiveArmorLevel(DefaultTuning(), armor, tt.durability, 100); got != tt.want {
 			t.Fatalf("耐久 %.0f 时有效护甲 = A%d，期望 A%d", tt.durability, got, tt.want)
 		}
 	}

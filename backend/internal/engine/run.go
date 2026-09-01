@@ -13,10 +13,12 @@ func assignLootDropIDs(loot []LootDrop, runIndex int) {
 	}
 }
 
+// LootItemsByCategory 从快照战利品表里按类别挑一件（供节点与事件共用）。
 func (snapshot ScenarioSnapshot) LootItemsByCategory(category string, rng *rand.Rand) (LootItem, bool) {
 	return chooseLootItem(snapshot.LootItems, category, rng)
 }
 
+// NodeContainerAssignmentsForNode 返回某节点配置的容器分配列表。
 func (snapshot ScenarioSnapshot) NodeContainerAssignmentsForNode(nodeID string) []NodeContainerAssignment {
 	result := make([]NodeContainerAssignment, 0)
 	for _, assignment := range snapshot.NodeContainerAssignments {
@@ -27,6 +29,7 @@ func (snapshot ScenarioSnapshot) NodeContainerAssignmentsForNode(nodeID string) 
 	return result
 }
 
+// resolveNodeEncounter 判定节点是否触发遭遇并执行战斗，返回敌人、是否击倒、是否清场及是否交战过。
 func resolveNodeEncounter(snapshot ScenarioSnapshot, state *eventRunState, events *eventManager, node Node, rng *rand.Rand) (Enemy, bool, bool, bool, error) {
 	if state.SkipDefaultCombat {
 		*state.Lines = append(*state.Lines, "  已根据事件结果避开本节点交战")
@@ -53,11 +56,15 @@ func resolveNodeEncounter(snapshot ScenarioSnapshot, state *eventRunState, event
 		*state.Lines = append(*state.Lines, "  当前节点没有配置敌人，安全通过")
 		return Enemy{}, false, false, false, nil
 	}
-	probability := 60 + state.Heat
+	// 遭遇概率：节点基础遇敌概率 + 本局热度；撤离阶段整体下调（默认节点 60 在撤离时为 35，维持旧手感）。
+	en := snapshot.Tuning.Encounter
+	probability := nodeEncounterBase(node, en.NodeDefaultChance)
+	probability += state.Heat
 	if state.Mode == runModeEvacuating {
-		probability = 35 + state.Heat
+		probability -= en.NodeEvacModifier
 	}
-	probability = minInt(probability, 90)
+	probability = maxInt(probability, en.NodeChanceMin)
+	probability = minInt(probability, en.NodeChanceMax)
 	if !forced && rng.Intn(100) >= probability {
 		*state.Lines = append(*state.Lines, "  未遭遇敌人，安全通过")
 		return Enemy{}, false, false, false, nil
@@ -96,7 +103,7 @@ func resolveNodeEncounter(snapshot ScenarioSnapshot, state *eventRunState, event
 	if forceEscape {
 		*state.Lines = append(*state.Lines, "  当前因负重撤离，战斗内优先尝试脱离")
 	}
-	result := simulateEncounter(state.Player, &enemyActor, node.Distance, state.Heat, state.hasItem("smoke"), approach, policy, enemyPolicy, forceEscape, rng)
+	result := simulateEncounter(snapshot.Tuning, state.Player, &enemyActor, node.Distance, state.Heat, state.hasItem("smoke"), approach, policy, enemyPolicy, forceEscape, rng)
 	*state.Lines = append(*state.Lines, result.Lines[1:]...)
 	battleStartedAt := state.DurationSec
 	for _, battleEvent := range result.Trace {
@@ -125,10 +132,19 @@ func resolveNodeEncounter(snapshot ScenarioSnapshot, state *eventRunState, event
 	state.Player.HP = result.PlayerHP
 	state.Player.Stress = result.PlayerStress
 	enemyDefeated := result.EnemyHP <= 0
+	// 全敌对单位弹药掉落：击倒且武器有弹药时搜缴战后剩余弹药（探索模式、弹药足够一梭）。
+	if enemyDefeated && state.Mode == runModeExploring && enemyWeapon.AmmoPerRound > 0 &&
+		enemyActor.AmmoRounds >= enemyWeapon.AmmoPerRound && state.CollectAmmoDrop != nil {
+		*state.Lines = append(*state.Lines, fmt.Sprintf("  %s 被击倒，弹药剩余 %d 发可以搜缴", enemy.Name, enemyActor.AmmoRounds))
+		if err := state.CollectAmmoDrop(enemyAmmo.ID, enemyActor.AmmoRounds, "敌人弹药"); err != nil {
+			return Enemy{}, false, false, false, err
+		}
+	}
 	encounterCleared := enemyDefeated || result.Winner == "player_suppress" || (result.Winner == "escape" && !result.EscapeSuccess)
 	return enemy, enemyDefeated, encounterCleared, true, nil
 }
 
+// encounterApproach 按敌人角色决定交战方式：巡逻用风格默认，守卫/精英直接接战。
 func encounterApproach(policy StylePolicy, role string) string {
 	if role == "patrol" || role == "" {
 		return policy.PatrolApproach
@@ -139,6 +155,7 @@ func encounterApproach(policy StylePolicy, role string) string {
 	return EncounterApproachEngage
 }
 
+// evaluateAutomaticEvacuation 检查血量/压力/弹药/护甲/负重，任一触线即自动进入撤离。
 func evaluateAutomaticEvacuation(state *eventRunState, weapon Weapon) {
 	if state.Player.HP <= 0 {
 		return
@@ -161,6 +178,7 @@ func evaluateAutomaticEvacuation(state *eventRunState, weapon Weapon) {
 	}
 }
 
+// startEvacuationEvents 首次触发撤离阶段的入场事件，幂等（只执行一次）。
 func startEvacuationEvents(events *eventManager, state *eventRunState, rng *rand.Rand) error {
 	if !state.EvacuationPending || state.EvacuationStarted {
 		return nil
@@ -170,6 +188,7 @@ func startEvacuationEvents(events *eventManager, state *eventRunState, rng *rand
 	return events.Trigger(state, eventPhaseEvacStart, rng)
 }
 
+// lootQuantity 累加战利品掉落的总数量。
 func lootQuantity(loot []LootDrop) int {
 	total := 0
 	for _, drop := range loot {
@@ -178,6 +197,7 @@ func lootQuantity(loot []LootDrop) int {
 	return total
 }
 
+// selectExtractedLoot 只有撤离成功才带回战利品，返回副本避免共享底层切片。
 func selectExtractedLoot(result string, loot []LootDrop) []LootDrop {
 	if result != "success" {
 		return nil
@@ -185,8 +205,17 @@ func selectExtractedLoot(result string, loot []LootDrop) []LootDrop {
 	return cloneLoot(loot)
 }
 
+// cloneLoot 浅拷贝战利品切片，防止后续修改影响原数据。
 func cloneLoot(loot []LootDrop) []LootDrop {
 	return append([]LootDrop(nil), loot...)
+}
+
+// nodeEncounterBase 返回节点的基础遇敌概率，未配置（<=0）时回落引擎默认值，用于概率计算与节点进入播报。
+func nodeEncounterBase(node Node, defaultChance int) int {
+	if node.EncounterChance <= 0 {
+		return defaultChance
+	}
+	return node.EncounterChance
 }
 
 // extractionLabel 单局终态只有成功/失能，不再有紧急或部分撤离分支。
@@ -194,6 +223,7 @@ func extractionLabel(result string) string {
 	return "撤离"
 }
 
+// minInt 返回 value 与 ceiling 中的较小值（最大值上限约束）。
 func minInt(value, ceiling int) int {
 	if value > ceiling {
 		return ceiling
@@ -201,10 +231,12 @@ func minInt(value, ceiling int) int {
 	return value
 }
 
+// cloneItemStacks 浅拷贝物品堆叠切片。
 func cloneItemStacks(stacks []ItemStack) []ItemStack {
 	return append([]ItemStack(nil), stacks...)
 }
 
+// joinStrings 用分隔符拼接字符串切片，空切片返回空串。
 func joinStrings(values []string, separator string) string {
 	if len(values) == 0 {
 		return ""

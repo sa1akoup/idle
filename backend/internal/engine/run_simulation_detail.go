@@ -7,7 +7,8 @@ import (
 	"math/rand"
 )
 
-func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weapon Weapon, armor Armor, armorDurability int, ammo Ammo, ammoRounds int, consumables []ItemStack, carriedItems []CarriedItem, itemUseDefs map[string]ItemUseDefinition, nodes []Node, rng *rand.Rand, style string, carrySlots int, carryWeight float64, runIndex int) (*simulatedRun, error) {
+// simulateSingleRun 推进一整局：规划路线、按节点执行事件/战斗/搜索、撤离结算，全程只依赖传入 RNG 保证可重放。
+func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weapon Weapon, armor Armor, armorDurability int, ammo Ammo, ammoRounds int, consumables []ItemStack, carriedItems []CarriedItem, itemUseDefs map[string]ItemUseDefinition, nodes []Node, rng *rand.Rand, style string, carrySlots int, carryWeight float64, runIndex int, hearing int) (*simulatedRun, error) {
 	byID := make(map[string]Node, len(nodes))
 	for _, node := range nodes {
 		byID[node.ID] = node
@@ -36,13 +37,14 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		"route": append([]string(nil), routePlan.NodeIDs...), "extractionId": routePlan.ExtractionID,
 		"anchorNodeId": routePlan.AnchorNodeID,
 	})
-	playerActor := buildPlayerActor(character, weapon, armor, armorDurability, ammo, ammoRounds)
+	playerActor := buildPlayerActor(snapshot.Tuning, character, weapon, armor, armorDurability, ammo, ammoRounds, hearing)
 	availableItems := make(map[string]int, len(consumables))
 	for _, item := range consumables {
 		availableItems[item.ItemID] += item.Quantity
 	}
 	state := &eventRunState{
 		Character: &character, Player: &playerActor, Mode: runModeExploring, Style: style, Styles: snapshot.Styles,
+		Tuning:     snapshot.Tuning,
 		CarrySlots: carrySlots, CarryWeight: carryWeight, AvailableItems: availableItems, CarriedItems: CloneCarriedItems(carriedItems), ItemUseDefs: itemUseDefs,
 		ConsumedItems: make(map[string]int), Flags: make(map[string]bool), EventCounts: make(map[string]int),
 		LastEventVisit: make(map[string]int), Lines: &lines, Trace: &trace,
@@ -71,6 +73,14 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			})
 			return nil
 		}
+		// 搜索风险判定：风险等级 vs 运气/感知，命中则施加配置的失败惩罚（当前 expose）。
+		if exposeProb := searchExposeProbability(state.Tuning, container.SearchRisk, state.Character.Luck, state.Character.Perception); float64(rng.Intn(100)+1) <= exposeProb {
+			if err := applySearchFailPenalty(state.Tuning, state, container, rng); err != nil {
+				return err
+			}
+		}
+		// 运气增产：掷骰 ≤ 运气×LuckBonusCoef 时额外多搜一件。
+		rolls = luckBonusRolls(state.Tuning, rolls, state.Character.Luck, rng, &lines)
 		foundQuantity := 0
 		for i := 0; i < rolls; i++ {
 			rule, ok := chooseContainerRule(container, rng)
@@ -87,9 +97,12 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			if rule.MaxQuantity > rule.MinQuantity {
 				quantity += rng.Intn(rule.MaxQuantity - rule.MinQuantity + 1)
 			}
-			needSlots := item.Slots * quantity
-			needWeight := float64(item.Weight * quantity)
-			if quantity <= 0 || state.LootSlots+needSlots > state.CarrySlots || state.LootWeight+needWeight > state.CarryWeight {
+			candidate := append(append([]LootDrop(nil), loot...), LootDrop{ItemID: item.ID, Quantity: quantity, ContainerID: containerID, Source: source})
+			needSlots, needWeight, err := lootUsageForDrops(snapshot, candidate)
+			if err != nil {
+				return err
+			}
+			if quantity <= 0 || needSlots > state.CarrySlots || needWeight > state.CarryWeight+1e-9 {
 				if quantity > 0 {
 					state.CarryBlocked = true
 					lines = append(lines, fmt.Sprintf("    容量不足，放弃 %s x%d", item.Name, quantity))
@@ -102,8 +115,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			}
 			loot = append(loot, LootDrop{ItemID: item.ID, Quantity: quantity, ContainerID: containerID, Source: source})
 			foundQuantity += quantity
-			state.LootSlots += needSlots
-			state.LootWeight += needWeight
+			state.LootSlots, state.LootWeight = needSlots, needWeight
 			lines = append(lines, fmt.Sprintf("    获得 %s x%d", item.Name, quantity))
 			state.addTrace(TraceLootFound, state.DurationSec, state.Node.ID, item.ID, map[string]interface{}{
 				"itemId": item.ID, "name": item.Name, "category": item.Category, "quantity": quantity,
@@ -141,20 +153,53 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		}
 		return nil
 	}
-	state.DiscardLoot = func(quantity int) int {
+	state.DiscardLoot = func(quantity int) (int, error) {
+		if quantity <= 0 {
+			return 0, nil
+		}
 		discarded := 0
 		for i := len(loot) - 1; i >= 0 && discarded < quantity; i-- {
 			remove := minInt(loot[i].Quantity, quantity-discarded)
 			loot[i].Quantity -= remove
-			item := snapshot.LootItems[loot[i].ItemID]
-			state.LootSlots -= item.Slots * remove
-			state.LootWeight -= float64(item.Weight * remove)
 			discarded += remove
 			if loot[i].Quantity == 0 {
 				loot = append(loot[:i], loot[i+1:]...)
 			}
 		}
-		return discarded
+		var err error
+		state.LootSlots, state.LootWeight, err = lootUsageForDrops(snapshot, loot)
+		if err != nil {
+			return discarded, err
+		}
+		return discarded, nil
+	}
+	// 弹药掉落：按组（RoundsPerSlot）折算携带占用，容量不足则放弃并触发负重提示。
+	state.CollectAmmoDrop = func(itemID string, quantity int, source string) error {
+		ammo, ok := snapshot.Ammos[itemID]
+		if !ok {
+			return fmt.Errorf("弹药 %s 不在快照目录中", itemID)
+		}
+		if quantity <= 0 {
+			return nil
+		}
+		candidate := append(append([]LootDrop(nil), loot...), LootDrop{ItemID: itemID, Quantity: quantity, Source: source})
+		groups, weight, err := lootUsageForDrops(snapshot, candidate)
+		if err != nil {
+			return err
+		}
+		if groups > state.CarrySlots || weight > state.CarryWeight+1e-9 {
+			state.CarryBlocked = true
+			lines = append(lines, fmt.Sprintf("    携行容量不足，放弃缴获 %s x%d", ammo.Name, quantity))
+			return nil
+		}
+		loot = append(loot, LootDrop{ItemID: itemID, Quantity: quantity, ContainerID: "", Source: source})
+		state.LootSlots, state.LootWeight = groups, weight
+		lines = append(lines, fmt.Sprintf("    缴获 %s 弹药 x%d（%d组，%.1fkg）", ammo.Name, quantity, groups, weight))
+		state.addTrace(TraceLootFound, state.DurationSec, state.Node.ID, itemID, map[string]interface{}{
+			"itemId": itemID, "name": ammo.Name, "category": ammo.CaliberID, "quantity": quantity,
+			"containerId": "", "source": source, "collected": true,
+		})
+		return nil
 	}
 
 	result := ""
@@ -172,8 +217,8 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 				"actualMoveTimeSec": actualMoveSec,
 			})
 			state.DurationSec += actualMoveSec
-			// 每次节点间移动固定减压 5 点，作为战斗之外的恒定压力缓解源。
-			state.Player.Stress = clamp(state.Player.Stress-5, 0, state.Player.StressThreshold)
+			// 节点间移动固定减压，作为战斗之外的恒定压力缓解源。
+			state.Player.Stress = clamp(state.Player.Stress-state.Tuning.Survival.StressMoveRecovery, 0, state.Player.StressThreshold)
 		}
 		node, ok := byID[currentNodeID]
 		if !ok {
@@ -187,14 +232,15 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		minutes := int(state.DurationSec / 60)
 		nodeDurationSec := int64(0)
 		if modeAtEntry == runModeExploring {
-			lines = append(lines, fmt.Sprintf("[%02d:%02d] 进入节点 %s，探索%d分钟，距离%s", minutes/60, minutes%60, node.Name, node.ExploreTime, node.Distance))
+			lines = append(lines, fmt.Sprintf("[%02d:%02d] 进入节点 %s，探索%d分钟，距离%s，基础遇敌%d%%", minutes/60, minutes%60, node.Name, node.ExploreTime, node.Distance, nodeEncounterBase(node, state.Tuning.Encounter.NodeDefaultChance)))
 			nodeDurationSec = int64(node.ExploreTime) * 60
 		} else {
 			lines = append(lines, fmt.Sprintf("[%02d:%02d] 撤离途中抵达 %s，距离%s", minutes/60, minutes%60, node.Name, node.Distance))
 		}
 		state.addTrace(TraceNodeEntered, state.DurationSec, node.ID, node.ID, map[string]interface{}{
 			"name": node.Name, "mode": modeAtEntry, "exploreTime": node.ExploreTime, "distance": node.Distance,
-			"heat": state.Heat, "playerHp": state.Player.HP, "playerMaxHp": state.Player.MaxHP,
+			"encounterChance": nodeEncounterBase(node, state.Tuning.Encounter.NodeDefaultChance),
+			"heat":            state.Heat, "playerHp": state.Player.HP, "playerMaxHp": state.Player.MaxHP,
 			"playerStress": state.Player.Stress, "playerAmmo": state.Player.AmmoRounds,
 			"playerArmorDurability": state.Player.ArmorDurability,
 		})
@@ -279,7 +325,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		}
 
 		// 探索时间减压（移动减压已在节点间移动时固定 -5）。
-		stressRecovery := float64(nodeDurationSec) / 60 * 5
+		stressRecovery := float64(nodeDurationSec) / 60 * state.Tuning.Survival.StressExploreRecovery
 		state.Player.Stress = clamp(state.Player.Stress-stressRecovery, 0, state.Player.StressThreshold)
 		if node.ID != routePlan.AnchorNodeID {
 			continue
@@ -303,7 +349,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			return nil, err
 		}
 		state.DurationSec += int64(point.TravelTime) * 60
-		state.Player.Stress = clamp(state.Player.Stress-float64(point.TravelTime)*5, 0, state.Player.StressThreshold)
+		state.Player.Stress = clamp(state.Player.Stress-float64(point.TravelTime)*state.Tuning.Survival.StressExploreRecovery, 0, state.Player.StressThreshold)
 		state.addTrace(TraceExtractionPointReached, state.DurationSec, node.ID, point.ID, map[string]interface{}{
 			"extractionId": point.ID, "name": point.Name, "travelTime": point.TravelTime,
 		})
@@ -351,7 +397,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		result = "success"
 	}
 	character.HP = state.Player.HP
-	applyNeedDrain(&character, state.DurationSec)
+	applyNeedDrain(state.Tuning, &character, state.DurationSec)
 	maybeAutoRecoverNeeds(state)
 	lines = append(lines, fmt.Sprintf("=== 本局结束 结果:%s 耗时:%d分 热度:%d 弹药:%d HP:%.1f 能量:%.1f 饮水:%.1f ===", result, state.DurationSec/60, state.Heat, state.AmmoUsed, character.HP, character.Energy, character.Hydration))
 	if len(loot) == 0 {

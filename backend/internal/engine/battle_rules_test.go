@@ -1,4 +1,4 @@
-// 战斗基础规则测试：锁定有效技能、最大生命和压力阈值的统一公式。
+﻿// 战斗基础规则测试：锁定有效技能、最大生命和压力阈值的统一公式。
 package engine
 
 import (
@@ -20,7 +20,7 @@ func TestEffectiveSkill(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertFloatEqual(t, EffectiveSkill(tt.train, tt.mainAttr), tt.want)
+			assertFloatEqual(t, EffectiveSkill(DefaultTuning(), tt.train, tt.mainAttr), tt.want)
 		})
 	}
 }
@@ -38,13 +38,13 @@ func TestCalcMaxHPClampsToRange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run("strength_"+strconv.Itoa(tt.strength), func(t *testing.T) {
-			assertFloatEqual(t, CalcMaxHP(tt.strength), tt.want)
+			assertFloatEqual(t, CalcMaxHP(DefaultTuning(), tt.strength), tt.want)
 		})
 	}
 }
 
 func TestCalcStressThreshold(t *testing.T) {
-	assertFloatEqual(t, CalcStressThreshold(50), 80)
+	assertFloatEqual(t, CalcStressThreshold(DefaultTuning(), 50), 80)
 }
 
 func assertFloatEqual(t *testing.T, got, want float64) {

@@ -99,6 +99,7 @@ func ValidateEventBinding(binding EventBinding) error {
 	if !supportedEventPhase(binding.Phase) {
 		return fmt.Errorf("事件绑定 %s 使用未知阶段 %s", binding.ID, binding.Phase)
 	}
+	// TriggerBP 以 10000 为满概率基数，与事件触发掷骰（1-10000）保持一致。
 	if binding.TriggerBP < 0 || binding.TriggerBP > 10000 || binding.Weight < 0 || binding.MaxPerRun < 0 || binding.CooldownNodes < 0 {
 		return fmt.Errorf("事件绑定 %s 的概率或限制无效", binding.ID)
 	}
@@ -110,6 +111,7 @@ func ValidateEventBinding(binding EventBinding) error {
 	}
 }
 
+// validateEventCheck 校验方案判定类型与判定属性是否受支持。
 func validateEventCheck(definitionID string, option EventOption) error {
 	switch option.Check.Type {
 	case "", "none", "fixed", "attribute":
@@ -122,6 +124,7 @@ func validateEventCheck(definitionID string, option EventOption) error {
 	return nil
 }
 
+// validateEventCondition 校验条件类型/操作符合法，引用类条件必须带 Ref。
 func validateEventCondition(definitionID, optionID string, condition EventCondition) error {
 	if !supportedEventCondition(condition.Type) || !supportedConditionOperator(condition.Operator) {
 		return fmt.Errorf("事件 %s 的方案 %s 使用未知条件 %s/%s", definitionID, optionID, condition.Type, condition.Operator)
@@ -132,6 +135,7 @@ func validateEventCondition(definitionID, optionID string, condition EventCondit
 	return nil
 }
 
+// validateEventEffect 校验效果类型受支持，且引用类效果必须带 Ref。
 func validateEventEffect(definitionID, optionID string, effect EventEffect) error {
 	if !supportedEventEffect(effect.Type) {
 		return fmt.Errorf("事件 %s 的方案 %s 使用未知效果 %s", definitionID, optionID, effect.Type)
@@ -153,10 +157,12 @@ func validateEventEffect(definitionID, optionID string, effect EventEffect) erro
 	return nil
 }
 
+// supportedEventMode 判断方案适用模式是否属于探索/撤离二者之一。
 func supportedEventMode(mode string) bool {
 	return mode == runModeExploring || mode == runModeEvacuating
 }
 
+// supportedEventAttribute 判断判定引用属性是否为角色属性表内成员。
 func supportedEventAttribute(attribute string) bool {
 	switch attribute {
 	case "strength", "agility", "intellect", "charisma", "stealth", "perception", "negotiation", "luck", "survival", "resist", "engineering", "medical":
@@ -166,6 +172,7 @@ func supportedEventAttribute(attribute string) bool {
 	}
 }
 
+// supportedEventCondition 判断条件类型是否受事件引擎支持。
 func supportedEventCondition(conditionType string) bool {
 	switch conditionType {
 	case "hp_ratio", "stress_ratio", "ammo", "heat", "carry_ratio", "has_item", "flag":
@@ -175,6 +182,7 @@ func supportedEventCondition(conditionType string) bool {
 	}
 }
 
+// supportedConditionOperator 判断条件比较操作符是否合法（eq/ne/lt/lte/gt/gte）。
 func supportedConditionOperator(operator string) bool {
 	switch operator {
 	case "eq", "ne", "lt", "lte", "gt", "gte":
@@ -184,6 +192,7 @@ func supportedConditionOperator(operator string) bool {
 	}
 }
 
+// supportedEventIntent 判断方案决策意图是否在已知意图清单内。
 func supportedEventIntent(intent string) bool {
 	switch intent {
 	case "bypass", "ambush", "engage", "force", "conceal", "secure", "search", "loot", "intel", "unlock", "rush", "withdraw", "treat", "drop", "reroute", "wait":
@@ -193,6 +202,7 @@ func supportedEventIntent(intent string) bool {
 	}
 }
 
+// supportedEventEffect 判断效果类型是否在已知效果清单内。
 func supportedEventEffect(effectType string) bool {
 	switch effectType {
 	case "hp", "stress", "heat", "time", "armor", "ammo", "container", "container_pool", "encounter", "skip_combat", "skip_search", "start_evacuation", "set_flag", "consume_item", "discard_loot", "evac_shortcut":
@@ -202,6 +212,7 @@ func supportedEventEffect(effectType string) bool {
 	}
 }
 
+// supportedEvacuationReason 判断事件触发的撤离原因码是否合法。
 func supportedEvacuationReason(reason string) bool {
 	switch reason {
 	case "health", "stress", "ammo", "armor", "carry_full", "target_acquired", "event":

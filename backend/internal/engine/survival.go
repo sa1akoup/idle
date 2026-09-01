@@ -1,27 +1,39 @@
 // 探索生存资源：处理行动时的 Energy/Hydration 消耗和非战斗自动医疗。
 package engine
 
-import "sort"
-
-const (
-	energyDrainPerHour    = 8.0
-	hydrationDrainPerHour = 10.0
+import (
+	"math"
+	"sort"
 )
 
-func applyNeedDrain(character *CharacterState, durationSec int64) {
+// applyNeedDrain 按行动时长折算小时数扣减能量与饮水；生存属性降低消耗速率，钳在上下限内。
+func applyNeedDrain(t Tuning, character *CharacterState, durationSec int64) {
 	if durationSec <= 0 {
 		return
 	}
 	hours := float64(durationSec) / 3600
-	character.Energy = clamp(character.Energy-hours*energyDrainPerHour, 0, 100)
-	character.Hydration = clamp(character.Hydration-hours*hydrationDrainPerHour, 0, 100)
+	energyRate := t.Survival.EnergyDrainPerHour - float64(character.Survival)*t.Survival.EnergySurvivalCoef
+	hydrationRate := t.Survival.HydrationDrainPerHour - float64(character.Survival)*t.Survival.HydrationSurvivalCoef
+	energyRate = math.Max(energyRate, t.Survival.DrainMin)
+	hydrationRate = math.Max(hydrationRate, t.Survival.DrainMin)
+	character.Energy = clamp(character.Energy-hours*energyRate, 0, 100)
+	character.Hydration = clamp(character.Hydration-hours*hydrationRate, 0, 100)
 }
 
+// maybeAutoHeal 血量过低时按使用优先级自动消耗医疗品，恢复到目标血量即停。
+// 医疗属性降低启动阈值（越高越晚动用医疗资源）。
 func maybeAutoHeal(state *eventRunState) {
-	if state.Player == nil || state.Player.HP <= 0 || state.Player.HP >= state.Player.MaxHP*0.6 {
+	survival := state.Tuning.Survival
+	medical := 0
+	if state.Character != nil {
+		medical = state.Character.Medical
+	}
+	trigger := survival.AutoHealTrigger - float64(medical)*survival.AutoHealMedicalCoef
+	trigger = math.Max(0, math.Min(trigger, survival.AutoHealTrigger))
+	if state.Player == nil || state.Player.HP <= 0 || state.Player.HP >= state.Player.MaxHP*trigger {
 		return
 	}
-	target := state.Player.MaxHP * 0.8
+	target := state.Player.MaxHP * survival.AutoHealTarget
 	indices := make([]int, 0, len(state.CarriedItems))
 	for index, item := range state.CarriedItems {
 		definition, ok := state.ItemUseDefs[item.ItemID]
@@ -48,34 +60,32 @@ func maybeAutoHeal(state *eventRunState) {
 		return left.ItemID < right.ItemID
 	})
 	for _, index := range indices {
-		if state.Player.HP >= target {
-			break
-		}
-		item := &state.CarriedItems[index]
-		definition := state.ItemUseDefs[item.ItemID]
-		healRatio := 1.0
-		if item.InstanceID > 0 {
-			useDurability := definition.UseDurability
-			if useDurability <= 0 {
-				useDurability = item.CurrentDurability
+		for state.Player.HP < target {
+			if index < 0 || index >= len(state.CarriedItems) {
+				break
 			}
-			actualUse := useDurability
-			if actualUse > item.CurrentDurability {
-				actualUse = item.CurrentDurability
+			before := state.CarriedItems[index]
+			definition := state.ItemUseDefs[before.ItemID]
+			if !state.consumeCarriedItem(index) {
+				break
 			}
-			if item.CurrentDurability < useDurability {
-				healRatio = item.CurrentDurability / useDurability
+			after := state.CarriedItems[index]
+			healRatio := 1.0
+			if before.InstanceID > 0 {
+				usedDurability := before.CurrentDurability - after.CurrentDurability
+				baseDurability := definition.UseDurability
+				if baseDurability <= 0 {
+					baseDurability = before.CurrentDurability
+				}
+				if baseDurability > 0 {
+					healRatio = usedDurability / baseDurability
+				}
 			}
-			item.CurrentDurability -= actualUse
-		} else {
-			item.Quantity--
+			if healRatio <= 0 {
+				continue
+			}
+			state.Player.HP = clamp(state.Player.HP+definition.HPRecovery*healRatio, 0, state.Player.MaxHP)
 		}
-		if healRatio <= 0 {
-			continue
-		}
-		state.Player.HP = clamp(state.Player.HP+definition.HPRecovery*healRatio, 0, state.Player.MaxHP)
-		state.ConsumedItems[item.ItemID]++
-		state.AvailableItems[item.ItemID]--
 	}
 	filtered := state.CarriedItems[:0]
 	for _, item := range state.CarriedItems {
@@ -85,12 +95,15 @@ func maybeAutoHeal(state *eventRunState) {
 		filtered = append(filtered, item)
 	}
 	state.CarriedItems = filtered
-	state.Character.HP = state.Player.HP
+	if state.Character != nil {
+		state.Character.HP = state.Player.HP
+	}
 }
 
 // maybeAutoRecoverNeeds 在非战斗流程中自动使用携行食物和饮水，维持挂机行动的连续性。
 func maybeAutoRecoverNeeds(state *eventRunState) {
-	if state.Character == nil || (state.Character.Energy >= 80 && state.Character.Hydration >= 80) {
+	threshold := state.Tuning.Survival.AutoRecoverThreshold
+	if state.Character == nil || (state.Character.Energy >= threshold*100 && state.Character.Hydration >= threshold*100) {
 		return
 	}
 	indices := make([]int, 0, len(state.CarriedItems))
@@ -102,9 +115,9 @@ func maybeAutoRecoverNeeds(state *eventRunState) {
 		if item.InstanceID > 0 && item.CurrentDurability <= 0 || item.InstanceID == 0 && item.Quantity <= 0 {
 			continue
 		}
-		needsEnergy := state.Character.Energy < 80 && definition.EnergyRecovery > 0
-		needsHydration := state.Character.Hydration < 80 && definition.HydrationRecovery > 0
-		if (!needsEnergy && !needsHydration) || !canUseNeedRecovery(*state.Character, definition) {
+		needsEnergy := float64(state.Character.Energy) < threshold*100 && definition.EnergyRecovery > 0
+		needsHydration := float64(state.Character.Hydration) < threshold*100 && definition.HydrationRecovery > 0
+		if (!needsEnergy && !needsHydration) || !canUseNeedRecovery(threshold, *state.Character, definition) {
 			continue
 		}
 		indices = append(indices, index)
@@ -118,29 +131,35 @@ func maybeAutoRecoverNeeds(state *eventRunState) {
 		return left.ItemID < right.ItemID
 	})
 	for _, index := range indices {
-		if state.Character.Energy >= 80 && state.Character.Hydration >= 80 {
-			break
+		for {
+			if float64(state.Character.Energy) >= threshold*100 && float64(state.Character.Hydration) >= threshold*100 {
+				break
+			}
+			if index < 0 || index >= len(state.CarriedItems) {
+				break
+			}
+			item := state.CarriedItems[index]
+			definition := state.ItemUseDefs[item.ItemID]
+			needsEnergy := float64(state.Character.Energy) < threshold*100 && definition.EnergyRecovery > 0
+			needsHydration := float64(state.Character.Hydration) < threshold*100 && definition.HydrationRecovery > 0
+			if (!needsEnergy && !needsHydration) || !canUseNeedRecovery(threshold, *state.Character, definition) {
+				break
+			}
+			if !state.consumeCarriedItem(index) {
+				break
+			}
+			state.Character.Energy = clamp(state.Character.Energy+definition.EnergyRecovery, 0, 100)
+			state.Character.Hydration = clamp(state.Character.Hydration+definition.HydrationRecovery, 0, 100)
 		}
-		item := state.CarriedItems[index]
-		definition := state.ItemUseDefs[item.ItemID]
-		needsEnergy := state.Character.Energy < 80 && definition.EnergyRecovery > 0
-		needsHydration := state.Character.Hydration < 80 && definition.HydrationRecovery > 0
-		if (!needsEnergy && !needsHydration) || !canUseNeedRecovery(*state.Character, definition) {
-			continue
-		}
-		if !state.consumeCarriedItem(index) {
-			continue
-		}
-		state.Character.Energy = clamp(state.Character.Energy+definition.EnergyRecovery, 0, 100)
-		state.Character.Hydration = clamp(state.Character.Hydration+definition.HydrationRecovery, 0, 100)
 	}
 }
 
-func canUseNeedRecovery(character CharacterState, definition ItemUseDefinition) bool {
-	if definition.EnergyRecovery < 0 && character.Energy+definition.EnergyRecovery < 80 {
+// canUseNeedRecovery 排除恢复值为负（反而扣减）且会把资源拖回阈值之下的物品。
+func canUseNeedRecovery(threshold float64, character CharacterState, definition ItemUseDefinition) bool {
+	if definition.EnergyRecovery < 0 && float64(character.Energy)+definition.EnergyRecovery < threshold*100 {
 		return false
 	}
-	if definition.HydrationRecovery < 0 && character.Hydration+definition.HydrationRecovery < 80 {
+	if definition.HydrationRecovery < 0 && float64(character.Hydration)+definition.HydrationRecovery < threshold*100 {
 		return false
 	}
 	return true

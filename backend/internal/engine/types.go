@@ -2,9 +2,23 @@
 package engine
 
 const (
-	SchemaVersion = "exploration-snapshot-v5"
-	EngineVersion = "exploration-engine-v6"
+	SchemaVersion = "exploration-snapshot-v9"
+	// LegacyEngineVersionV16 仅用于升级时收尾旧 Session，不再用于执行新一局模拟。
+	LegacyEngineVersionV16 = "exploration-engine-v16"
+	EngineVersion          = "exploration-engine-v17"
 )
+
+// EngineSupportedVersions 是 Session 生命周期可识别的版本白名单；v16 只允许迁移收尾，不能继续模拟。
+var EngineSupportedVersions = map[string]struct{}{
+	LegacyEngineVersionV16: {},
+	EngineVersion:          {},
+}
+
+// IsSupportedEngineVersion 判断版本是否属于当前发布可处理的 Session 版本集合。
+func IsSupportedEngineVersion(version string) bool {
+	_, ok := EngineSupportedVersions[version]
+	return ok
+}
 
 // Map 是探索路线的不可变快照。
 type Map struct {
@@ -19,18 +33,19 @@ type Map struct {
 
 // Node 是路线节点的不可变快照。
 type Node struct {
-	ID             string   `json:"id"`
-	MapID          string   `json:"mapId"`
-	Name           string   `json:"name"`
-	PositionX      int      `json:"positionX"`
-	PositionY      int      `json:"positionY"`
-	ExploreTime    int      `json:"exploreTime"`
-	Distance       string   `json:"distance"`
-	EnemyID        string   `json:"enemyId"`
-	EncounterRole  string   `json:"encounterRole"`
-	ContainerSlots int      `json:"containerSlots"`
-	ValueTier      int      `json:"valueTier"`
-	Tags           []string `json:"tags"`
+	ID              string   `json:"id"`
+	MapID           string   `json:"mapId"`
+	Name            string   `json:"name"`
+	PositionX       int      `json:"positionX"`
+	PositionY       int      `json:"positionY"`
+	ExploreTime     int      `json:"exploreTime"`
+	Distance        string   `json:"distance"`
+	EnemyID         string   `json:"enemyId"`
+	EncounterRole   string   `json:"encounterRole"`
+	ContainerSlots  int      `json:"containerSlots"`
+	ValueTier       int      `json:"valueTier"`
+	EncounterChance int      `json:"encounterChance"` // 本节点基础遇敌概率 0-100；0 表示使用引擎默认值
+	Tags            []string `json:"tags"`
 }
 
 // MapEdge 是固定在快照中的节点移动边。
@@ -208,6 +223,8 @@ type Enemy struct {
 	Perception          int    `json:"perception"`
 	Stealth             int    `json:"stealth"`
 	Agility             int    `json:"agility"`
+	Intellect           int    `json:"intellect"`
+	Resist              int    `json:"resist"`
 	WeaponID            string `json:"weaponId"`
 	ArmorID             string `json:"armorId"`
 	AmmoID              string `json:"ammoId"`
@@ -329,6 +346,16 @@ type RecoveryPreset struct {
 	Items       []RecoveryItem `json:"items"`
 }
 
+// Headset 是耳机装备快照：当前只参与发现率加成（听觉），其余属性预留。
+type Headset struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	HearingLevel     int    `json:"hearingLevel"`
+	Price            int    `json:"price"`
+	MerchantCategory string `json:"merchantCategory"`
+	RepRequirement   int    `json:"repRequirement"`
+}
+
 // ScenarioSnapshot 是启动 Session 时固定下来的全部运行配置。
 type ScenarioSnapshot struct {
 	SchemaVersion            string                       `json:"schemaVersion"`
@@ -345,9 +372,11 @@ type ScenarioSnapshot struct {
 	Ammos                    map[string]Ammo              `json:"ammos"`
 	AmmoSupplies             map[string]AmmoSupply        `json:"ammoSupplies"`
 	Armors                   map[string]Armor             `json:"armors"`
+	Headsets                 map[string]Headset           `json:"headsets"`
 	Enemies                  map[string]Enemy             `json:"enemies"`
 	Events                   EventCatalog                 `json:"events"`
 	Styles                   []StylePolicy                `json:"styles"`
+	Tuning                   Tuning                       `json:"tuning"`
 	RecoveryPresets          map[int]RecoveryPreset       `json:"recoveryPresets"`
 }
 

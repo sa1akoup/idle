@@ -15,6 +15,7 @@ type eventRunState struct {
 	Mode            string
 	Style           string
 	Styles          []StylePolicy
+	Tuning          Tuning
 
 	EvacuationReason    string
 	EvacuationEmergency bool
@@ -49,19 +50,23 @@ type eventRunState struct {
 	CollectContainer     func(containerID, source string) error
 	CollectContainerPool func(poolID, source string, count int) error
 	HasContainerPool     func(poolID string) bool
-	DiscardLoot          func(quantity int) int
+	DiscardLoot          func(quantity int) (int, error)
+	CollectAmmoDrop      func(itemID string, quantity int, source string) error
 }
 
+// addTrace 向本局轨迹追加一条事件记录。
 func (state *eventRunState) addTrace(eventType TraceEventType, offsetSec int64, nodeID, subjectID string, payload map[string]interface{}) {
 	appendTraceEvent(state.Trace, eventType, offsetSec, nodeID, subjectID, payload)
 }
 
+// resetNodeActions 进入新节点时清空上节点的行动类状态，保证节点互不污染。
 func (state *eventRunState) resetNodeActions() {
 	state.SkipDefaultCombat = false
 	state.SkipSearch = false
 	state.EncounterRole = ""
 }
 
+// consumeNextMoveDuration 应用撤离捷径的移动缩减并一次性清零该加成。
 func (state *eventRunState) consumeNextMoveDuration(baseSec int64) int64 {
 	if baseSec <= 0 {
 		state.NextMoveReductionSec = 0
@@ -78,10 +83,12 @@ func (state *eventRunState) consumeNextMoveDuration(baseSec int64) int64 {
 	return baseSec - reduction
 }
 
+// hasItem 判断携带物品中是否还有某物品的可用数量。
 func (state *eventRunState) hasItem(itemID string) bool {
 	return itemID != "" && state.AvailableItems[itemID] > 0
 }
 
+// consumeItem 消耗一个携带物品，找不到可用实例时返回 false。
 func (state *eventRunState) consumeItem(itemID string) bool {
 	if itemID == "" || state.AvailableItems[itemID] <= 0 {
 		return false
@@ -97,7 +104,9 @@ func (state *eventRunState) consumeItem(itemID string) bool {
 	return false
 }
 
+// consumeCarriedItem 扣减单个携带实例：可堆叠品减数量，实例品按使用耐久扣减。
 func (state *eventRunState) consumeCarriedItem(index int) bool {
+	// 这里会出现降级写入（读-改-写），由单线程模拟保证确定性，不需要锁。
 	if index < 0 || index >= len(state.CarriedItems) {
 		return false
 	}
@@ -126,6 +135,7 @@ func (state *eventRunState) consumeCarriedItem(index int) bool {
 	return true
 }
 
+// beginEvacuation 置撤离模式并记录原因，已在撤离中时仅允许升级为紧急。
 func (state *eventRunState) beginEvacuation(reason string, emergency bool) bool {
 	if state.Mode == runModeEvacuating {
 		if emergency && !state.EvacuationEmergency {
@@ -150,6 +160,7 @@ func (state *eventRunState) beginEvacuation(reason string, emergency bool) bool 
 	return true
 }
 
+// evacuationReasonName 把撤离原因码翻译成人类可读文案，未知原因原样返回。
 func evacuationReasonName(reason string) string {
 	switch reason {
 	case "health":
@@ -171,6 +182,7 @@ func evacuationReasonName(reason string) string {
 	}
 }
 
+// newEventManager 由场景快照构造事件管理器：绑定与遭遇池排序保证处理顺序确定。
 func newEventManager(snapshot ScenarioSnapshot) *eventManager {
 	definitions := make(map[string]EventDefinition, len(snapshot.Events.Definitions))
 	for id, definition := range snapshot.Events.Definitions {

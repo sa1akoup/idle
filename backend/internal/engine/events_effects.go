@@ -6,22 +6,24 @@ import (
 	"math/rand"
 )
 
+// resolveEventCheck 掷骰判定事件成败：固定概率、属性差值或直接通过，结果钳在 5-95%。
 func resolveEventCheck(check EventCheck, option EventOption, state *eventRunState, rng *rand.Rand) (bool, string) {
+	t := state.Tuning.Events
 	switch check.Type {
 	case "", "none":
 		return true, ""
 	case "fixed":
-		probability := int(clamp(float64(check.Target), 5, 95))
+		probability := int(clamp(float64(check.Target), t.CheckMin, t.CheckMax))
 		roll := rng.Intn(100) + 1
 		return roll <= probability, fmt.Sprintf("固定判定 %d%%，掷 %d", probability, roll)
 	case "attribute":
 		value := getAttrValue(state.Character, check.Attribute)
-		probability := 55 + int(float64(value-check.Target)*1.1)
+		probability := int(t.CheckBase) + int(float64(value-check.Target)*t.CheckCoef)
 		if state.hasItem(check.ItemBonusRef) {
 			probability += check.ItemBonus
 		}
 		probability += stylePolicy(state.Styles, state.Style).checkBonus(option)
-		probability = int(clamp(float64(probability), 5, 95))
+		probability = int(clamp(float64(probability), t.CheckMin, t.CheckMax))
 		roll := rng.Intn(100) + 1
 		return roll <= probability, fmt.Sprintf("%s=%d，成功率 %d%%，掷 %d", check.Attribute, value, probability, roll)
 	default:
@@ -29,6 +31,7 @@ func resolveEventCheck(check EventCheck, option EventOption, state *eventRunStat
 	}
 }
 
+// applyEventEffect 按效果类型修改运行状态并返回可读摘要，未知效果类型报错。
 func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) {
 	switch effect.Type {
 	case "hp":
@@ -64,6 +67,7 @@ func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) 
 	case "ammo":
 		previousRounds := state.Player.AmmoRounds
 		state.Player.AmmoRounds = maxInt(state.Player.AmmoRounds+effect.Value, 0)
+		// 弹药负数即消耗，需要计入本局总弹药用量。
 		if effect.Value < 0 {
 			state.AmmoUsed += previousRounds - state.Player.AmmoRounds
 		}
@@ -117,7 +121,10 @@ func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) 
 		if state.DiscardLoot == nil {
 			return "", fmt.Errorf("物资丢弃器未初始化")
 		}
-		discarded := state.DiscardLoot(maxInt(effect.Value, 1))
+		discarded, err := state.DiscardLoot(maxInt(effect.Value, 1))
+		if err != nil {
+			return "", fmt.Errorf("重算丢弃物资容量: %w", err)
+		}
 		return fmt.Sprintf("丢弃 %d 件物资", discarded), nil
 	case "evac_shortcut":
 		if effect.Value <= 0 {
@@ -130,6 +137,7 @@ func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) 
 	}
 }
 
+// resolveEnemyID 按遭遇角色池加权随机选出一个敌人 ID，权重非正值按 1 参与。
 func (manager *eventManager) resolveEnemyID(role string, rng *rand.Rand) (string, error) {
 	entries := manager.encounterPool[role]
 	if len(entries) == 0 {
@@ -150,6 +158,7 @@ func (manager *eventManager) resolveEnemyID(role string, rng *rand.Rand) (string
 	return entries[len(entries)-1].EnemyID, nil
 }
 
+// getAttrValue 取角色属性值，未知属性名退回默认 50。
 func getAttrValue(character *CharacterState, attribute string) int {
 	switch attribute {
 	case "strength":

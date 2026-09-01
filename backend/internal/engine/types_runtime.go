@@ -60,10 +60,12 @@ type RunResult struct {
 	SkipResourceConsumption bool         `json:"skipResourceConsumption"`
 }
 
+// CloneCarriedItems 拷贝携带物品切片，避免跨局修改共享底层数组。
 func CloneCarriedItems(items []CarriedItem) []CarriedItem {
 	return append([]CarriedItem(nil), items...)
 }
 
+// SortItemStacks 按物品 ID 稳定排序堆叠列表，保证跨局输出顺序确定。
 func SortItemStacks(stacks []ItemStack) {
 	sort.SliceStable(stacks, func(i, j int) bool {
 		return stacks[i].ItemID < stacks[j].ItemID

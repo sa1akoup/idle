@@ -191,6 +191,7 @@ func replayTestSnapshot() ScenarioSnapshot {
 		},
 		Events: EventCatalog{Definitions: map[string]EventDefinition{}, EncounterPools: map[string][]EncounterPoolEntry{}},
 		Styles: DefaultStylePolicies(),
+		Tuning: DefaultTuning(),
 	}
 }
 

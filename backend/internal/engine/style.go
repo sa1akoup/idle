@@ -51,6 +51,7 @@ func DefaultStylePolicies() []StylePolicy {
 	}
 }
 
+// resolveStyle 规范化风格名：空白按均衡型处理，未知风格报错。
 func resolveStyle(styles []StylePolicy, raw string) (string, error) {
 	style := strings.TrimSpace(raw)
 	if style == "" {
@@ -69,6 +70,7 @@ func ResolveStyle(raw string) (string, error) {
 	return resolveStyle(DefaultStylePolicies(), raw)
 }
 
+// stylePolicy 取指定风格策略，未找到时兜底返回均衡型，避免缺失配置导致 panic。
 func stylePolicy(styles []StylePolicy, style string) StylePolicy {
 	for _, policy := range styles {
 		if policy.ID == style {
@@ -83,6 +85,7 @@ func stylePolicy(styles []StylePolicy, style string) StylePolicy {
 	return StylePolicy{ID: ActionStyleBalanced}
 }
 
+// optionScore 按风格偏好给事件方案打分：意图偏置、收益/风险等级与风格附加分。
 func (policy StylePolicy) optionScore(option EventOption) int {
 	score := option.Priority
 	if option.Intent != "" {
@@ -93,6 +96,7 @@ func (policy StylePolicy) optionScore(option EventOption) int {
 	return score
 }
 
+// checkBonus 返回风格给予该方案判定的加成值。
 func (policy StylePolicy) checkBonus(option EventOption) int {
 	return policy.CheckIntentBonus[option.Intent] + option.CheckBonus[policy.ID]
 }

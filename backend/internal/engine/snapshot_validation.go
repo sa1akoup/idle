@@ -3,7 +3,9 @@ package engine
 
 import "sort"
 
+// hasAnyContainerPool 判断是否有某容器池的非零权重分配，空池名按默认搜索池兼容。
 func hasAnyContainerPool(assignments []NodeContainerAssignment, pool string) bool {
+	// 兼容旧数据：未配置池名的分配归入默认搜索池。
 	for _, assignment := range assignments {
 		assignmentPool := assignment.Pool
 		if assignmentPool == "" {
@@ -16,6 +18,7 @@ func hasAnyContainerPool(assignments []NodeContainerAssignment, pool string) boo
 	return false
 }
 
+// normalizeSnapshot 规范化所有有序集合与缺省值，保证同一配置的 JSON 输出唯一。
 func normalizeSnapshot(snapshot ScenarioSnapshot) ScenarioSnapshot {
 	snapshot.SchemaVersion = valueOr(snapshot.SchemaVersion, SchemaVersion)
 	snapshot.Map.Tags = sortedStrings(snapshot.Map.Tags)
@@ -116,12 +119,14 @@ func normalizeSnapshot(snapshot ScenarioSnapshot) ScenarioSnapshot {
 	return snapshot
 }
 
+// sortedStrings 返回排序后的字符串副本，不修改原切片。
 func sortedStrings(values []string) []string {
 	result := append([]string(nil), values...)
 	sort.Strings(result)
 	return result
 }
 
+// valueOr 值为空时返回回退值，否则原样返回。
 func valueOr(value, fallback string) string {
 	if value == "" {
 		return fallback

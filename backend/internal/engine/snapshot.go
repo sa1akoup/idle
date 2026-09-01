@@ -23,6 +23,7 @@ func CanonicalSnapshotJSON(snapshot ScenarioSnapshot) ([]byte, error) {
 	return json.Marshal(normalized)
 }
 
+// SnapshotHash 计算规范化快照的 SHA-256 摘要，相同快照配置恒得同一 hash。
 func SnapshotHash(snapshot ScenarioSnapshot) (string, error) {
 	encoded, err := CanonicalSnapshotJSON(snapshot)
 	if err != nil {
@@ -32,12 +33,16 @@ func SnapshotHash(snapshot ScenarioSnapshot) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// ValidateSnapshot 校验整个场景快照：schema 版本、图结构、事件目录及所有交叉引用。
 func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 	if snapshot.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("不支持的场景快照 schema version %s", snapshot.SchemaVersion)
 	}
 	if snapshot.Map.ID == "" {
 		return fmt.Errorf("场景快照缺少地图")
+	}
+	if err := ValidateTuning(snapshot.Tuning); err != nil {
+		return err
 	}
 	if err := ValidateMapGraph(snapshot.Map, snapshot.Nodes, snapshot.Edges, snapshot.ExtractionPoints); err != nil {
 		return err
@@ -52,6 +57,7 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 		}
 		styleIDs[style.ID] = true
 	}
+	// 四种基础行动风格是路线规划与事件决策的硬依赖，缺一不可。
 	for _, requiredStyle := range []string{ActionStyleBalanced, ActionStyleStealth, ActionStyleAggressive, ActionStyleGreedy} {
 		if !styleIDs[requiredStyle] {
 			return fmt.Errorf("场景快照缺少行动风格 %s", requiredStyle)

@@ -23,6 +23,7 @@ const (
 	eventPhaseAtExtraction           = "at_extraction"
 )
 
+// supportedEventPhase 判断事件阶段名是否属于已注册阶段集合。
 func supportedEventPhase(phase string) bool {
 	switch phase {
 	case eventPhaseEnterNode, eventPhasePreEncounter, eventPhasePostEncounter, eventPhasePreSearch,
@@ -49,6 +50,7 @@ type eventCandidate struct {
 	option  EventOption
 }
 
+// Trigger 触发某阶段事件：过滤绑定、随机抽选并逐条执行，所有随机仅来自传入 RNG。
 func (manager *eventManager) Trigger(state *eventRunState, phase string, rng *rand.Rand) error {
 	if !supportedEventPhase(phase) {
 		return fmt.Errorf("未知事件阶段 %s", phase)
@@ -87,6 +89,7 @@ func (manager *eventManager) Trigger(state *eventRunState, phase string, rng *ra
 			continue
 		}
 		candidate := eventCandidate{binding: binding, def: definition, roll: roll, option: option}
+		// 通用事件与节点级事件分池：各阶段至多各触一个，避免高相关事件被全局事件挤掉。
 		if scopeSpecificity(binding.ScopeType) >= scopeSpecificity("node_tag") {
 			specific = append(specific, candidate)
 		} else {
@@ -124,6 +127,7 @@ func (manager *eventManager) Trigger(state *eventRunState, phase string, rng *ra
 	return nil
 }
 
+// matchScope 判断事件绑定作用域是否匹配当前地图/节点/撤离点。
 func (manager *eventManager) matchScope(binding EventBinding, state *eventRunState) bool {
 	switch binding.ScopeType {
 	case "global":
@@ -145,6 +149,7 @@ func (manager *eventManager) matchScope(binding EventBinding, state *eventRunSta
 	}
 }
 
+// scopeSpecificity 返回作用域具体程度数值，用于同事件多绑定时优先更具体的绑定。
 func scopeSpecificity(scopeType string) int {
 	switch scopeType {
 	case "extraction":
@@ -166,6 +171,7 @@ func scopeSpecificity(scopeType string) int {
 	}
 }
 
+// eventRepeatAllowed 按重复策略、单局上限与冷却节点数判断事件是否可再次触发。
 func eventRepeatAllowed(definition EventDefinition, binding EventBinding, state *eventRunState) bool {
 	count := state.EventCounts[definition.ID]
 	if binding.MaxPerRun > 0 && count >= binding.MaxPerRun {
@@ -185,6 +191,7 @@ func eventRepeatAllowed(definition EventDefinition, binding EventBinding, state 
 	return !triggered || binding.CooldownNodes <= 0 || state.VisitSequence-lastVisit > binding.CooldownNodes
 }
 
+// selectEventOption 过滤模式/风格/条件均匹配的事件选项，并按风格偏好取最优方案。
 func selectEventOption(definition EventDefinition, state *eventRunState) (EventOption, bool) {
 	options := append([]EventOption(nil), definition.Options...)
 	sort.SliceStable(options, func(i, j int) bool { return options[i].ID < options[j].ID })
@@ -215,6 +222,7 @@ func selectEventOption(definition EventDefinition, state *eventRunState) (EventO
 	return eligible[0], true
 }
 
+// eventOptionContainerPoolsAvailable 校验选项引用的容器奖励池在当前节点真实存在。
 func eventOptionContainerPoolsAvailable(option EventOption, state *eventRunState) bool {
 	for _, effects := range [][]EventEffect{option.SuccessEffects, option.FailureEffects} {
 		for _, effect := range effects {
@@ -226,6 +234,7 @@ func eventOptionContainerPoolsAvailable(option EventOption, state *eventRunState
 	return true
 }
 
+// eventConditionMatches 把当前状态换算成条件值并与操作符比较，未知条件类型视为不匹配。
 func eventConditionMatches(condition EventCondition, state *eventRunState) bool {
 	var actual float64
 	switch condition.Type {
@@ -268,6 +277,7 @@ func eventConditionMatches(condition EventCondition, state *eventRunState) bool 
 	}
 }
 
+// carryRatio 返回负重占用比例：格子和重量两侧取更满的一侧。
 func (state *eventRunState) carryRatio() float64 {
 	ratio := 0.0
 	if state.CarrySlots > 0 {
@@ -279,6 +289,7 @@ func (state *eventRunState) carryRatio() float64 {
 	return ratio
 }
 
+// chooseEventCandidate 按绑定权重随机挑出一个候选事件，权重非正值按 1 参与。
 func chooseEventCandidate(candidates []eventCandidate, rng *rand.Rand) (eventCandidate, bool) {
 	if len(candidates) == 0 {
 		return eventCandidate{}, false
@@ -311,6 +322,7 @@ func chooseEventCandidate(candidates []eventCandidate, rng *rand.Rand) (eventCan
 	return candidates[len(candidates)-1], true
 }
 
+// resolveEvent 执行选定事件：掷判定骰、写文案、应用成败效果并记录轨迹。
 func (manager *eventManager) resolveEvent(candidate eventCandidate, state *eventRunState, phase string, rng *rand.Rand) error {
 	state.EventCounts[candidate.def.ID]++
 	state.LastEventVisit[candidate.def.ID] = state.VisitSequence
