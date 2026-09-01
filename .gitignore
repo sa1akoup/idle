@@ -5,6 +5,7 @@ backend/*.db-wal
 backend/*.db.pre-upgrade.bak
 backend/.env
 .gocache/
+.pnpm-store/
 
 # 前端依赖与构建产物
 frontend/node_modules/

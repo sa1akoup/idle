@@ -81,12 +81,12 @@ go run . seed
 
 ~~~powershell
 Set-Location D:\idle\frontend
-npm ci
+pnpm install
 $env:VITE_API_TARGET = "http://localhost:8081"
-npm run dev
+pnpm run dev
 ~~~
 
-当前仓库固定使用 `package-lock.json` 和 `npm@11.9.0`。全新检出或需要按锁定版本重建依赖时使用 **npm ci**；只有主动更新依赖时才使用 **npm install**，并提交更新后的 lockfile。
+当前仓库固定使用 `pnpm-lock.yaml` 和 `pnpm@11.8.0`。全新检出或需要按锁定版本重建依赖时使用 **pnpm install --frozen-lockfile**；只有主动更新依赖时才使用 **pnpm install**，并提交更新后的 lockfile。
 
 启动后打开：
 
@@ -133,10 +133,10 @@ go test -race ./...
 在 **D:\idle\frontend** 执行：
 
 ~~~powershell
-npm run build
+pnpm run build
 ~~~
 
-当前 **package.json** 没有独立的 frontend test script。**npm run** 可以查看项目已定义的脚本。
+当前 **package.json** 没有独立的 frontend test script。**pnpm run** 可以查看项目已定义的脚本。
 
 ## 7. 常用调试方式
 
@@ -190,7 +190,7 @@ go run .
 
 ~~~powershell
 $env:VITE_API_TARGET = "http://localhost:8082"
-npm run dev
+pnpm run dev
 ~~~
 
 ### 修改 Frontend 端口
@@ -198,7 +198,7 @@ npm run dev
 Vite 默认使用 **5173**。临时改为 **5174**：
 
 ~~~powershell
-npm run dev -- --port 5174
+pnpm run dev -- --port 5174
 ~~~
 
 如果 Backend 的 **ALLOWED_ORIGINS** 被显式设置，需要同时加入新的 Frontend 地址：

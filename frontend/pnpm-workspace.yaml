@@ -1,0 +1,9 @@
+# pnpm 11 项目级配置：
+# 1. allowBuilds —— pnpm 11 默认拦截依赖构建脚本；Vite 依赖 esbuild 的 postinstall，
+#    显式放行以保证二进制正确安装（记录于锁文件 settings，CI 可复现）。
+# 2. minimumReleaseAge —— pnpm 11 默认启用供应链"最小发布年龄"策略，会拦截锁文件中
+#    刚发布（< 1 天）的版本；本项目处于活跃迭代，锁文件常含当日/昨日发布版本，
+#    显式关闭该检查（0 分钟）。如需严格供应链校验，删除本行并改用更老的依赖版本。
+allowBuilds:
+  esbuild: true
+minimumReleaseAge: 0

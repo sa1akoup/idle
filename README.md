@@ -83,9 +83,9 @@ go run . seed
 ### 前端 :5173
 ```bash
 cd D:/idle/frontend
-npm ci
-npm run dev   # http://localhost:5173 代理 /api -> :8081
-# 或 npm run build + preview
+pnpm install
+pnpm run dev   # http://localhost:5173 代理 /api -> :8081
+# 或 pnpm run build + preview
 ```
 
 ## 核心接口

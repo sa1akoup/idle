@@ -155,8 +155,8 @@ CGO_ENABLED=1 go build -o /opt/idle/bin/idle .
 
 ~~~bash
 cd /opt/idle/frontend
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm run build
 ~~~
 
 完成后退出 **idle** shell：
@@ -167,7 +167,7 @@ exit
 
 项目同时引入 SQLite driver，Linux 构建安装 **gcc** 并使用 **CGO_ENABLED=1**，避免编译阶段缺少 CGO 环境。
 
-当前仓库固定使用 `package-lock.json` 和 `npm@11.9.0`，部署时使用 **npm ci** 保证依赖可复现。只有主动更新依赖时才使用 **npm install**，并提交更新后的 lockfile。
+当前仓库固定使用 `pnpm-lock.yaml` 和 `pnpm@11.8.0`，部署时使用 **pnpm install --frozen-lockfile** 保证依赖可复现。服务器需具备 pnpm（`npm i -g pnpm` 或 `corepack enable`）。只有主动更新依赖时才使用 **pnpm install**，并提交更新后的 lockfile。
 
 ## 8. 备份并执行数据库 migration
 
@@ -449,7 +449,7 @@ curl --fail http://127.0.0.1:8081/api/health
 
 ### 页面刷新后出现 404
 
-确认 Frontend 已通过 **npm run build** 生成 **/opt/idle/frontend/dist/index.html**，并保留 **location /** 中的 **try_files $uri $uri/ /index.html;**。
+确认 Frontend 已通过 **pnpm run build** 生成 **/opt/idle/frontend/dist/index.html**，并保留 **location /** 中的 **try_files $uri $uri/ /index.html;**。
 
 ### CORS 或登录异常
 
