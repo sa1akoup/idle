@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// characterToEngineState 将数据库角色字段映射为引擎所需的无状态 DTO。
 func characterToEngineState(character models.Character) engine.CharacterState {
 	return engine.CharacterState{
 		Name: character.Name, Strength: character.Strength, Agility: character.Agility, Intellect: character.Intellect,
@@ -24,6 +25,7 @@ func characterToEngineState(character models.Character) engine.CharacterState {
 	}
 }
 
+// loadoutToEngineState 提取装备配置中的当前装备位字段构成加载 DTO。
 func loadoutToEngineState(loadout *models.PlayerLoadout) engine.LoadoutState {
 	return engine.LoadoutState{
 		WeaponID: loadout.WeaponID, ArmorID: loadout.ArmorID, ChestRigID: loadout.ChestRigID, BackpackID: loadout.BackpackID,
@@ -31,6 +33,7 @@ func loadoutToEngineState(loadout *models.PlayerLoadout) engine.LoadoutState {
 	}
 }
 
+// itemIDsToStacks 把物品 ID 列表转为每件数量为 1 的堆栈，并跳过空 ID。
 func itemIDsToStacks(ids []string) []engine.ItemStack {
 	stacks := make([]engine.ItemStack, 0, len(ids))
 	for _, itemID := range ids {
@@ -41,10 +44,14 @@ func itemIDsToStacks(ids []string) []engine.ItemStack {
 	return stacks
 }
 
+// buildEngineState 汇总角色、装备、护甲耐久、携行物品与弹药，组装出完整引擎状态。
 func buildEngineState(db *gorm.DB, userID uint, character models.Character, loadout *models.PlayerLoadout, ammo engine.CarriedAmmo) (engine.EngineState, error) {
-	carry, err := GetCarryCapacityForUser(db, userID)
+	carry, err := carryCapacityCore(db, userID, loadout, ammo.ID, ammo.Rounds)
 	if err != nil {
 		return engine.EngineState{}, fmt.Errorf("读取探索携行状态: %w", err)
+	}
+	if carry.UsedSlots > carry.TotalSlots || carry.UsedWeight > carry.TotalWeight+1e-9 {
+		return engine.EngineState{}, fmt.Errorf("当前配装超过携行容量：%d/%d 格，%.1f/%.1fkg", carry.UsedSlots, carry.TotalSlots, carry.UsedWeight, carry.TotalWeight)
 	}
 	armorInstance, err := findCurrentArmorInstance(db, userID, loadout.ArmorID)
 	if err != nil {
@@ -64,6 +71,7 @@ func buildEngineState(db *gorm.DB, userID uint, character models.Character, load
 	}, nil
 }
 
+// findCurrentArmorInstance 取该用户当前护甲的第一个正常实例，用于读取出征耐久。
 func findCurrentArmorInstance(db *gorm.DB, userID uint, armorID string) (*models.ArmorInstance, error) {
 	var instance models.ArmorInstance
 	if err := db.Where("user_id = ? AND armor_id = ? AND status = ?", userID, armorID, "normal").Order("id asc").First(&instance).Error; err != nil {
@@ -75,6 +83,7 @@ func findCurrentArmorInstance(db *gorm.DB, userID uint, armorID string) (*models
 	return &instance, nil
 }
 
+// attachRecoveryPresets 把三套补购预设（装备、弹药、补给及其商人价格）挂到场景快照上。
 func attachRecoveryPresets(db *gorm.DB, userID uint, loadout *models.PlayerLoadout, snapshot *engine.ScenarioSnapshot) error {
 	if loadout == nil {
 		var err error
@@ -127,6 +136,7 @@ func attachRecoveryPresets(db *gorm.DB, userID uint, loadout *models.PlayerLoado
 				available = false
 			}
 			unitPrice := item.Price
+			// 商人未解锁时商品仍计入预设但标记不可购买，供界面显示缺省回退价
 			if item.PaidPrice > 0 {
 				unitPrice = item.PaidPrice
 			}
@@ -137,6 +147,7 @@ func attachRecoveryPresets(db *gorm.DB, userID uint, loadout *models.PlayerLoado
 	return nil
 }
 
+// finalizeScenarioSnapshot 对场景快照做校验后输出规范 JSON 与 hash，供持久化与校验使用。
 func finalizeScenarioSnapshot(snapshot engine.ScenarioSnapshot) (string, string, error) {
 	if err := engine.ValidateSnapshot(snapshot); err != nil {
 		return "", "", fmt.Errorf("校验场景快照: %w", err)

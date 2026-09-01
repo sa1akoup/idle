@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// settleEngineRun 在同一事务内完成单局结算：幂等写入局记录、按结果入库/丢装、推进或终结合话，并预写下一局计划与事件。
 func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.EngineState, snapshot engine.ScenarioSnapshot, result engine.RunResult, runIndex int, runEndAt, deadline time.Time) error {
 	inputStateJSON, err := json.Marshal(*state)
 	if err != nil {
@@ -29,6 +30,7 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		if err := settleDueHideoutJobsTx(tx, s.userID, time.Now()); err != nil {
 			return err
 		}
+		// 幂等抗重入：该局已结算过则直接复用它持久化的 NextState 作为后续输入，防 worker 重启后重复结算同一局。
 		var existing models.SessionRun
 		if err := tx.Where("user_id = ? AND session_id = ? AND run_index = ?", s.userID, sess.ID, runIndex).First(&existing).Error; err == nil {
 			if existing.NextState == "" {
@@ -44,10 +46,6 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 			result.Result = "success"
 		}
 		stateAfter.Consumables = itemStacksFromCarriedItems(stateAfter.CarriedItems)
-		storedLoot, overflowLoot, err = s.storeSuccessfulLootTx(tx, snapshot, result)
-		if err != nil {
-			return err
-		}
 		if err := settleSessionArmorTx(tx, s.userID, stateAfter, result.Result == "incapacitated"); err != nil {
 			return err
 		}
@@ -78,6 +76,7 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 			candidate := stateAfter
 			ammoRefill, err = ensureSessionAmmoBeforeNextRun(tx, s.userID, snapshot, &candidate)
 			if err != nil {
+				// 弹药补购不可用时按正常结束处理并记录原因，避免把可预期情况打成内部失败。
 				if !errors.Is(err, ErrPurchaseUnavailable) {
 					return err
 				}
@@ -85,6 +84,9 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 				terminalReason = "ammo_unavailable"
 			} else {
 				stateAfter = candidate
+				if err := refreshEngineCarryUsage(&stateAfter, snapshot); err != nil {
+					return err
+				}
 				nextRunStartAt := runEndAt
 				var nextRunAt time.Time
 				nextPlan, nextRunAt, err = planEngineRun(sess.EngineVersion, snapshot, sess.Seed, runIndex+1, sess.Style, stateAfter, nextRunStartAt)
@@ -119,10 +121,19 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 				}
 				stateAfter.CarriedItems = nil
 				stateAfter.Consumables = nil
+				stateAfter.Carry.UsedSlots = 0
+				stateAfter.Carry.UsedWeight = 0
 			}
 			if err := createRecoveryPlanTx(tx, s.userID, sess.ID, stateAfter.Character, sess.RecoveryPolicyJSON); err != nil {
 				return err
 			}
+		}
+		storedLoot, overflowLoot, err = s.storeSuccessfulLootTx(tx, snapshot, result)
+		if err != nil {
+			return err
+		}
+		if err := ensureInventoryWithinCapacityTx(tx, s.userID); err != nil {
+			return err
 		}
 
 		encodedState, err := json.Marshal(stateAfter)
@@ -220,6 +231,7 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		if s.leaseOwner != "" {
 			query = query.Where("lease_owner = ? AND lease_until > ?", s.leaseOwner, now)
 		}
+		// 更新必须带租约条件且恰好命中一行：未命中说明租约已被抢占，本 worker 放弃，由新 holder 继续推进。
 		updateResult := query.Updates(updates)
 		if updateResult.Error != nil {
 			return fmt.Errorf("保存行动调度进度: %w", updateResult.Error)
@@ -271,11 +283,12 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 	return nil
 }
 
+// storeSuccessfulLootTx 把成功搬出的战利品按剩余容量入库并返回入库/溢出两部分；失能局不产生战利品。
 func (s *SessionService) storeSuccessfulLootTx(tx *gorm.DB, snapshot engine.ScenarioSnapshot, result engine.RunResult) ([]engine.LootDrop, []engine.LootDrop, error) {
 	if result.Result == "incapacitated" || len(result.ExtractedLoot) == 0 {
 		return nil, nil, nil
 	}
-	stored, overflow, err := fitEngineLootToStorage(tx, s.userID, result.ExtractedLoot)
+	stored, overflow, err := fitEngineLootToStorage(tx, s.userID, snapshot, result.ExtractedLoot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -291,6 +304,7 @@ func (s *SessionService) storeSuccessfulLootTx(tx *gorm.DB, snapshot engine.Scen
 	return stored, overflow, nil
 }
 
+// settleSessionArmorTx 结算护甲耐久并同步状态；失能局直接删除护甲实例（丢装），否则按剩余耐久标记 normal/broken。
 func settleSessionArmorTx(tx *gorm.DB, userID uint, state engine.EngineState, incapacitated bool) error {
 	if state.Loadout.ArmorID == "" && state.Loadout.ArmorInstanceID == 0 {
 		return nil
@@ -321,6 +335,7 @@ func settleSessionArmorTx(tx *gorm.DB, userID uint, state engine.EngineState, in
 	}).Error
 }
 
+// discardSessionLoadoutTx 失能结算时从背包移除整套配装与携行实例，并清空装备配置。
 func discardSessionLoadoutTx(tx *gorm.DB, userID uint, loadout engine.LoadoutState, carriedItems []engine.CarriedItem) error {
 	ids := []string{loadout.WeaponID, loadout.ArmorID, loadout.ChestRigID, loadout.BackpackID, loadout.HelmetID, loadout.HeadsetID}
 	for _, itemID := range ids {
@@ -342,10 +357,12 @@ func discardSessionLoadoutTx(tx *gorm.DB, userID uint, loadout engine.LoadoutSta
 	}).Error
 }
 
+// ensureSessionAmmoBeforeNextRun 为下一局预补弹药；补购不可用时返回 ErrPurchaseUnavailable，由调用方决定终局。
 func ensureSessionAmmoBeforeNextRun(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) (*ammoRefillResult, error) {
 	return ensureSessionAmmoTx(tx, userID, snapshot, state)
 }
 
+// stringsFromStacks 将补给堆叠按数量展开为逗号分隔的物品 ID 字符串，供会话行持久化。
 func stringsFromStacks(stacks []engine.ItemStack) string {
 	ids := make([]string, 0)
 	for _, stack := range stacks {

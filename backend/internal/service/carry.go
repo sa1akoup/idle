@@ -6,6 +6,7 @@ package service
 import (
 	"fmt"
 
+	"idle/internal/engine"
 	"idle/internal/models"
 	"idle/internal/repository/catalog"
 
@@ -24,15 +25,21 @@ type CarryCapacity struct {
 	UsedWeight  float64 `json:"usedWeight"`  // 当前携行已占用负重 kg
 }
 
-// GetCarryCapacityForUser 计算指定用户当前携行装备的容量与占用。
+// GetCarryCapacityForUser 计算指定用户当前携行装备的容量与占用；展示侧按第 1 套预设弹药计入。
 func GetCarryCapacityForUser(db *gorm.DB, userID uint) (*CarryCapacity, error) {
-	var c models.Character
-	if err := db.Where("user_id = ?", userID).First(&c).Error; err != nil {
-		return nil, fmt.Errorf("读取角色: %w", err)
-	}
 	loadout, err := GetPlayerLoadoutForUser(db, userID)
 	if err != nil {
 		return nil, err
+	}
+	ammoID, ammoRounds := PresetAmmoOf(loadout, 1)
+	return carryCapacityCore(db, userID, loadout, ammoID, ammoRounds)
+}
+
+// carryCapacityCore 按显式弹药参数计算容量；开局状态传入实际携带弹药，角色页传入展示预设弹药。
+func carryCapacityCore(db *gorm.DB, userID uint, loadout *models.PlayerLoadout, ammoID string, ammoRounds int) (*CarryCapacity, error) {
+	var c models.Character
+	if err := db.Where("user_id = ?", userID).First(&c).Error; err != nil {
+		return nil, fmt.Errorf("读取角色: %w", err)
 	}
 
 	baseWeight := models.BaseCarryWeight(c.Strength)
@@ -59,11 +66,24 @@ func GetCarryCapacityForUser(db *gorm.DB, userID uint) (*CarryCapacity, error) {
 		}
 		usedSlots += item.Slots
 		usedWeight += float64(item.Weight)
+		// 只有胸挂与背包提供额外格数与负重加成。
 		switch item.Kind {
 		case "chestrig", "backpack":
 			bonusSlots += item.AddSlots
 			bonusWeight += float64(item.AddWeight)
 		}
+	}
+	if ammoID != "" && ammoRounds > 0 {
+		ammo, err := catalogRepo.FindByID(ammoID)
+		if err != nil {
+			return nil, fmt.Errorf("读取携行弹药目录: %w", err)
+		}
+		if ammo.Kind != "ammo" || ammo.RoundsPerSlot <= 0 {
+			return nil, fmt.Errorf("弹药 %s 的每格容量无效", ammoID)
+		}
+		groups := (ammoRounds + ammo.RoundsPerSlot - 1) / ammo.RoundsPerSlot
+		usedSlots += groups
+		usedWeight += float64(groups) * engine.DefaultTuning().AmmoDrop.WeightPerGroup
 	}
 
 	return &CarryCapacity{
