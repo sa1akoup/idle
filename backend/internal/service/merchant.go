@@ -44,6 +44,7 @@ func buyMultiplier(rep int) float64 { return math.Max(0.5, 1.0-float64(rep)*0.00
 // sellMultiplier 根据好感度提高出售价格，最高为基准价的 45%。
 func sellMultiplier(rep int) float64 { return math.Min(0.45, 0.3+float64(rep)*0.003) }
 
+// roundPrice 按好感度乘数对基准价四舍五入得到实际买卖价格。
 func roundPrice(base int, multiplier float64) int {
 	return int(math.Round(float64(base) * multiplier))
 }
@@ -126,6 +127,7 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 			if item.AmmoPerRound > 0 {
 				base.Detail = fmt.Sprintf("伤害 %d / 口径 %s", item.Damage, item.CaliberID)
 			}
+		// N5 及以上的高等级弹药不向玩家出售。
 		case "ammo":
 			if item.AmmoLevel > 4 {
 				base.Buyable = false
@@ -162,6 +164,7 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 	return items, nil
 }
 
+// usableItemDetail 基于物品描述与使用效果拼接详情文案（回复量、维修值、燃料时长等）。
 func usableItemDetail(desc string, use models.ItemUseDef) string {
 	detail := desc
 	if use.HPRecovery > 0 {
@@ -182,6 +185,7 @@ func usableItemDetail(desc string, use models.ItemUseDef) string {
 	return detail
 }
 
+// applyMerchantPriceForUser 校验商人开放状态、物品分类归属、好感度门槛与弹药等级上限，并按好感度折算实付价格。
 func applyMerchantPriceForUser(tx *gorm.DB, userID uint, item *catalogItem) error {
 	if item.Kind == "ammo" && item.AmmoLevel > 4 {
 		return fmt.Errorf("%w：武器商人最高只出售 N4 弹药", ErrMerchantUnavailable)
@@ -305,6 +309,7 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 		if err := tx.Where("item_id = ?", itemID).First(&useDef).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("读取出售物品效果: %w", err)
 		}
+		// 分支：实例化物品按耐久升序逐个扣件删除实例；聚合物品走统一库存扣减。
 		if useDef.InstanceRequired {
 			var instances []models.ItemInstance
 			if err := tx.Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ? AND current_durability > 0", userID, itemID, "inventory", "normal").
@@ -363,6 +368,7 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 			return fmt.Errorf("%s 可出售数量不足（当前 %d）", itemID, sum.Qty)
 		}
 
+		// 出售价 = 基准价 × 好感度出售乘数（封顶 45%），四舍五入后乘以件数。
 		price := roundPrice(sample.Price, sellMultiplier(merchant.Reputation))
 		total = price * quantity
 		if err := addCash(tx, userID, total); err != nil {

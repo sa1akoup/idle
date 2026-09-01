@@ -64,6 +64,7 @@ func ListUsableItems(db *gorm.DB) ([]UsableItemCatalogItem, error) {
 	}
 	for _, item := range lootItems {
 		use, ok := useByID[item.ID]
+		// 战利品保留条件更宽：不可使用但具备修理或燃料效果的（维修包、燃料桶）也纳入目录。
 		if !ok || (!use.UsableInSession && !use.UsableInHideout && use.RepairValue <= 0 && use.FuelSeconds <= 0) {
 			continue
 		}
@@ -83,6 +84,7 @@ func ListUsableItems(db *gorm.DB) ([]UsableItemCatalogItem, error) {
 	return result, nil
 }
 
+// usableItemFromConsumable 把消耗品目录项与使用效果合并为可用物品目录项（种类固定为 consumable）。
 func usableItemFromConsumable(item models.ConsumableDef, use models.ItemUseDef) UsableItemCatalogItem {
 	return UsableItemCatalogItem{
 		ID: item.ID, Name: item.Name, Kind: "consumable", Desc: item.Desc, Price: item.Price, Weight: item.Weight, Slots: item.Slots,
@@ -93,6 +95,7 @@ func usableItemFromConsumable(item models.ConsumableDef, use models.ItemUseDef) 
 	}
 }
 
+// usableItemFromLoot 把战利品目录项与使用效果合并为可用物品目录项（种类固定为 loot）。
 func usableItemFromLoot(item models.LootItemDef, use models.ItemUseDef) UsableItemCatalogItem {
 	return UsableItemCatalogItem{
 		ID: item.ID, Name: item.Name, Kind: "loot", Category: item.Category, Desc: item.Desc, Price: item.Price, Weight: item.Weight, Slots: item.Slots,

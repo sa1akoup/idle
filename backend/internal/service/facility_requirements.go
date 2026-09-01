@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// facilityRequirementViewsTx 批量读取某设施下一等级的全部升级条件并换算为视图（材料、前置设施、商人好感、技能），返回是否全部满足。
 func facilityRequirementViewsTx(db *gorm.DB, userID uint, character models.Character, facilityID string, level int) ([]HideoutRequirementView, bool, error) {
 	var levelDef models.FacilityLevelDef
 	if err := db.Where("facility_id = ? AND level = ?", facilityID, level).First(&levelDef).Error; err != nil {
@@ -45,6 +46,7 @@ func facilityRequirementViewsTx(db *gorm.DB, userID uint, character models.Chara
 		}
 		current := float64(owned)
 		required := float64(quantity)
+		// 同一材料多次出现时合并到同一行视图，避免升级面板重复展示。
 		if index, exists := itemViewIndexes[requirement.ReferenceID]; exists {
 			views[index].Quantity += quantity
 			views[index].RequiredValue = float64(views[index].Quantity)
@@ -102,7 +104,9 @@ func facilityRequirementViewsTx(db *gorm.DB, userID uint, character models.Chara
 	return views, allSatisfied, nil
 }
 
+// currentRequirementValueTx 按条件类型读取当前值：物品库存量、前置设施等级、商人好感度或角色技能属性。
 func currentRequirementValueTx(db *gorm.DB, userID uint, character models.Character, requirement models.FacilityRequirement) (float64, error) {
+	// 按条件类型换算当前值：物品/设施/商人/技能四种情况。
 	switch requirement.RequirementType {
 	case "item":
 		owned, err := ownedItemQuantityTx(db, userID, requirement.ReferenceID)
@@ -135,6 +139,7 @@ func currentRequirementValueTx(db *gorm.DB, userID uint, character models.Charac
 	}
 }
 
+// facilityRequirementLabel 为条件引用生成可读名称（物品/设施/商人取名称，技能拼后缀）；查不到时退回原始 ID。
 func facilityRequirementLabel(db *gorm.DB, catalogItems map[string]catalog.Item, requirement models.FacilityRequirement) string {
 	switch requirement.RequirementType {
 	case "item":
@@ -161,6 +166,7 @@ func facilityRequirementLabel(db *gorm.DB, catalogItems map[string]catalog.Item,
 	}
 }
 
+// ownedItemQuantityTx 统计材料持有量：聚合库存数量与仓库中完好实例数量之和（实例口径与聚合口径换算）。
 func ownedItemQuantityTx(db *gorm.DB, userID uint, itemID string) (int, error) {
 	var inventoryQuantity int
 	if err := db.Model(&models.Inventory{}).
@@ -177,6 +183,7 @@ func ownedItemQuantityTx(db *gorm.DB, userID uint, itemID string) (int, error) {
 	return inventoryQuantity + int(instanceQuantity), nil
 }
 
+// consumeRequirementItemTx 扣除升级材料：优先扣聚合库存，不足部分再按耐久升序逐个消耗仓库实例。
 func consumeRequirementItemTx(tx *gorm.DB, userID uint, itemID string, quantity int) error {
 	if quantity <= 0 {
 		return nil
@@ -187,6 +194,7 @@ func consumeRequirementItemTx(tx *gorm.DB, userID uint, itemID string, quantity 
 		Select("COALESCE(SUM(quantity), 0)").Scan(&inventoryQuantity).Error; err != nil {
 		return fmt.Errorf("统计材料 %s: %w", itemID, err)
 	}
+	// 先扣聚合库存，扣完后剩余数量再走实例消耗。
 	fromInventory := quantity
 	if fromInventory > inventoryQuantity {
 		fromInventory = inventoryQuantity

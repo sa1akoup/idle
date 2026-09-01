@@ -74,13 +74,15 @@ func seedPlayer(db *gorm.DB) error {
 }
 
 func seedPlayerForUser(db *gorm.DB, userID uint) error {
+	// 初始角色按白板配置：全部属性与武器熟练度为 0（成长交由后续系统），
+	// 生命上限由力量动态计算，白板力量为 0 时上限为 90；能量/饮水保持满值。
 	player := models.Character{
 		UserID: userID, Name: "幸存者", Desc: "在封锁区中寻找生路的行动员",
-		Strength: 55, Agility: 55, Intellect: 55, Charisma: 50,
-		Stealth: 45, Perception: 50, Negotiation: 40, Luck: 45,
-		Survival: 55, Resist: 50, Engineering: 45, Medical: 40,
-		MeleeProf: 35, PistolProf: 45, SMGProf: 35, ShotgunProf: 30, RifleProf: 40, SniperProf: 25,
-		HP: 100, Energy: 100, Hydration: 100, NeedsUpdatedAt: time.Now(),
+		Strength: 0, Agility: 0, Intellect: 0, Charisma: 0,
+		Stealth: 0, Perception: 0, Negotiation: 0, Luck: 0,
+		Survival: 0, Resist: 0, Engineering: 0, Medical: 0,
+		MeleeProf: 0, PistolProf: 0, SMGProf: 0, ShotgunProf: 0, RifleProf: 0, SniperProf: 0,
+		HP: 90, Energy: 100, Hydration: 100, NeedsUpdatedAt: time.Now(),
 	}
 	return db.Where("user_id = ?", userID).FirstOrCreate(&player).Error
 }

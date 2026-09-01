@@ -40,6 +40,11 @@ func GenerateEnemy(rng *rand.Rand, template models.EnemyTemplateDef, ctx Generat
 	evasion := iFlux(rng, template.EvasionBase, template.EvasionFlux, 0, 60, scale)
 	mobility := iFlux(rng, template.MobilityBase, template.MobilityFlux, -20, 30, scale)
 	suppress := iFlux(rng, template.SuppressBase, template.SuppressFlux, 0, 100, scale)
+	// 智力/抗性：模板未配置上下限时回落默认 20-100，保证旧模板行仍生成合法值。
+	intellect := iFlux(rng, template.IntellectBase, template.IntellectFlux,
+		attrFloor(template.IntellectFloor, 20), attrCap(template.IntellectCap, 100), scale)
+	resist := iFlux(rng, template.ResistBase, template.ResistFlux,
+		attrFloor(template.ResistFloor, 20), attrCap(template.ResistCap, 100), scale)
 
 	// 2. 装备：Boss 固定，其余走池
 	var weaponID, armorID string
@@ -105,8 +110,25 @@ func GenerateEnemy(rng *rand.Rand, template models.EnemyTemplateDef, ctx Generat
 		Evasion:             evasion,
 		Mobility:            mobility,
 		Suppress:            suppress,
+		Intellect:           intellect,
+		Resist:              resist,
 		BackpackContainerID: backpackID,
 	}, nil
+}
+
+// attrFloor / attrCap 属性区间缺省回落：未配置（<=0）时使用默认下限/上限。
+func attrFloor(value, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func attrCap(value, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 // difficultyScale 温和缩放：HP/压力 ±20% 随 Heat 每 10 点 +2%，节点价值档少量上浮。
@@ -116,12 +138,14 @@ func difficultyScale(ctx GenerateContext) float64 {
 	return 1 + heatBonus + valueBonus
 }
 
+// iFlux 在基础值上下按 flux 随机浮动，再乘难度缩放并钳制到 [floor, cap]。
 func iFlux(rng *rand.Rand, base, flux, floor, cap int, scale float64) int {
 	v := float64(base) + randRange(rng, -flux, flux)
 	scaled := int(math.Round(v * scale))
 	return clampInt(scaled, floor, cap)
 }
 
+// randRange 返回 [min, max) 区间的随机浮点数，全部走注入的 rng 以保证确定性。
 func randRange(rng *rand.Rand, min, max int) float64 {
 	if max <= min {
 		return float64(min)
@@ -129,6 +153,7 @@ func randRange(rng *rand.Rand, min, max int) float64 {
 	return float64(min) + rng.Float64()*float64(max-min)
 }
 
+// pickWeighted 按权重抽取一个引用；池为空时返回 false，调用方按缺省回退处理。
 func pickWeighted(rng *rand.Rand, pool []models.WeightedRef) (string, bool) {
 	total := 0
 	for _, p := range pool {
@@ -148,6 +173,7 @@ func pickWeighted(rng *rand.Rand, pool []models.WeightedRef) (string, bool) {
 	return "", false
 }
 
+// pickMatchingAmmo 在该武器口径与模板等级区间内随机选一种弹药，候选为空则报错。
 func pickMatchingAmmo(rng *rand.Rand, caliberID string, levelMin, levelMax int, ammos map[string]engine.Ammo) (engine.Ammo, error) {
 	var candidates []engine.Ammo
 	for _, ammo := range ammos {
@@ -166,6 +192,7 @@ func pickMatchingAmmo(rng *rand.Rand, caliberID string, levelMin, levelMax int, 
 	return candidates[rng.Intn(len(candidates))], nil
 }
 
+// randomSuffix 生成 4 位随机后缀，拼在模板 ID 后形成每个敌人实例的唯一 ID。
 func randomSuffix(rng *rand.Rand) string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 4)
@@ -175,4 +202,5 @@ func randomSuffix(rng *rand.Rand) string {
 	return string(b)
 }
 
+// clampInt 把 v 钳制到 [lo, hi] 区间，避免属性越界。
 func clampInt(v, lo, hi int) int { return min(max(v, lo), hi) }

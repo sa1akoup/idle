@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// itemRefsFromLoadout 从装配清单提取携带物品引用：已记录实例引用的直接使用，否则按旧字段逐件补默认数量 1。
 func itemRefsFromLoadout(loadout *models.PlayerLoadout) []models.LoadoutItemRef {
 	if len(loadout.ConsumableRefs) > 0 {
 		return append([]models.LoadoutItemRef(nil), loadout.ConsumableRefs...)
@@ -25,6 +26,7 @@ func itemRefsFromLoadout(loadout *models.PlayerLoadout) []models.LoadoutItemRef 
 	return refs
 }
 
+// carriedItemsForLoadout 将装配清单转换为行动携带物品：非实例物品取聚合库存行，实例物品锁定具体耐久实例。
 func carriedItemsForLoadout(db *gorm.DB, userID uint, loadout *models.PlayerLoadout) ([]engine.CarriedItem, error) {
 	refs := itemRefsFromLoadout(loadout)
 	items := make([]engine.CarriedItem, 0, len(refs))
@@ -41,6 +43,7 @@ func carriedItemsForLoadout(db *gorm.DB, userID uint, loadout *models.PlayerLoad
 			}
 			return nil, fmt.Errorf("读取物品效果 %s: %w", ref.ItemID, err)
 		}
+		// 分支：非实例物品按聚合行处理，需校验库存数量并保留来源标记。
 		if !useDef.InstanceRequired {
 			var inventory models.Inventory
 			if err := db.Where("user_id = ? AND item_id = ? AND quantity >= ?", userID, ref.ItemID, quantity).
@@ -52,6 +55,7 @@ func carriedItemsForLoadout(db *gorm.DB, userID uint, loadout *models.PlayerLoad
 		}
 		var instance models.ItemInstance
 		query := db.Where("user_id = ? AND item_id = ? AND status = ? AND location_type = ?", userID, ref.ItemID, "normal", "inventory")
+		// 装配记录指定了实例 ID 时锁定该实例，否则自动挑选耐久最低的可用实例。
 		if ref.InstanceID > 0 {
 			query = db.Where("user_id = ? AND id = ? AND item_id = ? AND status = ? AND location_type = ?", userID, ref.InstanceID, ref.ItemID, "normal", "inventory")
 		}
@@ -63,9 +67,11 @@ func carriedItemsForLoadout(db *gorm.DB, userID uint, loadout *models.PlayerLoad
 	return items, nil
 }
 
+// itemStacksFromCarriedItems 把携带物品摊回聚合口径（实例按 1 件折算、已损坏实例剔除），供战果结算统计使用。
 func itemStacksFromCarriedItems(items []engine.CarriedItem) []engine.ItemStack {
 	quantities := make(map[string]int)
 	for _, item := range items {
+		// 已报废（耐久耗尽）的实例不计入聚合，避免把损坏物品折回普通库存。
 		if item.InstanceID > 0 && item.CurrentDurability <= 0 {
 			continue
 		}
@@ -89,6 +95,7 @@ func itemStacksFromCarriedItems(items []engine.CarriedItem) []engine.ItemStack {
 	return result
 }
 
+// reserveCarriedItemsTx 预占行动携带物品：实例物品锁定为 session 状态，聚合物品按 (物品, 来源) 扣减库存。
 func reserveCarriedItemsTx(tx *gorm.DB, userID uint, items []engine.CarriedItem, locationRef string) error {
 	type itemSource struct {
 		itemID      string
@@ -119,6 +126,7 @@ func reserveCarriedItemsTx(tx *gorm.DB, userID uint, items []engine.CarriedItem,
 	return nil
 }
 
+// returnCarriedItemsTx 行动结束后归还携带物品：实例物品写回耐久与状态，聚合物品重新入库存。
 func returnCarriedItemsTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, items []engine.CarriedItem) error {
 	for _, item := range items {
 		if item.InstanceID > 0 {
@@ -160,6 +168,7 @@ type ItemInstanceView struct {
 	RepRequirement   int    `json:"repRequirement"`
 }
 
+// ListItemInstancesForUser 列出用户仓库全部物品实例，并关联目录数据补齐展示字段。
 func ListItemInstancesForUser(db *gorm.DB, userID uint) ([]ItemInstanceView, error) {
 	var items []models.ItemInstance
 	if err := db.Where("user_id = ? AND location_type = ?", userID, "inventory").Order("item_id asc, id asc").Find(&items).Error; err != nil {
@@ -194,6 +203,7 @@ func ListItemInstancesForUser(db *gorm.DB, userID uint) ([]ItemInstanceView, err
 	return result, nil
 }
 
+// discardCarriedItemsTx 丢弃已携带的实例物品（失能丢失场景），聚合物品不在此处理。
 func discardCarriedItemsTx(tx *gorm.DB, userID uint, items []engine.CarriedItem) error {
 	for _, item := range items {
 		if item.InstanceID == 0 {

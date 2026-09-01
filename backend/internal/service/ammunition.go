@@ -23,6 +23,7 @@ type ammoRefillResult struct {
 	Source     string
 }
 
+// decodeSessionAmmoState 从 Session 行解码场景快照与连续状态，供结算/失败返还弹药等场景使用。
 func decodeSessionAmmoState(sess models.Session) (engine.ScenarioSnapshot, engine.EngineState, error) {
 	var snapshot engine.ScenarioSnapshot
 	if err := json.Unmarshal([]byte(sess.ScenarioSnapshot), &snapshot); err != nil {
@@ -35,6 +36,7 @@ func decodeSessionAmmoState(sess models.Session) (engine.ScenarioSnapshot, engin
 	return snapshot, state, nil
 }
 
+// reserveCarriedAmmo 开局时校验武器口径与携弹下限，并从库存扣出携行弹药（与快照同一事务，口径数据强一致）。
 func reserveCarriedAmmo(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, weaponID, ammoID string, rounds int) (engine.CarriedAmmo, error) {
 	weapon, ok := snapshot.Weapons[weaponID]
 	if !ok {
@@ -62,6 +64,7 @@ func reserveCarriedAmmo(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapsh
 	return carriedAmmoWithPreference(ammo, rounds, ammo, rounds), nil
 }
 
+// returnCarriedAmmoTx 会话终态把仍有剩余的携行弹药加回库存并清空携带状态，避免弹药随会话流失。
 func returnCarriedAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) error {
 	if state.Ammo.ID == "" || state.Ammo.Rounds <= 0 {
 		state.Ammo = engine.CarriedAmmo{}
@@ -74,6 +77,7 @@ func returnCarriedAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnaps
 	return nil
 }
 
+// reservePresetAmmoTx 按失能恢复预设预留弹药：库存足够则直接扣出，不足则记录偏好弹药并走商人自动补给。
 func reservePresetAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, preset engine.RecoveryPreset) (engine.CarriedAmmo, *ammoRefillResult, error) {
 	if preset.AmmoID == "" && preset.AmmoRounds == 0 {
 		return engine.CarriedAmmo{}, nil, nil
@@ -93,6 +97,7 @@ func reservePresetAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnaps
 	if err != nil {
 		return engine.CarriedAmmo{}, nil, err
 	}
+	// 以预设数量为上限截取库存可用数；不足一发则改用商人补给分支。
 	reserveRounds := available
 	if reserveRounds > preset.AmmoRounds {
 		reserveRounds = preset.AmmoRounds
@@ -129,6 +134,7 @@ func ensureSessionAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnaps
 	return refillSessionAmmoTx(tx, userID, snapshot, weapon.ID, state)
 }
 
+// refillSessionAmmoTx 自动补给弹药：先校验偏好口径/等级与目标数量，扣现金后归还旧弹并换为商人供应的新弹。
 func refillSessionAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, weaponID string, state *engine.EngineState) (*ammoRefillResult, error) {
 	weapon, ok := snapshot.Weapons[weaponID]
 	if !ok || weapon.AmmoPerRound <= 0 {
@@ -165,6 +171,7 @@ func refillSessionAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnaps
 	}, nil
 }
 
+// selectMerchantAmmoSupply 从快照商人供应中选择可用且等级不超过偏好等级的最高级同口径弹药。
 func selectMerchantAmmoSupply(snapshot engine.ScenarioSnapshot, caliberID string, preferredLevel int) (engine.AmmoSupply, error) {
 	var selected engine.AmmoSupply
 	for _, supply := range snapshot.AmmoSupplies {
@@ -172,6 +179,7 @@ func selectMerchantAmmoSupply(snapshot engine.ScenarioSnapshot, caliberID string
 			continue
 		}
 		if selected.AmmoID == "" || supply.Level > selected.Level {
+			// 在同口径可用供应中优先选等级更高（但不超偏好等级）的弹药。
 			selected = supply
 		}
 	}
@@ -181,6 +189,7 @@ func selectMerchantAmmoSupply(snapshot engine.ScenarioSnapshot, caliberID string
 	return selected, nil
 }
 
+// returnAmmoRoundsTx 校验剩余弹药与场景快照一致后，把指定发数弹药作为普通商品加回库存。
 func returnAmmoRoundsTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, carried engine.CarriedAmmo) error {
 	ammo, ok := snapshot.Ammos[carried.ID]
 	if !ok || ammo.CaliberID != carried.CaliberID || ammo.Level != carried.Level {
@@ -197,6 +206,7 @@ func returnAmmoRoundsTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapsh
 	return nil
 }
 
+// carriedAmmoWithPreference 构造携行弹药状态：当前实际携带的弹药，加上自动补给偏好的目标弹药与目标数量。
 func carriedAmmoWithPreference(current engine.Ammo, rounds int, preferred engine.Ammo, targetRounds int) engine.CarriedAmmo {
 	return engine.CarriedAmmo{
 		ID: current.ID, CaliberID: current.CaliberID, Level: current.Level, Rounds: rounds,
@@ -204,6 +214,7 @@ func carriedAmmoWithPreference(current engine.Ammo, rounds int, preferred engine
 	}
 }
 
+// ammoInventoryQuantity 汇总某弹药在库存中的所有行数量总和。
 func ammoInventoryQuantity(db *gorm.DB, userID uint, ammoID string) (int, error) {
 	var quantity int
 	if err := db.Model(&models.Inventory{}).

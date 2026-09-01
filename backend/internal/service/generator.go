@@ -38,6 +38,7 @@ type GeneratorView struct {
 	Fuels                 []GeneratorFuelView `json:"fuels"`
 }
 
+// settleGeneratorForUser 入口：加资源锁后按当前时间惰性结算发电机燃料（懒结算，无独立计时器）。
 func settleGeneratorForUser(db *gorm.DB, userID uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, userID); err != nil {
@@ -47,6 +48,7 @@ func settleGeneratorForUser(db *gorm.DB, userID uint) error {
 	})
 }
 
+// getGeneratorRuntimeTx 读取（不存在则创建）发电机运行状态并解析燃料实例 ID 列表，行锁防止并发结算。
 func getGeneratorRuntimeTx(tx *gorm.DB, userID uint) (*models.FacilityRuntimeState, *generatorRuntime, error) {
 	var runtime models.FacilityRuntimeState
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -68,6 +70,7 @@ func getGeneratorRuntimeTx(tx *gorm.DB, userID uint) (*models.FacilityRuntimeSta
 	return &runtime, &state, nil
 }
 
+// generatorPowerEnabledTx 只读查询发电机当前是否开启（无记录视为关闭）。
 func generatorPowerEnabledTx(tx *gorm.DB, userID uint) (bool, error) {
 	var runtime models.FacilityRuntimeState
 	if err := tx.Where("user_id = ? AND facility_id = ?", userID, generatorFacilityID).First(&runtime).Error; err != nil {
@@ -79,6 +82,7 @@ func generatorPowerEnabledTx(tx *gorm.DB, userID uint) (bool, error) {
 	return runtime.Enabled, nil
 }
 
+// saveGeneratorRuntimeTx 写回发电机开关、结算时间与燃料实例 JSON 状态。
 func saveGeneratorRuntimeTx(tx *gorm.DB, runtime *models.FacilityRuntimeState, state generatorRuntime, now time.Time) error {
 	encoded, err := json.Marshal(state)
 	if err != nil {
@@ -88,6 +92,7 @@ func saveGeneratorRuntimeTx(tx *gorm.DB, runtime *models.FacilityRuntimeState, s
 		Updates(map[string]interface{}{"enabled": runtime.Enabled, "updated_at": now, "state_json": string(encoded)}).Error
 }
 
+// settleGeneratorTx 惰性结算：按距上次结算的耗时扣减燃料，燃料耗尽时自动停机。
 func settleGeneratorTx(tx *gorm.DB, userID uint, now time.Time) error {
 	runtime, state, err := getGeneratorRuntimeTx(tx, userID)
 	if err != nil {
@@ -96,6 +101,7 @@ func settleGeneratorTx(tx *gorm.DB, userID uint, now time.Time) error {
 	if err := pruneGeneratorFuelTx(tx, userID, state); err != nil {
 		return err
 	}
+	// 未开启时仅刷新结算时间戳，不消耗燃料。
 	if !runtime.Enabled {
 		runtime.UpdatedAt = now
 		return saveGeneratorRuntimeTx(tx, runtime, *state, now)
@@ -125,6 +131,7 @@ func settleGeneratorTx(tx *gorm.DB, userID uint, now time.Time) error {
 	return saveGeneratorRuntimeTx(tx, runtime, *state, now)
 }
 
+// pruneGeneratorFuelTx 清理燃料实例列表中的无效项（重复记录、实例已丢失、非燃料、已耗尽），保证装载列表与实物一致。
 func pruneGeneratorFuelTx(tx *gorm.DB, userID uint, state *generatorRuntime) error {
 	kept := make([]uint, 0, len(state.FuelInstanceIDs))
 	seen := make(map[uint]struct{}, len(state.FuelInstanceIDs))
@@ -162,6 +169,7 @@ func pruneGeneratorFuelTx(tx *gorm.DB, userID uint, state *generatorRuntime) err
 	return nil
 }
 
+// consumeGeneratorFuelTx 按需消耗燃料实例耐久，返回仍未满足的消耗秒数（>0 表示燃料不足）。
 func consumeGeneratorFuelTx(tx *gorm.DB, userID uint, state *generatorRuntime, requiredSeconds float64) (float64, error) {
 	if requiredSeconds <= 0 {
 		return 0, nil
@@ -186,6 +194,7 @@ func consumeGeneratorFuelTx(tx *gorm.DB, userID uint, state *generatorRuntime, r
 			}
 			continue
 		}
+		// 秒数↔耐久换算：剩余可烧秒数 = 耐久比例 × 燃料总秒数，消耗后再按同比例回扣耐久。
 		available := instance.CurrentDurability / instance.MaxDurability * float64(def.FuelSeconds)
 		consume := available
 		if consume > remaining {
@@ -219,6 +228,7 @@ func consumeGeneratorFuelTx(tx *gorm.DB, userID uint, state *generatorRuntime, r
 	return remaining, nil
 }
 
+// solarPanelFuelReductionTx 返回太阳能板就绪等级提供的燃料减耗百分比，无则按 0 处理。
 func solarPanelFuelReductionTx(tx *gorm.DB, userID uint) (float64, error) {
 	var state models.HideoutFacility
 	if err := tx.Where("user_id = ? AND facility_id = ? AND state = ?", userID, "solar_panel", "ready").First(&state).Error; err != nil {
@@ -234,6 +244,7 @@ func solarPanelFuelReductionTx(tx *gorm.DB, userID uint) (float64, error) {
 	return float64(level.FuelConsumptionReductionPercent), nil
 }
 
+// generatorViewTx 组装发电机前端视图：开关状态、槽位数、燃料减耗系数、剩余可烧秒数与当前燃料列表。
 func generatorViewTx(db *gorm.DB, userID uint) (*GeneratorView, error) {
 	runtime, state, err := getGeneratorRuntimeTx(db, userID)
 	if err != nil {
@@ -281,6 +292,7 @@ func generatorViewTx(db *gorm.DB, userID uint) (*GeneratorView, error) {
 	return view, nil
 }
 
+// ToggleGeneratorForUser 开关发电机：先惰性结算，再切换；开启需发电机就绪且已装载燃料。
 func ToggleGeneratorForUser(db *gorm.DB, userID uint, enabled bool) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, userID); err != nil {
@@ -294,6 +306,7 @@ func ToggleGeneratorForUser(db *gorm.DB, userID uint, enabled bool) error {
 		if err != nil {
 			return err
 		}
+		// 开启需满足：发电机设施就绪、已有等级且已装载燃料实例。
 		if enabled {
 			var facility models.HideoutFacility
 			if err := tx.Where("user_id = ? AND facility_id = ? AND state = ?", userID, generatorFacilityID, "ready").First(&facility).Error; err != nil {
@@ -309,6 +322,7 @@ func ToggleGeneratorForUser(db *gorm.DB, userID uint, enabled bool) error {
 	})
 }
 
+// LoadGeneratorFuelForUser 把燃料实例装入发电机：校验槽位空闲、未重复装载与燃料类型，并改实例归属为发电机。
 func LoadGeneratorFuelForUser(db *gorm.DB, userID, instanceID uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, userID); err != nil {
@@ -353,6 +367,7 @@ func LoadGeneratorFuelForUser(db *gorm.DB, userID, instanceID uint) error {
 	})
 }
 
+// UnloadGeneratorFuelForUser 把燃料实例卸回仓库并从装载记录中移除。
 func UnloadGeneratorFuelForUser(db *gorm.DB, userID, instanceID uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, userID); err != nil {
@@ -385,6 +400,7 @@ func UnloadGeneratorFuelForUser(db *gorm.DB, userID, instanceID uint) error {
 	})
 }
 
+// containsUint 判断切片是否包含目标值，用于燃料装载去重。
 func containsUint(values []uint, target uint) bool {
 	for _, value := range values {
 		if value == target {

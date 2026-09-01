@@ -392,6 +392,7 @@ func QueueArmorRepairForUser(db *gorm.DB, userID, armorInstanceID uint) error {
 		if baseRepairValue < 0 {
 			baseRepairValue = 0
 		}
+		// 维修消耗值 = 归零差值 ×（1 − 维修台折扣比例），向上取整。
 		repairValue := math.Ceil(baseRepairValue * float64(100-workbenchLevel.RepairKitDiscountPercent) / 100)
 		if err := consumeRepairKitsTx(tx, userID, repairValue); err != nil {
 			return err
@@ -474,6 +475,7 @@ func consumeRepairKitsTx(tx *gorm.DB, userID uint, requiredValue float64) error 
 	return nil
 }
 
+// settleDueHideoutJobsForUser 入口：检测到到期作业时开启独立事务，加资源锁后统一结算。
 func settleDueHideoutJobsForUser(db *gorm.DB, userID uint) error {
 	var count int64
 	if err := db.Model(&models.FacilityJob{}).
@@ -492,6 +494,7 @@ func settleDueHideoutJobsForUser(db *gorm.DB, userID uint) error {
 	})
 }
 
+// settleDueHideoutJobsTx 结算所有到期藏身处作业：升级提级、维修恢复护甲、制造发放产物；空间不足的制造作业转为待交付。
 func settleDueHideoutJobsTx(tx *gorm.DB, userID uint, now time.Time) error {
 	var jobs []models.FacilityJob
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -500,6 +503,7 @@ func settleDueHideoutJobsTx(tx *gorm.DB, userID uint, now time.Time) error {
 		return fmt.Errorf("读取到期藏身处作业: %w", err)
 	}
 	for _, job := range jobs {
+		// 按作业类型分派结算：升级写入新等级、维修恢复护甲耐久、制造发放产物到仓库。
 		switch job.JobType {
 		case facilityJobTypeUpgrade:
 			if err := tx.Model(&models.HideoutFacility{}).
@@ -566,6 +570,7 @@ func settleDueHideoutJobsTx(tx *gorm.DB, userID uint, now time.Time) error {
 	return nil
 }
 
+// bonusesFromStates 汇总各设施当前等级的收益加成；需要电力且发电机未开启的设施不计入。
 func bonusesFromStates(states []models.HideoutFacility, levels map[string]map[int]models.FacilityLevelDef, generatorEnabled bool) HideoutBonuses {
 	var bonuses HideoutBonuses
 	for _, state := range states {
@@ -588,6 +593,7 @@ func bonusesFromStates(states []models.HideoutFacility, levels map[string]map[in
 	return bonuses
 }
 
+// storageCapacityForUser 返回总仓库容量 = 基础容量 + 储物间等级加成。
 func storageCapacityForUser(db *gorm.DB, userID uint) (int, error) {
 	var states []models.HideoutFacility
 	if err := db.Where("user_id = ?", userID).Find(&states).Error; err != nil {
@@ -611,6 +617,7 @@ func storageCapacityForUser(db *gorm.DB, userID uint) (int, error) {
 	return models.InventoryCapacity + bonus, nil
 }
 
+// repairCostForLevel 返回工作台等级对应的固定维修现金费用（等级越高维修越便宜）。
 func repairCostForLevel(level int) int {
 	switch level {
 	case 3:
@@ -622,6 +629,7 @@ func repairCostForLevel(level int) int {
 	}
 }
 
+// repairDurationForSpeed 按维修速度加成折算维修时长，结果不低于 5 秒。
 func repairDurationForSpeed(speedPercent int) time.Duration {
 	duration := 30 * time.Second * time.Duration(100-speedPercent) / 100
 	if duration < 5*time.Second {
@@ -630,6 +638,7 @@ func repairDurationForSpeed(speedPercent int) time.Duration {
 	return duration
 }
 
+// cashQuantity 读取用户当前现金总量。
 func cashQuantity(db *gorm.DB, userID uint) (int, error) {
 	var cash int
 	if err := db.Model(&models.Inventory{}).Where("user_id = ? AND item_id = ?", userID, "cash").

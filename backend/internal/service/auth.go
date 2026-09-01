@@ -39,6 +39,7 @@ func RegisterUser(db *gorm.DB, username, password string) (*models.User, error) 
 	if err != nil {
 		return nil, fmt.Errorf("生成密码摘要: %w", err)
 	}
+	// 明文密码不入库，仅保存 bcrypt 摘要，且长度上限受 bcrypt 限制
 	user := &models.User{Username: username, PasswordHash: string(hash), Status: "active"}
 	if err := db.Create(user).Error; err != nil {
 		return nil, fmt.Errorf("创建账号: %w", err)
@@ -65,6 +66,7 @@ func LoginUser(db *gorm.DB, username, password string) (*models.User, string, er
 	return &user, token, nil
 }
 
+// issueAuthToken 生成随机 token 并签发会话：明文仅返回客户端，库中只存其摘要供校验。
 func issueAuthToken(db *gorm.DB, userID uint) (string, error) {
 	buffer := make([]byte, 32)
 	if _, err := rand.Read(buffer); err != nil {
@@ -74,6 +76,7 @@ func issueAuthToken(db *gorm.DB, userID uint) (string, error) {
 	hash := sha256.Sum256([]byte(token))
 	session := models.AuthSession{
 		UserID: userID, TokenHash: base64.RawURLEncoding.EncodeToString(hash[:]),
+		// 会话有效期由 AuthSessionTTL 常量统一控制
 		ExpiresAt: time.Now().Add(AuthSessionTTL),
 	}
 	if err := db.Create(&session).Error; err != nil {

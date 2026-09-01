@@ -46,6 +46,7 @@ func inventoryUsage(db *gorm.DB, userID uint) (int, error) {
 			if ammo.RoundsPerSlot <= 0 {
 				return 0, fmt.Errorf("弹药 %s 的每格容量无效", itemID)
 			}
+			// 弹药占格：发数按每格可容发数向上取整。
 			used += ceilDiv(quantity, ammo.RoundsPerSlot)
 			continue
 		}
@@ -53,6 +54,7 @@ func inventoryUsage(db *gorm.DB, userID uint) (int, error) {
 		if deduct > quantity {
 			deduct = quantity
 		}
+		// 实际占用 = 库存总量 − 已装备/预设占用的数量（扣除装备配置占用的容量）。
 		used += quantity - deduct
 	}
 	var instances []models.ItemInstance
@@ -67,6 +69,7 @@ func inventoryUsage(db *gorm.DB, userID uint) (int, error) {
 	return used, nil
 }
 
+// ceilDiv 向上取整除法（value/divisor），用于按格计算弹药等容量占用。
 func ceilDiv(value, divisor int) int {
 	if value <= 0 {
 		return 0
@@ -103,6 +106,7 @@ func loadoutAllocatedItems(db *gorm.DB, userID uint) (map[string]int, error) {
 	return alloc, nil
 }
 
+// loadoutAllocatedInstanceIDs 汇总当前装备与 3 套预设中已占用的补给类物品实例 ID（带耐久物品按实例单独占容量）。
 func loadoutAllocatedInstanceIDs(db *gorm.DB, userID uint) (map[uint]struct{}, error) {
 	loadout, err := GetPlayerLoadoutForUser(db, userID)
 	if err != nil {
@@ -147,6 +151,7 @@ func loadoutAllocatedInstanceIDs(db *gorm.DB, userID uint) (map[uint]struct{}, e
 			if ids := allocatedIDs(allocated); len(ids) > 0 {
 				query = query.Where("id NOT IN ?", ids)
 			}
+			// 优先分配耐久最低的实例，使预设补给固定占用最旧的库存。
 			if err := query.Order("current_durability asc, id asc").First(&instance).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					continue
@@ -159,6 +164,7 @@ func loadoutAllocatedInstanceIDs(db *gorm.DB, userID uint) (map[uint]struct{}, e
 	return allocated, nil
 }
 
+// allocatedIDs 将已分配实例 ID 集合转为切片，供查询时排除已被预设占用的实例。
 func allocatedIDs(allocated map[uint]struct{}) []uint {
 	ids := make([]uint, 0, len(allocated))
 	for id := range allocated {
@@ -203,6 +209,7 @@ func PresetAmmoOf(loadout *models.PlayerLoadout, index int) (ammoID string, roun
 	}
 }
 
+// uniqueItemIDs 去重并剔除空 ID 的物品 ID 清单。
 func uniqueItemIDs(ids []string) []string {
 	seen := make(map[string]struct{}, len(ids))
 	result := make([]string, 0, len(ids))

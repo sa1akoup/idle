@@ -110,6 +110,7 @@ func ListCraftingRecipesForUser(db *gorm.DB, userID uint) ([]CraftingRecipeView,
 		}
 		instanceRequired := found && use.InstanceRequired
 		levelReady := workbench.Level >= recipe.RequiredLevel
+		// 可制造条件 = 工作台等级达标 + 状态就绪 + 无进行中作业 + 材料齐全。
 		canStart := levelReady && workbench.State == "ready" && !busy && allSatisfied
 		reason := ""
 		switch {
@@ -153,6 +154,7 @@ func StartCraftForUser(db *gorm.DB, userID uint, recipeID string) error {
 			return fmt.Errorf("读取制造配方: %w", err)
 		}
 		var workbench models.HideoutFacility
+		// 行级 UPDATE 锁锁定工作台，配合下方作业计数实现单作业互斥。
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("user_id = ? AND facility_id = ?", userID, workbenchFacilityID).First(&workbench).Error; err != nil {
 			return fmt.Errorf("工作台不可用")
@@ -197,6 +199,7 @@ func StartCraftForUser(db *gorm.DB, userID uint, recipeID string) error {
 		if err != nil {
 			return err
 		}
+		// 入队前容量预检：产物所需格数不得超过当前剩余容量。
 		if used+outputSlots > capacity {
 			return fmt.Errorf("仓库空间不足：产物需 %d 个空位，当前仅剩 %d 个", outputSlots, capacity-used)
 		}
@@ -232,6 +235,7 @@ func workbenchStatus(db *gorm.DB, userID uint) (models.HideoutFacility, bool, er
 	return workbench, busy > 0, nil
 }
 
+// parseRecipeInputs 解析配方材料 JSON，空串返回空列表。
 func parseRecipeInputs(raw string) ([]models.RecipeInput, error) {
 	if raw == "" {
 		return nil, nil

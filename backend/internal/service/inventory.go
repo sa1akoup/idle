@@ -47,6 +47,7 @@ func PurchaseItemForUser(db *gorm.DB, userID uint, itemID string, quantity int) 
 	})
 }
 
+// purchaseCatalogItems 批量执行商品购买：先结算到期的隐藏所产出，再校验容量与现金，最后写入库存并返回实付总额。
 func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, error) {
 	if len(items) == 0 {
 		return 0, nil
@@ -68,6 +69,7 @@ func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, e
 	if err != nil {
 		return 0, err
 	}
+	// 容量校验：已占用空间 + 本次新增占用不得超过仓库总容量。
 	if used+additionalCapacity > capacity {
 		return 0, fmt.Errorf("%w：仓库空间不足，还需 %d 个空位", ErrPurchaseUnavailable, used+additionalCapacity-capacity)
 	}
@@ -112,6 +114,7 @@ func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, e
 	return totalPrice, nil
 }
 
+// purchaseCapacityDelta 计算本次购买占用的净新增仓库格数；非弹药每件占 1 格，弹药按每格可容发数向上取整折算。
 func purchaseCapacityDelta(tx *gorm.DB, userID uint, items []catalogItem) (int, error) {
 	additional := 0
 	ammoAdds := make(map[string]int)
@@ -135,6 +138,7 @@ func purchaseCapacityDelta(tx *gorm.DB, userID uint, items []catalogItem) (int, 
 			Select("COALESCE(SUM(quantity), 0)").Scan(&existing).Error; err != nil {
 			return 0, fmt.Errorf("读取弹药库存 %s: %w", itemID, err)
 		}
+		// 净增格数 = 购买后占用的格子数 − 当前占用的格子数，同类弹药聚合后只计算一次增量。
 		additional += ceilDiv(existing+rounds, perSlot) - ceilDiv(existing, perSlot)
 	}
 	return additional, nil
@@ -161,6 +165,7 @@ func addInventoryItem(tx *gorm.DB, userID uint, item catalogItem, quantity int, 
 	return addInventoryItemWithCatalog(tx, userID, item, quantity, raidExtract, catalog.New(tx))
 }
 
+// addInventoryItemWithCatalog 写入库存：需实例化的物品逐件创建独立实例，普通物品按 (itemID, raidExtract) 聚合行累加数量。
 func addInventoryItemWithCatalog(tx *gorm.DB, userID uint, item catalogItem, quantity int, raidExtract bool, catalogRepo *catalog.Repository) error {
 	var useDef models.ItemUseDef
 	useDef, found, err := catalogRepo.FindUseByID(item.ID)
@@ -215,6 +220,7 @@ func removeInventoryItem(tx *gorm.DB, userID uint, itemID string, quantity int) 
 	return removeInventoryItemFromSource(tx, userID, itemID, quantity, nil)
 }
 
+// removeInventoryItemFromSource 从指定来源扣除库存，未指定时优先扣局内带出（raidExtract=true）；来源不足会跨来源继续扣。
 func removeInventoryItemFromSource(tx *gorm.DB, userID uint, itemID string, quantity int, source *bool) error {
 	sources := []bool{true, false}
 	if source != nil {
@@ -235,6 +241,7 @@ func removeInventoryItemFromSource(tx *gorm.DB, userID uint, itemID string, quan
 		if deduct > quantity {
 			deduct = quantity
 		}
+		// 带数量下限的条件原子扣减，防止并发场景下超扣。
 		result := tx.Model(&models.Inventory{}).
 			Where("user_id = ? AND id = ? AND quantity >= ?", userID, inv.ID, deduct).
 			Update("quantity", gorm.Expr("quantity - ?", deduct))

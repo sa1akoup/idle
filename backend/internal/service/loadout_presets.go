@@ -56,6 +56,7 @@ func PresetNameOf(loadout *models.PlayerLoadout, index int) string {
 	}
 }
 
+// presetOfReq 按索引把请求中的三套预设字段转换为统一结构（武器、护甲、补给、装备位）。
 func presetOfReq(req SaveLoadoutReq, index int) (weaponID, armorID string, consumables []string, equip []string) {
 	switch index {
 	case 2:
@@ -70,6 +71,7 @@ func presetOfReq(req SaveLoadoutReq, index int) (weaponID, armorID string, consu
 	}
 }
 
+// presetAmmoOfReq 按索引取出某套预设对应的弹药 ID 与携弹量；索引 1 走默认字段。
 func presetAmmoOfReq(req SaveLoadoutReq, index int) (string, int) {
 	switch index {
 	case 2:
@@ -81,6 +83,7 @@ func presetAmmoOfReq(req SaveLoadoutReq, index int) (string, int) {
 	}
 }
 
+// allEmpty 判断装备位集合是否全为空，用于识别完全未配置的预设。
 func allEmpty(values []string) bool {
 	for _, value := range values {
 		if value != "" {

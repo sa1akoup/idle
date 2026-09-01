@@ -275,6 +275,7 @@ func ValidateEventConfig(db *gorm.DB) error {
 	return nil
 }
 
+// containsString 判断目标字符串是否在给定列表中，供作用域标签匹配复用。
 func containsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
@@ -284,6 +285,7 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
+// bindingAppliesToMap 判断事件绑定是否作用于给定地图（按作用域类型与启用的撤离点解析）。
 func bindingAppliesToMap(binding models.EventBinding, gameMap models.MapDef, nodes []models.NodeDef, extractionPoints []models.ExtractionPointDef) bool {
 	switch binding.ScopeType {
 	case "global":

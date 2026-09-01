@@ -103,6 +103,7 @@ func SavePlayerLoadoutForUser(db *gorm.DB, userID uint, req SaveLoadoutReq) (*mo
 	return GetPlayerLoadoutForUser(db, userID)
 }
 
+// validatePresetAmmoCatalog 校验预设弹药的携弹量与口径，并核对商人好感度解锁。
 func validatePresetAmmoCatalog(db *gorm.DB, userID uint, weaponID, ammoID string, rounds int) error {
 	var weapon models.WeaponDef
 	if err := db.First(&weapon, "id = ?", weaponID).Error; err != nil {
@@ -140,6 +141,7 @@ func validatePresetAmmoCatalog(db *gorm.DB, userID uint, weaponID, ammoID string
 	return nil
 }
 
+// validateLoadoutCatalog 校验装备与补给条目在目录中存在且可用，保证装备方案合法。
 func validateLoadoutCatalog(db *gorm.DB, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
 	var count int64
 	if err := db.Model(&models.WeaponDef{}).Where("id = ?", weaponID).Count(&count).Error; err != nil {
@@ -203,6 +205,7 @@ func validateLoadoutCatalog(db *gorm.DB, weaponID, armorID string, consumables [
 	return nil
 }
 
+// validateOwnedLoadoutForUser 校验用户仓库确实拥有所选装备、补给与可用护甲实例。
 func validateOwnedLoadoutForUser(db *gorm.DB, userID uint, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
 	ids := []string{weaponID, armorID}
 	for _, id := range []string{chestRigID, backpackID, helmetID, headsetID} {
@@ -223,6 +226,7 @@ func validateOwnedLoadoutForUser(db *gorm.DB, userID uint, weaponID, armorID str
 		var use models.ItemUseDef
 		if err := db.Where("item_id = ?", itemID).First(&use).Error; err == nil && use.InstanceRequired {
 			var instanceCount int64
+			// 需实例化的补给须在仓库存在未损坏实例，凭实例数而非库存量校验
 			if err := db.Model(&models.ItemInstance{}).
 				Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ? AND current_durability > 0", userID, itemID, "inventory", "normal").
 				Count(&instanceCount).Error; err != nil {
@@ -285,6 +289,8 @@ func ReplaceLostLoadoutForUser(db *gorm.DB, userID uint, presetIndex int) (int, 
 		} else if err := tx.Delete(&armorInstance).Error; err != nil {
 			return fmt.Errorf("移除丢失护甲: %w", err)
 		}
+
+		// 丢失后清空当前装备方案（护甲实例已删，保留预设待补购）
 
 		cleared := models.PlayerLoadout{Consumables: []string{}, ConsumableRefs: []models.LoadoutItemRef{}}
 		if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadout.ID).

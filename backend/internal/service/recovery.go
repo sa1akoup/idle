@@ -42,11 +42,13 @@ const (
 	recoveryMethodNone      = "none"
 )
 
+// defaultRecoveryPolicyJSON 返回默认恢复策略的 JSON 字符串，供未提供策略的会话使用。
 func defaultRecoveryPolicyJSON() string {
 	encoded, _ := json.Marshal(defaultRecoveryPolicy())
 	return string(encoded)
 }
 
+// defaultRecoveryPolicy 返回默认恢复策略：生命目标 100%，能量/饮水 80%，优先库存、备用藏身处。
 func defaultRecoveryPolicy() RecoveryPolicy {
 	return RecoveryPolicy{
 		HP:             RecoveryChoice{TargetPercent: 100, PrimaryMethod: "inventory", FallbackMethod: "hideout"},
@@ -56,6 +58,7 @@ func defaultRecoveryPolicy() RecoveryPolicy {
 	}
 }
 
+// decodeRecoveryPolicy 解析恢复策略 JSON 并校验各项目标与方式取值。
 func decodeRecoveryPolicy(value string) (RecoveryPolicy, error) {
 	var policy RecoveryPolicy
 	if err := json.Unmarshal([]byte(value), &policy); err != nil {
@@ -69,6 +72,7 @@ func decodeRecoveryPolicy(value string) (RecoveryPolicy, error) {
 	return policy, nil
 }
 
+// recoveryPolicyJSONForStart 规范化并序列化开局恢复策略；未提供时回退默认策略。
 func recoveryPolicyJSONForStart(input *RecoveryPolicy) (string, error) {
 	if input == nil {
 		return defaultRecoveryPolicyJSON(), nil
@@ -90,6 +94,7 @@ func recoveryPolicyJSONForStart(input *RecoveryPolicy) (string, error) {
 	return string(encoded), nil
 }
 
+// normalizeRecoveryChoice 用默认值补齐未填写的目标与方式，并按首选方式推导合理备用方式。
 func normalizeRecoveryChoice(choice, defaults RecoveryChoice) RecoveryChoice {
 	if choice.TargetPercent <= 0 {
 		choice.TargetPercent = defaults.TargetPercent
@@ -110,6 +115,7 @@ func normalizeRecoveryChoice(choice, defaults RecoveryChoice) RecoveryChoice {
 	return choice
 }
 
+// validateRecoveryChoice 校验某资源的恢复目标（1-100%）与首选/备用方式是否合法。
 func validateRecoveryChoice(resource string, choice RecoveryChoice) error {
 	if choice.TargetPercent < 1 || choice.TargetPercent > 100 {
 		return fmt.Errorf("%s 恢复目标需为 1-100%%", recoveryResourceName(resource))
@@ -123,6 +129,7 @@ func validateRecoveryChoice(resource string, choice RecoveryChoice) error {
 	return nil
 }
 
+// validRecoveryMethod 判断恢复方式是否为四种合法取值之一。
 func validRecoveryMethod(method string) bool {
 	switch method {
 	case recoveryMethodInventory, recoveryMethodHideout, recoveryMethodMerchant, recoveryMethodNone:
@@ -132,6 +139,7 @@ func validRecoveryMethod(method string) bool {
 	}
 }
 
+// createRecoveryPlanTx 在终局事务内创建恢复计划：先按策略即时消耗物品/商人购买，再为剩余缺口按藏身处速率生成持续恢复任务。
 func createRecoveryPlanTx(tx *gorm.DB, userID, sessionID uint, state engine.CharacterState, policyJSON string) error {
 	var policy RecoveryPolicy
 	if policyJSON == "" {
@@ -151,7 +159,7 @@ func createRecoveryPlanTx(tx *gorm.DB, userID, sessionID uint, state engine.Char
 	} else if err != gorm.ErrRecordNotFound {
 		return fmt.Errorf("读取恢复计划: %w", err)
 	}
-	maxHP := engine.CalcMaxHP(state.Strength)
+	maxHP := engine.CalcMaxHP(engine.DefaultTuning(), state.Strength)
 	targets := map[string]float64{
 		"hp":        maxHP * float64(policy.HP.TargetPercent) / 100,
 		"energy":    100 * float64(policy.Energy.TargetPercent) / 100,
@@ -191,6 +199,7 @@ func createRecoveryPlanTx(tx *gorm.DB, userID, sessionID uint, state engine.Char
 			status = "completed"
 		} else if rate > 0 {
 			status = "running"
+			// 预计完成时间 = 当前时间 + 剩余缺口 / 每小时速率（不足 1 小时向上取整）。
 			complete := now.Add(time.Duration(math.Ceil((target - current) / rate * float64(time.Hour))))
 			completeAt = &complete
 		}
@@ -206,6 +215,7 @@ func createRecoveryPlanTx(tx *gorm.DB, userID, sessionID uint, state engine.Char
 	return completeRecoveryPlanIfDoneTx(tx, userID, plan.ID, now)
 }
 
+// applyRecoveryPolicyTx 按策略逐资源尝试首选/备用/商人三种即时恢复方式，藏身处仅作为持续恢复兜底。
 func applyRecoveryPolicyTx(tx *gorm.DB, userID uint, state *engine.CharacterState, policy RecoveryPolicy, targets map[string]float64, rates recoveryRates) (map[string]string, error) {
 	actualMethods := make(map[string]string, 3)
 	for _, resource := range []string{"hp", "energy", "hydration"} {
@@ -253,6 +263,7 @@ func applyRecoveryPolicyTx(tx *gorm.DB, userID uint, state *engine.CharacterStat
 	return actualMethods, nil
 }
 
+// applyRecoveryMethodTx 按方式分发即时恢复：库存消耗或商人购买，藏身处/无方式不消耗。
 func applyRecoveryMethodTx(tx *gorm.DB, userID uint, state *engine.CharacterState, resource, method string, targets map[string]float64) (bool, error) {
 	switch method {
 	case recoveryMethodInventory:
@@ -273,6 +284,7 @@ type recoveryRates struct {
 	Stress    float64
 }
 
+// recoveryRateForResource 按资源名取出对应的藏身处每小时恢复速率。
 func recoveryRateForResource(rates recoveryRates, resource string) float64 {
 	switch resource {
 	case "energy":
@@ -284,6 +296,7 @@ func recoveryRateForResource(rates recoveryRates, resource string) float64 {
 	}
 }
 
+// hideoutRecoveryRatesTx 汇总 ready 状态设施（需供电的先结算发电机）的基础恢复速率，并叠加设施速度加成。
 func hideoutRecoveryRatesTx(tx *gorm.DB, userID uint) (recoveryRates, error) {
 	if err := settleGeneratorTx(tx, userID, time.Now()); err != nil {
 		return recoveryRates{}, err
@@ -315,6 +328,7 @@ func hideoutRecoveryRatesTx(tx *gorm.DB, userID uint) (recoveryRates, error) {
 		rates.Stress += level.StressRecoveryPerHour
 		speed += level.RecoverySpeedPercent
 	}
+	// 恢复速度加成：各设施速度百分比之和换算为整体倍率。
 	multiplier := 1 + float64(speed)/100
 	rates.HP *= multiplier
 	rates.Energy *= multiplier
@@ -323,6 +337,7 @@ func hideoutRecoveryRatesTx(tx *gorm.DB, userID uint) (recoveryRates, error) {
 	return rates, nil
 }
 
+// applyInventoryRecoveryForResourceTx 按优先级依次消耗库存恢复物品，直到达到目标或无可消耗物品。
 func applyInventoryRecoveryForResourceTx(tx *gorm.DB, userID uint, state *engine.CharacterState, resource string, targets map[string]float64) (bool, error) {
 	var defs []models.ItemUseDef
 	if err := tx.Where("usable_in_hideout = ? AND (hp_recovery > 0 OR energy_recovery > 0 OR hydration_recovery > 0)", true).
@@ -363,6 +378,7 @@ type merchantRecoveryCandidate struct {
 	efficiency float64
 }
 
+// applyMerchantRecoveryTx 按“单价/恢复量”效率排序候选商人医疗商品，并在现金充足时循环购买直到达到目标。
 func applyMerchantRecoveryTx(tx *gorm.DB, userID uint, state *engine.CharacterState, resource string, targets map[string]float64) (bool, error) {
 	var defs []models.ItemUseDef
 	if err := tx.Where("usable_in_hideout = ? AND (hp_recovery > 0 OR energy_recovery > 0 OR hydration_recovery > 0)", true).
@@ -439,6 +455,7 @@ func applyMerchantRecoveryTx(tx *gorm.DB, userID uint, state *engine.CharacterSt
 	return used, nil
 }
 
+// recoveryChoiceForResource 按资源名取出对应的恢复策略选择。
 func recoveryChoiceForResource(policy RecoveryPolicy, resource string) RecoveryChoice {
 	switch resource {
 	case "energy":
@@ -450,6 +467,7 @@ func recoveryChoiceForResource(policy RecoveryPolicy, resource string) RecoveryC
 	}
 }
 
+// recoveryEffect 按资源名读取物品定义中对应的单次恢复量。
 func recoveryEffect(def models.ItemUseDef, resource string) float64 {
 	switch resource {
 	case "energy":
@@ -461,6 +479,7 @@ func recoveryEffect(def models.ItemUseDef, resource string) float64 {
 	}
 }
 
+// resourceValue 按资源名读取角色当前资源值。
 func resourceValue(state engine.CharacterState, resource string) float64 {
 	switch resource {
 	case "energy":
@@ -472,12 +491,14 @@ func resourceValue(state engine.CharacterState, resource string) float64 {
 	}
 }
 
+// applyRecoveryEffects 按使用比例把物品恢复量施加到角色资源，并钳制在合法区间。
 func applyRecoveryEffects(state *engine.CharacterState, def models.ItemUseDef, ratio float64) {
-	state.HP = clampResource(state.HP+def.HPRecovery*ratio, 0, engine.CalcMaxHP(state.Strength))
+	state.HP = clampResource(state.HP+def.HPRecovery*ratio, 0, engine.CalcMaxHP(engine.DefaultTuning(), state.Strength))
 	state.Energy = clampResource(state.Energy+def.EnergyRecovery*ratio, 0, 100)
 	state.Hydration = clampResource(state.Hydration+def.HydrationRecovery*ratio, 0, 100)
 }
 
+// canApplyRecoveryEffects 判断使用该物品后是否会把负向效果（如降饮水）压过目标值，避免过度使用。
 func canApplyRecoveryEffects(state engine.CharacterState, def models.ItemUseDef, targets map[string]float64) bool {
 	if def.EnergyRecovery < 0 && state.Energy+def.EnergyRecovery < targets["energy"] {
 		return false
@@ -488,6 +509,7 @@ func canApplyRecoveryEffects(state engine.CharacterState, def models.ItemUseDef,
 	return true
 }
 
+// consumeRecoveryItemTx 消耗一个库存恢复物品：实例类扣耐久并处理耗尽，普通类扣数量并删除零库存行。
 func consumeRecoveryItemTx(tx *gorm.DB, userID uint, def models.ItemUseDef) (bool, float64, error) {
 	if def.InstanceRequired {
 		var instance models.ItemInstance
@@ -536,6 +558,7 @@ func consumeRecoveryItemTx(tx *gorm.DB, userID uint, def models.ItemUseDef) (boo
 	return true, 1, nil
 }
 
+// settleRecoveryForUser 加用户资源锁后结算该用户的恢复计划，供读取角色资源前调用。
 func settleRecoveryForUser(db *gorm.DB, userID uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, userID); err != nil {
@@ -654,6 +677,7 @@ func ensureRecoveryReadyForStartTx(tx *gorm.DB, userID uint) error {
 		return fmt.Errorf("读取恢复任务: %w", err)
 	}
 	for _, task := range tasks {
+		// 用极小容差比较浮点目标值，避免精度误差导致未恢复完成的误判。
 		if task.Status == "completed" || task.Status == "failed" || resourceValueFromCharacter(character, task.ResourceType) >= task.TargetValue-0.000001 {
 			continue
 		}
@@ -662,6 +686,7 @@ func ensureRecoveryReadyForStartTx(tx *gorm.DB, userID uint) error {
 	return nil
 }
 
+// resourceValueFromCharacter 按资源名读取角色表上的当前资源值。
 func resourceValueFromCharacter(character models.Character, resource string) float64 {
 	switch resource {
 	case "hp":
@@ -675,6 +700,7 @@ func resourceValueFromCharacter(character models.Character, resource string) flo
 	}
 }
 
+// recoveryResourceName 将资源键转为中文名，用于展示与报错文案。
 func recoveryResourceName(resource string) string {
 	switch resource {
 	case "hp":
@@ -693,6 +719,7 @@ func SettleRecoveryForUser(db *gorm.DB, userID uint) error {
 	return settleRecoveryForUser(db, userID)
 }
 
+// completeRecoveryPlanIfDoneTx 当计划内所有任务都到终态时收尾计划：全部完成则 completed，有失败则 failed。
 func completeRecoveryPlanIfDoneTx(tx *gorm.DB, userID, planID uint, now time.Time) error {
 	var pending int64
 	if err := tx.Model(&models.RecoveryTask{}).Where("user_id = ? AND recovery_plan_id = ? AND status NOT IN ?", userID, planID, []string{"completed", "failed"}).Count(&pending).Error; err != nil {
@@ -712,6 +739,7 @@ func completeRecoveryPlanIfDoneTx(tx *gorm.DB, userID, planID uint, now time.Tim
 	return tx.Model(&models.RecoveryPlan{}).Where("user_id = ? AND id = ?", userID, planID).Updates(map[string]interface{}{"status": status, "completed_at": now}).Error
 }
 
+// GetCurrentRecoveryForUser 先结算恢复时间，再返回当前（最新）恢复计划及其任务列表，无计划时返回 nil。
 func GetCurrentRecoveryForUser(db *gorm.DB, userID uint) (*RecoveryView, error) {
 	if err := settleRecoveryForUser(db, userID); err != nil {
 		return nil, err
@@ -730,6 +758,7 @@ func GetCurrentRecoveryForUser(db *gorm.DB, userID uint) (*RecoveryView, error) 
 	return &RecoveryView{Plan: plan, Tasks: tasks}, nil
 }
 
+// clampResource 把数值钳制在 [minValue, maxValue] 区间内。
 func clampResource(value, minValue, maxValue float64) float64 {
 	if value < minValue {
 		return minValue

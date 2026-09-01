@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// buildScenarioSnapshot 在事务内构建场景快照，并返回其规范 JSON 与 hash。
 func buildScenarioSnapshot(db *gorm.DB, userID uint, mapID string) (engine.ScenarioSnapshot, string, string, error) {
 	var snapshot engine.ScenarioSnapshot
 	var encoded, hash string
@@ -27,6 +28,7 @@ func buildScenarioSnapshot(db *gorm.DB, userID uint, mapID string) (engine.Scena
 	return snapshot, encoded, hash, nil
 }
 
+// buildScenarioSnapshotTx 读取地图、节点、容器与各类目录定义，物化敌人并组装出纯引擎快照。
 func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.ScenarioSnapshot, string, string, error) {
 	var gameMap models.MapDef
 	if err := db.First(&gameMap, "id = ?", mapID).Error; err != nil {
@@ -139,6 +141,7 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		Ammos:                    make(map[string]engine.Ammo, len(ammos)),
 		AmmoSupplies:             make(map[string]engine.AmmoSupply, len(ammos)),
 		Armors:                   make(map[string]engine.Armor, len(armors)),
+		Headsets:                 make(map[string]engine.Headset, len(headsets)),
 		Enemies:                  make(map[string]engine.Enemy, len(enemyTemplates)*2),
 		Events: engine.EventCatalog{
 			Definitions:    make(map[string]engine.EventDefinition, len(eventDefs)),
@@ -146,6 +149,7 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 			EncounterPools: make(map[string][]engine.EncounterPoolEntry),
 		},
 		Styles: engine.DefaultStylePolicies(),
+		Tuning: engine.DefaultTuning(),
 	}
 
 	// 敌人生成：模板 → 变体（确定性 RNG），重写节点与遭遇池引用。
@@ -291,6 +295,10 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		}
 		item.Kind = "headset"
 		snapshot.Items[item.ID] = item
+		snapshot.Headsets[item.ID] = engine.Headset{
+			ID: definition.ID, Name: definition.Name, HearingLevel: definition.HearingLevel,
+			Price: definition.Price, MerchantCategory: definition.MerchantCategory, RepRequirement: definition.RepRequirement,
+		}
 	}
 	for _, definition := range generatedEnemies {
 		snapshot.Enemies[definition.ID] = definition
@@ -324,12 +332,14 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 	return snapshot, encoded, hash, nil
 }
 
+// convertMap 把数据库地图定义转为引擎 DTO，标签做一次切片拷贝避免共享底层数组。
 func convertMap(definition models.MapDef) engine.Map {
 	return engine.Map{ID: definition.ID, Name: definition.Name, Desc: definition.Desc, StartNodeID: definition.StartNodeID, LayoutColumns: definition.LayoutColumns, LayoutRows: definition.LayoutRows, Tags: append([]string(nil), definition.Tags...)}
 }
 
+// convertNode 把数据库节点定义转为引擎 DTO，保留敌人生成后回填的 EnemyID。
 func convertNode(definition models.NodeDef) engine.Node {
-	return engine.Node{ID: definition.ID, MapID: definition.MapID, Name: definition.Name, PositionX: definition.PositionX, PositionY: definition.PositionY, ExploreTime: definition.ExploreTime, Distance: definition.Distance, EnemyID: definition.EnemyID, EncounterRole: definition.EncounterRole, ContainerSlots: definition.ContainerSlots, ValueTier: definition.ValueTier, Tags: append([]string(nil), definition.Tags...)}
+	return engine.Node{ID: definition.ID, MapID: definition.MapID, Name: definition.Name, PositionX: definition.PositionX, PositionY: definition.PositionY, ExploreTime: definition.ExploreTime, Distance: definition.Distance, EnemyID: definition.EnemyID, EncounterRole: definition.EncounterRole, ContainerSlots: definition.ContainerSlots, ValueTier: definition.ValueTier, EncounterChance: definition.EncounterChance, Tags: append([]string(nil), definition.Tags...)}
 }
 
 // materializeEnemies 把模板引用物化为敌人变体：为每个引用（节点/遭遇池）生成独立变体，
@@ -349,9 +359,9 @@ func materializeEnemies(
 		templatesByID[t.ID] = t
 	}
 	catalog := EnemyGenerator{
-		Weapons:   make(map[string]engine.Weapon, len(weapons)),
-		Armors:    make(map[string]engine.Armor, len(armors)),
-		Ammos:     make(map[string]engine.Ammo, len(ammos)),
+		Weapons:    make(map[string]engine.Weapon, len(weapons)),
+		Armors:     make(map[string]engine.Armor, len(armors)),
+		Ammos:      make(map[string]engine.Ammo, len(ammos)),
 		Containers: make(map[string]engine.Container, len(containers)),
 	}
 	for i := range weapons {
@@ -405,6 +415,7 @@ func materializeEnemies(
 	}
 
 	// 遭遇池引用：每个池条目生成独立变体
+	ctx.NodeValueTier = 0
 	for _, entry := range pools {
 		template, ok := templatesByID[entry.EnemyID]
 		if !ok || entry.EnemyID == "" {
@@ -421,6 +432,7 @@ func materializeEnemies(
 	return generated, nodeEnemyIDs, poolEnemyIDs, nil
 }
 
+// convertJSON 通过 JSON 往返把含命名习惯的 models 定义复制到同名引擎结构。
 func convertJSON(source interface{}, target interface{}) error {
 	encoded, err := json.Marshal(source)
 	if err != nil {
