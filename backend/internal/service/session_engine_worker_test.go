@@ -24,13 +24,34 @@ func TestStartSessionRejectsMissingAmmo(t *testing.T) {
 	}
 }
 
-func TestValidateSessionEngineVersionRejectsLegacy(t *testing.T) {
-	if err := validateSessionEngineVersion(engine.EngineVersion); err != nil {
-		t.Fatalf("当前引擎版本不应被拒绝: %v", err)
+func TestValidateSessionEngineVersionAcceptsMigratableVersions(t *testing.T) {
+	for _, version := range []string{engine.LegacyEngineVersionV16, engine.EngineVersion} {
+		if err := validateSessionEngineVersion(version); err != nil {
+			t.Fatalf("可处理的引擎版本 %q 不应被拒绝: %v", version, err)
+		}
 	}
 	for _, version := range []string{"", "exploration-engine-v3", "unknown-engine"} {
 		if err := validateSessionEngineVersion(version); err == nil {
-			t.Fatalf("旧或空引擎版本 %q 应被拒绝", version)
+			t.Fatalf("空或未知引擎版本 %q 应被拒绝", version)
 		}
+	}
+}
+
+func TestSessionEventRunIndexFallsBackToValidValue(t *testing.T) {
+	tests := []struct {
+		name         string
+		sess         models.Session
+		wantRunIndex int
+	}{
+		{name: "pending run", sess: models.Session{PendingRunIndex: 3, TotalRuns: 2}, wantRunIndex: 3},
+		{name: "total runs", sess: models.Session{TotalRuns: 2}, wantRunIndex: 2},
+		{name: "fresh session", sess: models.Session{}, wantRunIndex: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sessionEventRunIndex(tt.sess); got != tt.wantRunIndex {
+				t.Fatalf("sessionEventRunIndex(%+v) = %d，期望 %d", tt.sess, got, tt.wantRunIndex)
+			}
+		})
 	}
 }
