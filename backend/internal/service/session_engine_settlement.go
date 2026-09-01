@@ -34,6 +34,7 @@ func replaceLostLoadoutTx(tx *gorm.DB, userID uint, presetIndex int, snapshot en
 	for itemID := range lostQuantities {
 		lostItemIDs = append(lostItemIDs, itemID)
 	}
+	// 按排序后的物品 ID 依次扣减，保证多次扣减的库存操作顺序稳定。
 	sort.Strings(lostItemIDs)
 	for _, itemID := range lostItemIDs {
 		if err := removeInventoryItem(tx, userID, itemID, lostQuantities[itemID]); err != nil {

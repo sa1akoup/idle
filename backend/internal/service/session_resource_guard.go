@@ -30,8 +30,10 @@ func lockUserResourcesTx(tx *gorm.DB, userID uint) error {
 	return nil
 }
 
+// activeSessionsForUser 查询（行锁保护的）活跃运行中会话，供各类资源占用判定使用。
 func activeSessionsForUser(tx *gorm.DB, userID uint) ([]models.Session, error) {
 	var sessions []models.Session
+	// 使用 FOR UPDATE 行锁锁定活跃会话行，防止结算或资源操作并发读到过期状态。
 	query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("user_id = ? AND status = ?", userID, "running")
 	if err := query.Find(&sessions).Error; err != nil {
@@ -40,6 +42,7 @@ func activeSessionsForUser(tx *gorm.DB, userID uint) ([]models.Session, error) {
 	return sessions, nil
 }
 
+// ensureLoadoutMutationAllowed 有活跃会话时禁止修改当前装备，防止开局后换装造成快照与背包分裂。
 func ensureLoadoutMutationAllowed(tx *gorm.DB, userID uint) error {
 	sessions, err := activeSessionsForUser(tx, userID)
 	if err != nil {
@@ -51,6 +54,7 @@ func ensureLoadoutMutationAllowed(tx *gorm.DB, userID uint) error {
 	return nil
 }
 
+// ensureItemNotInActiveSession 检查物品是否被当前配装或任意活跃会话携带，被占用则拒绝出售/转移等操作。
 func ensureItemNotInActiveSession(tx *gorm.DB, userID uint, itemID string) error {
 	sessions, err := activeSessionsForUser(tx, userID)
 	if err != nil {
@@ -92,6 +96,7 @@ func ensureItemNotInActiveSession(tx *gorm.DB, userID uint, itemID string) error
 	return nil
 }
 
+// ensureArmorRepairAllowed 有活跃会话正在使用该护甲时禁止维修。
 func ensureArmorRepairAllowed(tx *gorm.DB, userID uint, armorID string) error {
 	sessions, err := activeSessionsForUser(tx, userID)
 	if err != nil {
@@ -105,6 +110,7 @@ func ensureArmorRepairAllowed(tx *gorm.DB, userID uint, armorID string) error {
 	return nil
 }
 
+// splitSessionConsumables 将会话行的补给 CSV 字符串解析为物品 ID 列表，并兼容前导空格。
 func splitSessionConsumables(value string) ([]string, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil

@@ -36,6 +36,18 @@ type RunPlan struct {
 	Hash     string
 }
 
+// sessionEventRunIndex 返回终局事件应使用的有效局序号，避免异常会话把事件写入 run_index=0。
+func sessionEventRunIndex(sess models.Session) int {
+	runIndex := sess.PendingRunIndex
+	if runIndex <= 0 {
+		runIndex = sess.TotalRuns
+	}
+	if runIndex <= 0 {
+		return 1
+	}
+	return runIndex
+}
+
 // SessionEventView 是前端实时播放和历史回放使用的事件格式。
 type SessionEventView struct {
 	ID          uint                   `json:"id"`
@@ -70,6 +82,7 @@ func marshalPendingRun(runIndex int, input engine.EngineState, result engine.Run
 	return string(resultJSON), hex.EncodeToString(hash[:]), nil
 }
 
+// decodePendingRun 从 Session 行解码待结算结果并做完整性校验：hash 覆盖局序号、当前状态与结果，防止 StateJSON 被替换后继续结算旧计划。
 func decodePendingRun(sess models.Session, currentState engine.EngineState) (engine.RunResult, error) {
 	if sess.PendingRunIndex <= 0 || sess.PendingRunResult == "" || sess.PendingRunResult == "{}" {
 		return engine.RunResult{}, fmt.Errorf("%w：行动会话缺少待结算 RunPlan", ErrPendingRunIntegrity)
@@ -91,6 +104,7 @@ func decodePendingRun(sess models.Session, currentState engine.EngineState) (eng
 	return result, nil
 }
 
+// appendPlannedSessionEvents 将一局预计算的纯引擎事件批量落库，按事件偏移量预排 AvailableAt 供前端按时播放。
 func appendPlannedSessionEvents(tx *gorm.DB, userID, sessionID uint, plan RunPlan, runStartAt time.Time) error {
 	if err := engine.ValidateTrace(plan.Events, plan.Result.DurationSec); err != nil {
 		return fmt.Errorf("校验第%d局探索事件: %w", plan.RunIndex, err)
@@ -113,6 +127,7 @@ func appendPlannedSessionEvents(tx *gorm.DB, userID, sessionID uint, plan RunPla
 	return nil
 }
 
+// nextSessionEventSequence 查询指定局内当前最大事件序号并加 1，保证同局追加的事件顺序连续。
 func nextSessionEventSequence(tx *gorm.DB, sessionID uint, runIndex int) (int, error) {
 	var row struct {
 		MaxSequence int `gorm:"column:max_sequence"`
@@ -126,6 +141,7 @@ func nextSessionEventSequence(tx *gorm.DB, sessionID uint, runIndex int) (int, e
 	return row.MaxSequence + 1, nil
 }
 
+// appendSessionEventTx 在事务内追加单条会话事件，自动分配序号并序列化 payload。
 func appendSessionEventTx(tx *gorm.DB, userID, sessionID uint, runIndex int, eventType string, offsetSec int64, availableAt time.Time, nodeID, subjectID string, payload interface{}) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -146,6 +162,7 @@ func appendSessionEventTx(tx *gorm.DB, userID, sessionID uint, runIndex int, eve
 	return nil
 }
 
+// sessionEventView 将数据库事件行转换为前端视图结构，并解析 payload JSON。
 func sessionEventView(row models.SessionEvent) (SessionEventView, error) {
 	payload := make(map[string]interface{})
 	if row.PayloadJSON != "" {
@@ -189,14 +206,15 @@ func ListSessionEvents(db *gorm.DB, userID, sessionID uint, afterID uint) ([]Ses
 	return result, nil
 }
 
+// appendLootSettlementEvents 为一批战利品掉落生成结算事件（拾取/入库/溢出等），物品名与类目取自场景快照目录。
 func appendLootSettlementEvents(tx *gorm.DB, userID, sessionID uint, runIndex int, snapshot engine.ScenarioSnapshot, loot []engine.LootDrop, eventType string, offsetSec int64, now time.Time) error {
 	for _, drop := range loot {
-		item, err := snapshotCatalogItem(snapshot, drop.ItemID)
+		name, category, err := resolveLootSummary(snapshot, drop)
 		if err != nil {
 			return err
 		}
 		if err := appendSessionEventTx(tx, userID, sessionID, runIndex, eventType, offsetSec, now, "", drop.ItemID, map[string]interface{}{
-			"dropId": drop.ID, "itemId": drop.ItemID, "name": item.Name, "category": item.Category,
+			"dropId": drop.ID, "itemId": drop.ItemID, "name": name, "category": category,
 			"quantity": drop.Quantity, "containerId": drop.ContainerID, "source": drop.Source,
 		}); err != nil {
 			return err

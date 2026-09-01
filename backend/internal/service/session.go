@@ -21,14 +21,17 @@ type SessionService struct {
 	scheduler  *SessionScheduler
 }
 
+// NewSessionService 创建基础会话服务；未配置调度器与租约时仅支持查询类操作。
 func NewSessionService(db *gorm.DB, userID uint) *SessionService {
 	return &SessionService{db: db, userID: userID}
 }
 
+// NewSessionServiceWithScheduler 创建带调度器的会话服务，Start 后可派发后台 worker 推进模拟。
 func NewSessionServiceWithScheduler(db *gorm.DB, userID uint, scheduler *SessionScheduler) *SessionService {
 	return &SessionService{db: db, userID: userID, scheduler: scheduler}
 }
 
+// NewSessionServiceWithLease 创建带租约归属的会话服务，写状态时携带租约条件防重入。
 func NewSessionServiceWithLease(db *gorm.DB, userID uint, leaseOwner string) *SessionService {
 	return &SessionService{db: db, userID: userID, leaseOwner: leaseOwner}
 }
@@ -173,11 +176,13 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 	return &sess, nil
 }
 
+// isEmptyCurrentLoadout 判断当前配装是否为空（无任何装备与补给），空配装无法直接开局。
 func isEmptyCurrentLoadout(loadout *models.PlayerLoadout) bool {
 	return loadout.WeaponID == "" && loadout.ArmorID == "" && loadout.ChestRigID == "" && loadout.BackpackID == "" &&
 		loadout.HelmetID == "" && loadout.HeadsetID == "" && len(loadout.Consumables) == 0 && len(loadout.ConsumableRefs) == 0
 }
 
+// restoreLostLoadoutForStartTx 开局配装为空时，从最近一次失能会话按预设自动补购装备；无失能记录则直接忽略。
 func restoreLostLoadoutForStartTx(tx *gorm.DB, userID uint, loadout *models.PlayerLoadout, presetIndex int) error {
 	var previous models.Session
 	if err := tx.Where("user_id = ? AND status = ?", userID, "incapacitated").Order("id desc").First(&previous).Error; err != nil {
@@ -196,6 +201,7 @@ func restoreLostLoadoutForStartTx(tx *gorm.DB, userID uint, loadout *models.Play
 	return nil
 }
 
+// runSession 执行一次会话推进；租约被抢占时静默退出，其余错误写入失败状态并完成异常结算。
 func (s *SessionService) runSession(id uint) {
 	if err := s.simulateSession(id); err != nil {
 		if errors.Is(err, ErrSessionLeaseLost) {
@@ -210,6 +216,7 @@ func (s *SessionService) runSession(id uint) {
 	}
 }
 
+// failSession 将运行中会话标记为失败并异常结算：只归还最后一次持久化状态并清空实例，游戏内失能才执行丢装。
 func (s *SessionService) failSession(id uint, cause error) error {
 	now := time.Now()
 	return s.db.Transaction(func(tx *gorm.DB) error {
@@ -286,13 +293,7 @@ func (s *SessionService) failSession(id uint, cause error) error {
 		if err := discardSessionItemInstancesTx(tx, s.userID); err != nil {
 			return fmt.Errorf("清理异常 Session 实例: %w", err)
 		}
-		runIndex := sess.PendingRunIndex
-		if runIndex <= 0 {
-			runIndex = sess.TotalRuns
-		}
-		if runIndex <= 0 {
-			runIndex = 1
-		}
+		runIndex := sessionEventRunIndex(sess)
 		payload := map[string]interface{}{
 			"status": "failed", "reason": cause.Error(),
 		}
@@ -303,6 +304,7 @@ func (s *SessionService) failSession(id uint, cause error) error {
 	})
 }
 
+// GetSession 查询单个会话及其全部局记录，供详情与回放使用。
 func (s *SessionService) GetSession(id uint) (*models.Session, []models.SessionRun, error) {
 	var sess models.Session
 	if err := s.db.Where("user_id = ? AND id = ?", s.userID, id).First(&sess).Error; err != nil {
@@ -315,12 +317,14 @@ func (s *SessionService) GetSession(id uint) (*models.Session, []models.SessionR
 	return &sess, runs, nil
 }
 
+// ListSessions 查询该用户最近 20 条会话（倒序），用于会话列表展示。
 func (s *SessionService) ListSessions() ([]models.Session, error) {
 	var list []models.Session
 	err := s.db.Where("user_id = ?", s.userID).Order("id desc").Limit(20).Find(&list).Error
 	return list, err
 }
 
+// maxInt 返回 value 与 floor 中的较大者，用于数值下限约束。
 func maxInt(value, floor int) int {
 	if value < floor {
 		return floor
@@ -328,6 +332,7 @@ func maxInt(value, floor int) int {
 	return value
 }
 
+// getAttrValue 按属性名读取角色属性值，未知属性名时返回默认值 50。
 func getAttrValue(character *models.Character, attribute string) int {
 	switch attribute {
 	case "strength":

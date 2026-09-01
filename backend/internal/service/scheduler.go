@@ -52,10 +52,12 @@ type schedulerRuntime struct {
 	stopping     bool
 }
 
+// NewSessionScheduler 创建调度器实例，仅持有数据库连接，运行状态由 Start 初始化。
 func NewSessionScheduler(db *gorm.DB) *SessionScheduler {
 	return &SessionScheduler{db: db}
 }
 
+// sessionWorkerKey 将用户 ID 与会话 ID 编码为 64 位键，用于去重与活跃标记。
 func sessionWorkerKey(userID, sessionID uint) uint64 {
 	return uint64(userID)<<32 | uint64(sessionID)
 }
@@ -83,6 +85,7 @@ func (s *SessionScheduler) Start(ctx context.Context) error {
 	return nil
 }
 
+// run 调度主循环：每秒扫描一次到期会话并派发，收到停止信号或上下文取消时退出。
 func (s *SessionScheduler) run(ctx context.Context, runtime *schedulerRuntime) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -101,6 +104,7 @@ func (s *SessionScheduler) run(ctx context.Context, runtime *schedulerRuntime) {
 	}
 }
 
+// requestStop 标记停止状态，并由 stopOnce 保证停止通道只关闭一次。
 func (s *SessionScheduler) requestStop(runtime *schedulerRuntime) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -158,6 +162,7 @@ func (s *SessionScheduler) dispatchSessionWorker(userID, sessionID uint) {
 		return
 	}
 	key := sessionWorkerKey(userID, sessionID)
+	// 防重入：该会话已有 worker 在跑则直接跳过，避免同一会话被并发推进。
 	if _, loaded := runtime.activeWorker.LoadOrStore(key, struct{}{}); loaded {
 		s.mu.Unlock()
 		return
@@ -166,6 +171,7 @@ func (s *SessionScheduler) dispatchSessionWorker(userID, sessionID uint) {
 	case runtime.queue <- sessionWorkerTask{db: s.db, userID: userID, sessionID: sessionID}:
 		s.mu.Unlock()
 	default:
+		// 队列已满：撤回去重标记，交由后续调度扫描重新派发。
 		runtime.activeWorker.Delete(key)
 		s.mu.Unlock()
 		log.Printf("行动 worker 队列已满，稍后重试 session=%d user=%d", sessionID, userID)
@@ -184,6 +190,7 @@ func (s *SessionScheduler) isSessionWorkerActive(userID, sessionID uint) bool {
 	return active
 }
 
+// newSchedulerRuntime 初始化队列与停止通道，并启动固定数量的 worker 协程消费任务队列。
 func newSchedulerRuntime() *schedulerRuntime {
 	runtime := &schedulerRuntime{
 		queue:        make(chan sessionWorkerTask, sessionWorkerQueueSize),
@@ -203,6 +210,7 @@ func newSchedulerRuntime() *schedulerRuntime {
 	return runtime
 }
 
+// runSessionWorker 单任务执行入口：先原子抢占租约，失败则直接放弃；成功则带租约推进会话并在结束或失败时释放。
 func runSessionWorker(runtime *schedulerRuntime, task sessionWorkerTask) {
 	key := sessionWorkerKey(task.userID, task.sessionID)
 	defer runtime.activeWorker.Delete(key)
@@ -215,6 +223,7 @@ func runSessionWorker(runtime *schedulerRuntime, task sessionWorkerTask) {
 	service.runSession(task.sessionID)
 }
 
+// dispatchPendingSessions 扫描到期（next_run_at 已到且租约为空或已过期）的会话，按时间顺序批量派发，单次上限 sessionDispatchBatchSize 条。
 func (s *SessionScheduler) dispatchPendingSessions() {
 	var sessions []struct {
 		ID     uint
@@ -235,6 +244,7 @@ func (s *SessionScheduler) dispatchPendingSessions() {
 	}
 }
 
+// claimSessionLease 原子抢占会话租约：仅当会话仍运行、已到期且租约可用时写入归属并延到 30 秒后，成功才允许该 worker 推进。
 func claimSessionLease(db *gorm.DB, userID, sessionID uint, owner string, now time.Time) bool {
 	leaseUntil := now.Add(30 * time.Second)
 	result := db.Model(&models.Session{}).
