@@ -4,6 +4,7 @@ backend/*.db-shm
 backend/*.db-wal
 backend/*.db.pre-upgrade.bak
 backend/.env
+.gocache/
 
 # 前端依赖与构建产物
 frontend/node_modules/

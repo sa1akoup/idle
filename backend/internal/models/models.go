@@ -304,6 +304,7 @@ type NodeDef struct {
 	EncounterRole  string   `json:"encounterRole"`  // patrol/guard/elite 等行为角色
 	ContainerSlots int      `json:"containerSlots"` // 本节点每局生成的容器槽位
 	ValueTier      int      `json:"valueTier"`      // 节点整体价值等级，1-5
+	EncounterChance int     `json:"encounterChance"` // 本节点基础遇敌概率 0-100，0 表示使用引擎默认值
 	Tags           []string `gorm:"serializer:json" json:"tags"`
 }
 
@@ -365,6 +366,14 @@ type EnemyTemplateDef struct {
 	MobilityFlux   int `json:"mobilityFlux"`
 	SuppressBase   int `json:"suppressBase"`
 	SuppressFlux   int `json:"suppressFlux"`
+	IntellectBase  int `json:"intellectBase"`
+	IntellectFlux  int `json:"intellectFlux"`
+	IntellectFloor int `json:"intellectFloor"`
+	IntellectCap   int `json:"intellectCap"`
+	ResistBase     int `json:"resistBase"`
+	ResistFlux     int `json:"resistFlux"`
+	ResistFloor    int `json:"resistFloor"`
+	ResistCap      int `json:"resistCap"`
 
 	// 装备池（按权重抽取）
 	WeaponPool     []WeightedRef `gorm:"serializer:json" json:"weaponPool"`
@@ -377,7 +386,6 @@ type EnemyTemplateDef struct {
 	// 掉落
 	BackpackPool  []WeightedRef `gorm:"serializer:json" json:"backpackPool"`
 	BossLootItems []WeightedRef `gorm:"serializer:json" json:"bossLootItems"`
-	BossAmmoDrop  bool          `json:"bossAmmoDrop"`
 
 	// Boss 固定装备（不走池，仅 boss 用）
 	BossWeaponID string `json:"bossWeaponId"`

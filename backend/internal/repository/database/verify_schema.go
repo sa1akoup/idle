@@ -32,7 +32,7 @@ var requiredSchema = []schemaExpectation{
 	{table: "facility_jobs", columns: []string{"job_type", "complete_at", "status"}},
 	{table: "facility_runtime_states", columns: []string{"enabled", "state_json"}},
 	{table: "recipe_defs", columns: []string{"name", "facility_id", "required_level", "inputs_json", "output_item_id", "craft_seconds"}},
-	{table: "enemy_template_defs", columns: []string{"kind", "tier", "weapon_pool", "armor_pool", "backpack_pool", "ammo_level_min", "ammo_level_max"}},
+	{table: "enemy_template_defs", columns: []string{"kind", "tier", "weapon_pool", "armor_pool", "backpack_pool", "ammo_level_min", "ammo_level_max", "intellect_base", "intellect_flux", "intellect_floor", "intellect_cap", "resist_base", "resist_flux", "resist_floor", "resist_cap"}},
 	{table: "user_data_migrations", columns: []string{"version", "completed_at", "processed_users", "created_instances", "stripped_refs"}},
 	{table: "schema_migrations", columns: []string{"checksum"}},
 }
