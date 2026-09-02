@@ -48,6 +48,9 @@ func SavePlayerLoadoutForUser(db *gorm.DB, userID uint, req SaveLoadoutReq) (*mo
 			req.ChestRigID, req.BackpackID, req.HelmetID, req.HeadsetID); err != nil {
 			return err
 		}
+		if err := validateCarriedAmmoForUser(tx, userID, req.WeaponID, req.CarriedAmmo); err != nil {
+			return fmt.Errorf("携带弹药无效: %w", err)
+		}
 		for i := 1; i <= 3; i++ {
 			weaponID, armorID, consumables, equip := presetOfReq(req, i)
 			ammoID, ammoRounds := presetAmmoOfReq(req, i)
@@ -70,6 +73,7 @@ func SavePlayerLoadoutForUser(db *gorm.DB, userID uint, req SaveLoadoutReq) (*mo
 			WeaponID: req.WeaponID, ArmorID: req.ArmorID,
 			ChestRigID: req.ChestRigID, BackpackID: req.BackpackID, HelmetID: req.HelmetID, HeadsetID: req.HeadsetID,
 			Consumables: req.Consumables, ConsumableRefs: []models.LoadoutItemRef{},
+			CarriedAmmo:    req.CarriedAmmo,
 			PresetWeaponID: req.PresetWeaponID, PresetArmorID: req.PresetArmorID,
 			PresetChestRigID: req.PresetChestRigID, PresetBackpackID: req.PresetBackpackID,
 			PresetHelmetID: req.PresetHelmetID, PresetHeadsetID: req.PresetHeadsetID,
@@ -83,16 +87,23 @@ func SavePlayerLoadoutForUser(db *gorm.DB, userID uint, req SaveLoadoutReq) (*mo
 			Preset3HelmetID: req.Preset3HelmetID, Preset3HeadsetID: req.Preset3HeadsetID,
 			Preset3Name: req.Preset3Name, Preset3Consumables: req.Preset3Consumables, Preset3ConsumableRefs: []models.LoadoutItemRef{}, Preset3AmmoID: req.Preset3AmmoID, Preset3AmmoRounds: req.Preset3AmmoRounds,
 		}
+		selectFields := []string{
+			"WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs", "CarriedAmmo",
+			"PresetWeaponID", "PresetArmorID", "PresetChestRigID", "PresetBackpackID", "PresetHelmetID", "PresetHeadsetID", "PresetName", "PresetConsumables", "PresetConsumableRefs", "PresetAmmoID", "PresetAmmoRounds",
+			"Preset2WeaponID", "Preset2ArmorID", "Preset2ChestRigID", "Preset2BackpackID", "Preset2HelmetID", "Preset2HeadsetID", "Preset2Name", "Preset2Consumables", "Preset2ConsumableRefs", "Preset2AmmoID", "Preset2AmmoRounds",
+			"Preset3WeaponID", "Preset3ArmorID", "Preset3ChestRigID", "Preset3BackpackID", "Preset3HelmetID", "Preset3HeadsetID", "Preset3Name", "Preset3Consumables", "Preset3ConsumableRefs", "Preset3AmmoID", "Preset3AmmoRounds",
+		}
+		if req.ArmorID == "" {
+			updates.ArmorInstanceID = 0
+			selectFields = append(selectFields, "ArmorInstanceID")
+		}
 		var player models.Character
 		if err := tx.Where("user_id = ?", userID).First(&player).Error; err != nil {
 			return fmt.Errorf("读取角色: %w", err)
 		}
 		if err := tx.Model(&models.PlayerLoadout{}).
 			Where("user_id = ? AND character_id = ?", userID, player.ID).
-			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs",
-				"PresetWeaponID", "PresetArmorID", "PresetChestRigID", "PresetBackpackID", "PresetHelmetID", "PresetHeadsetID", "PresetName", "PresetConsumables", "PresetConsumableRefs", "PresetAmmoID", "PresetAmmoRounds",
-				"Preset2WeaponID", "Preset2ArmorID", "Preset2ChestRigID", "Preset2BackpackID", "Preset2HelmetID", "Preset2HeadsetID", "Preset2Name", "Preset2Consumables", "Preset2ConsumableRefs", "Preset2AmmoID", "Preset2AmmoRounds",
-				"Preset3WeaponID", "Preset3ArmorID", "Preset3ChestRigID", "Preset3BackpackID", "Preset3HelmetID", "Preset3HeadsetID", "Preset3Name", "Preset3Consumables", "Preset3ConsumableRefs", "Preset3AmmoID", "Preset3AmmoRounds").
+			Select(selectFields).
 			Updates(&updates).Error; err != nil {
 			return fmt.Errorf("保存角色装备配置: %w", err)
 		}
@@ -142,19 +153,24 @@ func validatePresetAmmoCatalog(db *gorm.DB, userID uint, weaponID, ammoID string
 }
 
 // validateLoadoutCatalog 校验装备与补给条目在目录中存在且可用，保证装备方案合法。
+// 武器与护甲可为空（允许卸下该部位），空 ID 跳过目录校验。
 func validateLoadoutCatalog(db *gorm.DB, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
 	var count int64
-	if err := db.Model(&models.WeaponDef{}).Where("id = ?", weaponID).Count(&count).Error; err != nil {
-		return fmt.Errorf("读取武器: %w", err)
+	if weaponID != "" {
+		if err := db.Model(&models.WeaponDef{}).Where("id = ?", weaponID).Count(&count).Error; err != nil {
+			return fmt.Errorf("读取武器: %w", err)
+		}
+		if count != 1 {
+			return fmt.Errorf("武器不存在")
+		}
 	}
-	if count != 1 {
-		return fmt.Errorf("武器不存在")
-	}
-	if err := db.Model(&models.ArmorDef{}).Where("id = ?", armorID).Count(&count).Error; err != nil {
-		return fmt.Errorf("读取护甲: %w", err)
-	}
-	if count != 1 {
-		return fmt.Errorf("护甲不存在")
+	if armorID != "" {
+		if err := db.Model(&models.ArmorDef{}).Where("id = ?", armorID).Count(&count).Error; err != nil {
+			return fmt.Errorf("读取护甲: %w", err)
+		}
+		if count != 1 {
+			return fmt.Errorf("护甲不存在")
+		}
 	}
 	equipChecks := []struct {
 		id    string
@@ -205,10 +221,10 @@ func validateLoadoutCatalog(db *gorm.DB, weaponID, armorID string, consumables [
 	return nil
 }
 
-// validateOwnedLoadoutForUser 校验用户仓库确实拥有所选装备、补给与可用护甲实例。
+// validateOwnedLoadoutForUser 校验用户仓库确实拥有所选装备、补给与可用护甲实例；空部位（未穿戴）跳过校验。
 func validateOwnedLoadoutForUser(db *gorm.DB, userID uint, weaponID, armorID string, consumables []string, chestRigID, backpackID, helmetID, headsetID string) error {
-	ids := []string{weaponID, armorID}
-	for _, id := range []string{chestRigID, backpackID, helmetID, headsetID} {
+	ids := []string{}
+	for _, id := range []string{weaponID, armorID, chestRigID, backpackID, helmetID, headsetID} {
 		if id != "" {
 			ids = append(ids, id)
 		}
@@ -247,12 +263,71 @@ func validateOwnedLoadoutForUser(db *gorm.DB, userID uint, weaponID, armorID str
 			return fmt.Errorf("读取补给库存 %s: %w", itemID, err)
 		}
 	}
-	var armorInstance models.ArmorInstance
-	if err := db.Where("user_id = ? AND armor_id = ? AND status = ?", userID, armorID, "normal").First(&armorInstance).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("护甲 %s 已损坏或没有可用实例", armorID)
+	// 护甲须有实例才可装备；损坏实例（耐久归零）仍可穿戴，仅失去防护等级，损坏待修的 repairing 实例除外。
+	if armorID != "" {
+		var armorInstance models.ArmorInstance
+		if err := db.Where("user_id = ? AND armor_id = ? AND status IN ?", userID, armorID, []string{"normal", "broken"}).First(&armorInstance).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("护甲 %s 已损坏或没有可用实例", armorID)
+			}
+			return fmt.Errorf("读取护甲耐久 %s: %w", armorID, err)
 		}
-		return fmt.Errorf("读取护甲耐久 %s: %w", armorID, err)
+	}
+	return nil
+}
+
+// maxCarriedAmmoRounds 每格携带弹药的最大发数。
+const maxCarriedAmmoRounds = 60
+
+// validateCarriedAmmoForUser 校验随身携带弹药槽：≤4 格、弹药存在、发数 1-60、
+// 与当前武器口径匹配时不低于单轮消耗，且仓库持有合计数（同弹药多槽合并）。
+func validateCarriedAmmoForUser(db *gorm.DB, userID uint, weaponID string, cells []models.AmmoCell) error {
+	if len(cells) > 4 {
+		return fmt.Errorf("携带弹药最多 4 个栏位")
+	}
+	var weapon models.WeaponDef
+	gunCaliber := ""
+	ammoPerRound := 0
+	if weaponID != "" {
+		if err := db.Where("id = ?", weaponID).First(&weapon).Error; err == nil {
+			gunCaliber = weapon.CaliberID
+			ammoPerRound = weapon.AmmoPerRound
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("读取武器: %w", err)
+		}
+	}
+	needed := make(map[string]int)
+	for _, cell := range cells {
+		if cell.AmmoID == "" {
+			if cell.Rounds == 0 {
+				continue // 空槽位
+			}
+			return fmt.Errorf("携带弹药栏位未选择弹药类型")
+		}
+		var ammo models.AmmoDef
+		if err := db.Where("id = ?", cell.AmmoID).First(&ammo).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("弹药 %s 不存在", cell.AmmoID)
+			}
+			return fmt.Errorf("读取弹药 %s: %w", cell.AmmoID, err)
+		}
+		if cell.Rounds < 1 || cell.Rounds > maxCarriedAmmoRounds {
+			return fmt.Errorf("每格携带弹药需为 1-%d 发", maxCarriedAmmoRounds)
+		}
+		// 口径匹配的枪械弹药要求单轮下限；口径不匹配允许保存，由开局预留拦截并提示调整。
+		if ammoPerRound > 0 && gunCaliber != "" && ammo.CaliberID == gunCaliber && cell.Rounds < ammoPerRound {
+			return fmt.Errorf("弹药 %s 每格至少 %d 发（一次攻击消耗）", ammo.Name, ammoPerRound)
+		}
+		needed[cell.AmmoID] += cell.Rounds
+	}
+	for ammoID, rounds := range needed {
+		quantity, err := ammoInventoryQuantity(db, userID, ammoID)
+		if err != nil {
+			return err
+		}
+		if quantity < rounds {
+			return fmt.Errorf("仓库中 %s 弹药不足（需 %d 发，现有 %d 发）", ammoID, rounds, quantity)
+		}
 	}
 	return nil
 }
@@ -292,9 +367,9 @@ func ReplaceLostLoadoutForUser(db *gorm.DB, userID uint, presetIndex int) (int, 
 
 		// 丢失后清空当前装备方案（护甲实例已删，保留预设待补购）
 
-		cleared := models.PlayerLoadout{Consumables: []string{}, ConsumableRefs: []models.LoadoutItemRef{}}
+		cleared := models.PlayerLoadout{Consumables: []string{}, ConsumableRefs: []models.LoadoutItemRef{}, CarriedAmmo: []models.AmmoCell{}}
 		if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadout.ID).
-			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs").
+			Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs", "CarriedAmmo").
 			Updates(&cleared).Error; err != nil {
 			return fmt.Errorf("清空丢失装备: %w", err)
 		}

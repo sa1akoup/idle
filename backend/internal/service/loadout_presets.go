@@ -4,15 +4,17 @@ package service
 import "idle/internal/models"
 
 // SaveLoadoutReq 保存当前装备和 3 套失能后补购预设。
+// 武器与护甲允许为空：每个部位都不强制穿戴，可单独卸下；空 ID 由服务层校验跳过。
 type SaveLoadoutReq struct {
-	WeaponID           string   `json:"weaponId" binding:"required"`
-	ArmorID            string   `json:"armorId" binding:"required"`
-	ChestRigID         string   `json:"chestRigId"`
-	BackpackID         string   `json:"backpackId"`
-	HelmetID           string   `json:"helmetId"`
-	HeadsetID          string   `json:"headsetId"`
-	Consumables        []string `json:"consumables"`
-	PresetWeaponID     string   `json:"presetWeaponId"`
+	WeaponID           string            `json:"weaponId"`
+	ArmorID            string            `json:"armorId"`
+	ChestRigID         string            `json:"chestRigId"`
+	BackpackID         string            `json:"backpackId"`
+	HelmetID           string            `json:"helmetId"`
+	HeadsetID          string            `json:"headsetId"`
+	Consumables        []string          `json:"consumables"`
+	CarriedAmmo        []models.AmmoCell `json:"carriedAmmo"`
+	PresetWeaponID     string            `json:"presetWeaponId"`
 	PresetArmorID      string   `json:"presetArmorId"`
 	PresetChestRigID   string   `json:"presetChestRigId"`
 	PresetBackpackID   string   `json:"presetBackpackId"`

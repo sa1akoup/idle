@@ -27,9 +27,13 @@ func characterToEngineState(character models.Character) engine.CharacterState {
 
 // loadoutToEngineState 提取装备配置中的当前装备位字段构成加载 DTO。
 func loadoutToEngineState(loadout *models.PlayerLoadout) engine.LoadoutState {
+	armorInstanceID := loadout.ArmorInstanceID
+	if loadout.ArmorID == "" {
+		armorInstanceID = 0
+	}
 	return engine.LoadoutState{
 		WeaponID: loadout.WeaponID, ArmorID: loadout.ArmorID, ChestRigID: loadout.ChestRigID, BackpackID: loadout.BackpackID,
-		ArmorInstanceID: loadout.ArmorInstanceID, HelmetID: loadout.HelmetID, HeadsetID: loadout.HeadsetID,
+		ArmorInstanceID: armorInstanceID, HelmetID: loadout.HelmetID, HeadsetID: loadout.HeadsetID,
 	}
 }
 
@@ -44,9 +48,9 @@ func itemIDsToStacks(ids []string) []engine.ItemStack {
 	return stacks
 }
 
-// buildEngineState 汇总角色、装备、护甲耐久、携行物品与弹药，组装出完整引擎状态。
-func buildEngineState(db *gorm.DB, userID uint, character models.Character, loadout *models.PlayerLoadout, ammo engine.CarriedAmmo) (engine.EngineState, error) {
-	carry, err := carryCapacityCore(db, userID, loadout, ammo.ID, ammo.Rounds)
+// buildEngineState 汇总角色、装备、护甲耐久、携行物品与弹药池，组装出完整引擎状态。
+func buildEngineState(db *gorm.DB, userID uint, character models.Character, loadout *models.PlayerLoadout, ammoStacks []engine.CarriedAmmo) (engine.EngineState, error) {
+	carry, err := carryCapacityCore(db, userID, loadout, ammoStacks)
 	if err != nil {
 		return engine.EngineState{}, fmt.Errorf("读取探索携行状态: %w", err)
 	}
@@ -58,23 +62,31 @@ func buildEngineState(db *gorm.DB, userID uint, character models.Character, load
 		return engine.EngineState{}, err
 	}
 	loadoutState := loadoutToEngineState(loadout)
-	loadoutState.ArmorInstanceID = armorInstance.ID
+	armorDurability := 0
+	if armorInstance != nil {
+		loadoutState.ArmorInstanceID = armorInstance.ID
+		armorDurability = armorInstance.CurDurability
+	}
 	carriedItems, err := carriedItemsForLoadout(db, userID, loadout)
 	if err != nil {
 		return engine.EngineState{}, err
 	}
 	return engine.EngineState{
 		Character: characterToEngineState(character), Loadout: loadoutState,
-		ArmorDurability: armorInstance.CurDurability, Consumables: itemStacksFromCarriedItems(carriedItems), CarriedItems: carriedItems,
-		Ammo:  ammo,
+		ArmorDurability: armorDurability, Consumables: itemStacksFromCarriedItems(carriedItems), CarriedItems: carriedItems,
+		AmmoStacks: ammoStacks, Ammo: engine.BestCarriedAmmoSummary(ammoStacks),
 		Carry: engine.CarryState{TotalSlots: carry.TotalSlots, UsedSlots: carry.UsedSlots, TotalWeight: carry.TotalWeight, UsedWeight: carry.UsedWeight},
 	}, nil
 }
 
-// findCurrentArmorInstance 取该用户当前护甲的第一个正常实例，用于读取出征耐久。
+// findCurrentArmorInstance 取该用户当前护甲的第一个可穿戴实例（normal 优先、损坏次之），用于读取出征耐久；未穿护甲时返回 nil。
 func findCurrentArmorInstance(db *gorm.DB, userID uint, armorID string) (*models.ArmorInstance, error) {
+	if armorID == "" {
+		return nil, nil
+	}
 	var instance models.ArmorInstance
-	if err := db.Where("user_id = ? AND armor_id = ? AND status = ?", userID, armorID, "normal").Order("id asc").First(&instance).Error; err != nil {
+	if err := db.Where("user_id = ? AND armor_id = ? AND status IN ?", userID, armorID, []string{"normal", "broken"}).
+		Order("CASE status WHEN 'normal' THEN 0 ELSE 1 END, id ASC").First(&instance).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("护甲 %s 已损坏或没有可用实例", armorID)
 		}

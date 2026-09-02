@@ -37,13 +37,12 @@ func NewSessionServiceWithLease(db *gorm.DB, userID uint, leaseOwner string) *Se
 }
 
 // StartReq 启动挂机会话的请求：地图、行动风格、恢复策略与失能后的预设装备序号。
+// 携带弹药不在此配置：弹药槽在角色页设置，开局按随身弹药槽从仓库预留。
 type StartReq struct {
 	MapID          string          `json:"mapId"`
 	Style          string          `json:"style"`
 	RecoveryPreset int             `json:"recoveryPreset"`
 	RecoveryPolicy *RecoveryPolicy `json:"recoveryPolicy"`
-	AmmoID         string          `json:"ammoId"`
-	AmmoRounds     int             `json:"ammoRounds"`
 	WeaponID       string          `json:"-"`
 	ArmorID        string          `json:"-"`
 	ChestRigID     string          `json:"-"`
@@ -112,14 +111,26 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 			if err != nil {
 				return err
 			}
+			// 没有历史失能 Session 时，按当前保存的预设价格快照补购，避免部署页可启动但实际没有装备。
+			if isEmptyCurrentLoadout(txLoadout) {
+				fallbackSnapshot, _, _, snapshotErr := buildScenarioSnapshotTx(tx, s.userID, req.MapID)
+				if snapshotErr != nil {
+					return snapshotErr
+				}
+				if err := purchaseRecoveryPresetTx(tx, s.userID, req.RecoveryPreset, fallbackSnapshot, txLoadout.ID); err != nil {
+					return fmt.Errorf("按恢复预设补购当前装备: %w", err)
+				}
+				txLoadout, err = GetPlayerLoadoutForUser(tx, s.userID)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		if err := validateOwnedLoadoutForUser(tx, s.userID, txLoadout.WeaponID, txLoadout.ArmorID, txLoadout.Consumables, txLoadout.ChestRigID, txLoadout.BackpackID, txLoadout.HelmetID, txLoadout.HeadsetID); err != nil {
 			return err
 		}
-		if req.AmmoID == "" && req.AmmoRounds == 0 {
-			req.AmmoID, req.AmmoRounds = PresetAmmoOf(txLoadout, req.RecoveryPreset)
-		} else if req.AmmoID == "" || req.AmmoRounds <= 0 {
-			return fmt.Errorf("携弹配置不完整")
+		if txLoadout.WeaponID == "" {
+			return fmt.Errorf("当前装备缺少武器，请先装备武器或清空整套装备使用恢复预设")
 		}
 		presetWeaponID, presetArmorID, _ := PresetOf(txLoadout, req.RecoveryPreset)
 		if presetWeaponID == "" || presetArmorID == "" {
@@ -129,12 +140,22 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 		if err != nil {
 			return err
 		}
-		carriedAmmo, err := reserveCarriedAmmo(tx, s.userID, snapshot, txLoadout.WeaponID, req.AmmoID, req.AmmoRounds)
+		// 携带弹药槽以角色页为准；槽位为空时回退本套预设的默认弹药（失能恢复/新账号首战仍可启动）。
+		ammoCells := compactAmmoCells(txLoadout.CarriedAmmo)
+		if len(ammoCells) == 0 {
+			if weapon, ok := snapshot.Weapons[txLoadout.WeaponID]; ok && weapon.AmmoPerRound > 0 {
+				presetAmmoID, presetAmmoRounds := PresetAmmoOf(txLoadout, req.RecoveryPreset)
+				if presetAmmoID != "" && presetAmmoRounds > 0 {
+					ammoCells = []models.AmmoCell{{AmmoID: presetAmmoID, Rounds: presetAmmoRounds}}
+				}
+			}
+		}
+		carriedStacks, err := reserveCarriedAmmoStacks(tx, s.userID, snapshot, txLoadout.WeaponID, ammoCells)
 		if err != nil {
 			return fmt.Errorf("配置探索弹药: %w", err)
 		}
 		seed := now.UnixNano()
-		state, err := buildEngineState(tx, s.userID, txCharacter, txLoadout, carriedAmmo)
+		state, err := buildEngineState(tx, s.userID, txCharacter, txLoadout, carriedStacks)
 		if err != nil {
 			return err
 		}
@@ -155,7 +176,7 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 		}
 		sess = models.Session{
 			UserID: s.userID, CharacterID: txCharacter.ID, MapID: req.MapID, Style: req.Style, RecoveryPreset: req.RecoveryPreset,
-			WeaponID: txLoadout.WeaponID, ArmorID: txLoadout.ArmorID, ArmorInstanceID: state.Loadout.ArmorInstanceID, AmmoID: carriedAmmo.ID, AmmoRounds: carriedAmmo.Rounds,
+			WeaponID: txLoadout.WeaponID, ArmorID: txLoadout.ArmorID, ArmorInstanceID: state.Loadout.ArmorInstanceID, AmmoID: state.Ammo.ID, AmmoRounds: state.Ammo.Rounds,
 			Consumables: stringsFromStacks(state.Consumables), Status: "running", RecoveryPolicyJSON: recoveryPolicyJSON,
 			Seed: seed, StartTime: now, OfflineLimitMin: defaultOfflineLimitMin, OfflineLimitSec: int64(defaultOfflineLimitMin) * 60,
 			ElapsedMin: 0, ElapsedSec: 0, CurrentRunStartedAt: &now, NextRunAt: &nextRunAt, LastProcessedAt: nil, EngineVersion: engine.EngineVersion,

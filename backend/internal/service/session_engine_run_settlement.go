@@ -22,7 +22,7 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 	}
 	var storedLoot, overflowLoot []engine.LootDrop
 	var nextPlan RunPlan
-	var ammoRefill *ammoRefillResult
+	var ammoRefills []*ammoRefillResult
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserResourcesTx(tx, s.userID); err != nil {
 			return err
@@ -45,6 +45,7 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		if result.Result != "incapacitated" {
 			result.Result = "success"
 		}
+		armorBrokenDuringRun := engineStateArmorBrokenDuringRun(*state, stateAfter, result)
 		stateAfter.Consumables = itemStacksFromCarriedItems(stateAfter.CarriedItems)
 		if err := settleSessionArmorTx(tx, s.userID, stateAfter, result.Result == "incapacitated"); err != nil {
 			return err
@@ -58,14 +59,14 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		if result.Result == "incapacitated" {
 			status = "incapacitated"
 			terminalReason = "hp_zero"
-		} else if !runEndAt.Before(deadline) || stateAfter.Character.Energy <= 0 || stateAfter.Character.Hydration <= 0 || stateAfter.ArmorDurability <= 0 || result.Finished {
+		} else if !runEndAt.Before(deadline) || stateAfter.Character.Energy <= 0 || stateAfter.Character.Hydration <= 0 || armorBrokenDuringRun || result.Finished {
 			status = "success"
 			switch {
 			case !runEndAt.Before(deadline):
 				terminalReason = "offline_limit"
 			case stateAfter.Character.Energy <= 0 || stateAfter.Character.Hydration <= 0:
 				terminalReason = "resource_depleted"
-			case stateAfter.ArmorDurability <= 0:
+			case armorBrokenDuringRun:
 				terminalReason = "armor_broken"
 			default:
 				terminalReason = "run_complete"
@@ -74,7 +75,7 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 
 		if status == "running" {
 			candidate := stateAfter
-			ammoRefill, err = ensureSessionAmmoBeforeNextRun(tx, s.userID, snapshot, &candidate)
+			ammoRefills, err = ensureSessionAmmoBeforeNextRun(tx, s.userID, snapshot, &candidate)
 			if err != nil {
 				// 弹药补购不可用时按正常结束处理并记录原因，避免把可预期情况打成内部失败。
 				if !errors.Is(err, ErrPurchaseUnavailable) {
@@ -104,6 +105,7 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 					return err
 				}
 				stateAfter.Ammo = engine.CarriedAmmo{}
+				stateAfter.AmmoStacks = nil
 				stateAfter.Loadout = engine.LoadoutState{}
 				stateAfter.CarriedItems = nil
 				stateAfter.Consumables = nil
@@ -244,9 +246,9 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 				return err
 			}
 		}
-		if ammoRefill != nil {
+		for _, ammoRefill := range ammoRefills {
 			if err := appendSessionEventTx(tx, s.userID, sess.ID, runIndex, sessionEventAmmoRefilled, result.DurationSec, now, "", ammoRefill.ToAmmoID, map[string]interface{}{
-				"fromAmmoId": ammoRefill.FromAmmoID, "toAmmoId": ammoRefill.ToAmmoID,
+				"stackIndex": ammoRefill.StackIndex, "fromAmmoId": ammoRefill.FromAmmoID, "toAmmoId": ammoRefill.ToAmmoID,
 				"fromLevel": ammoRefill.FromLevel, "toLevel": ammoRefill.ToLevel,
 				"rounds": ammoRefill.Rounds, "unitPrice": ammoRefill.UnitPrice,
 				"totalPrice": ammoRefill.TotalPrice, "source": ammoRefill.Source,
@@ -283,6 +285,19 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 	return nil
 }
 
+// engineStateArmorBroken 只有实际装备护甲且耐久耗尽时才触发护甲终局条件；无甲状态的耐久值固定为 0。
+func engineStateArmorBroken(state engine.EngineState) bool {
+	return state.Loadout.ArmorID != "" && state.ArmorDurability <= 0
+}
+
+// engineStateArmorBrokenDuringRun 仅把本局中新损坏的护甲作为 Session 终局条件；开局已损坏的护甲只提供 0 防护。
+func engineStateArmorBrokenDuringRun(previous, next engine.EngineState, result engine.RunResult) bool {
+	if !engineStateArmorBroken(next) {
+		return false
+	}
+	return previous.ArmorDurability > 0 || result.ArmorBrokenDuringRun
+}
+
 // storeSuccessfulLootTx 把成功搬出的战利品按剩余容量入库并返回入库/溢出两部分；失能局不产生战利品。
 func (s *SessionService) storeSuccessfulLootTx(tx *gorm.DB, snapshot engine.ScenarioSnapshot, result engine.RunResult) ([]engine.LootDrop, []engine.LootDrop, error) {
 	if result.Result == "incapacitated" || len(result.ExtractedLoot) == 0 {
@@ -306,7 +321,7 @@ func (s *SessionService) storeSuccessfulLootTx(tx *gorm.DB, snapshot engine.Scen
 
 // settleSessionArmorTx 结算护甲耐久并同步状态；失能局直接删除护甲实例（丢装），否则按剩余耐久标记 normal/broken。
 func settleSessionArmorTx(tx *gorm.DB, userID uint, state engine.EngineState, incapacitated bool) error {
-	if state.Loadout.ArmorID == "" && state.Loadout.ArmorInstanceID == 0 {
+	if state.Loadout.ArmorID == "" {
 		return nil
 	}
 	var armor models.ArmorInstance
@@ -353,12 +368,12 @@ func discardSessionLoadoutTx(tx *gorm.DB, userID uint, loadout engine.LoadoutSta
 		return fmt.Errorf("清理失能携行实例: %w", err)
 	}
 	return tx.Model(&models.PlayerLoadout{}).Where("user_id = ?", userID).Updates(map[string]interface{}{
-		"weapon_id": "", "armor_id": "", "chest_rig_id": "", "backpack_id": "", "helmet_id": "", "headset_id": "", "consumables": "[]", "consumable_refs": "[]",
+		"weapon_id": "", "armor_id": "", "chest_rig_id": "", "backpack_id": "", "helmet_id": "", "headset_id": "", "consumables": "[]", "consumable_refs": "[]", "carried_ammo": "[]",
 	}).Error
 }
 
 // ensureSessionAmmoBeforeNextRun 为下一局预补弹药；补购不可用时返回 ErrPurchaseUnavailable，由调用方决定终局。
-func ensureSessionAmmoBeforeNextRun(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) (*ammoRefillResult, error) {
+func ensureSessionAmmoBeforeNextRun(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) ([]*ammoRefillResult, error) {
 	return ensureSessionAmmoTx(tx, userID, snapshot, state)
 }
 

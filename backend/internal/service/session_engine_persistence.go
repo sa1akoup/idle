@@ -143,7 +143,7 @@ func ensureInventoryWithinCapacityTx(tx *gorm.DB, userID uint) error {
 
 // refreshEngineCarryUsage 用纯引擎公式重算跨局状态中的当前配装占用，覆盖自动补给后的弹药变化。
 func refreshEngineCarryUsage(state *engine.EngineState, snapshot engine.ScenarioSnapshot) error {
-	usedSlots, usedWeight, err := engine.LoadoutUsage(snapshot, state.Loadout, state.Consumables, state.Ammo)
+	usedSlots, usedWeight, err := engine.LoadoutUsage(snapshot, state.Loadout, state.Consumables, engine.CarriedAmmoStacks(state))
 	if err != nil {
 		return fmt.Errorf("计算 Session 携行容量: %w", err)
 	}

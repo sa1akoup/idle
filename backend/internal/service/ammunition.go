@@ -13,6 +13,7 @@ import (
 )
 
 type ammoRefillResult struct {
+	StackIndex int // 原携带弹药栈的 0-based 索引。
 	FromAmmoID string
 	ToAmmoID   string
 	FromLevel  int
@@ -36,44 +37,79 @@ func decodeSessionAmmoState(sess models.Session) (engine.ScenarioSnapshot, engin
 	return snapshot, state, nil
 }
 
-// reserveCarriedAmmo 开局时校验武器口径与携弹下限，并从库存扣出携行弹药（与快照同一事务，口径数据强一致）。
-func reserveCarriedAmmo(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, weaponID, ammoID string, rounds int) (engine.CarriedAmmo, error) {
-	weapon, ok := snapshot.Weapons[weaponID]
-	if !ok {
-		return engine.CarriedAmmo{}, fmt.Errorf("武器 %s 不在场景快照中", weaponID)
-	}
-	if weapon.AmmoPerRound <= 0 {
-		if ammoID != "" || rounds != 0 {
-			return engine.CarriedAmmo{}, fmt.Errorf("近战武器不能携带弹药")
+// compactAmmoCells 去除前端固定槽位产生的空占位，保留非空槽位的原始顺序。
+func compactAmmoCells(cells []models.AmmoCell) []models.AmmoCell {
+	result := make([]models.AmmoCell, 0, len(cells))
+	for _, cell := range cells {
+		if cell.AmmoID == "" && cell.Rounds == 0 {
+			continue
 		}
-		return engine.CarriedAmmo{}, nil
+		result = append(result, cell)
 	}
-	if rounds < weapon.AmmoPerRound {
-		return engine.CarriedAmmo{}, fmt.Errorf("携弹量至少为 %d 发", weapon.AmmoPerRound)
-	}
-	ammo, ok := snapshot.Ammos[ammoID]
-	if !ok {
-		return engine.CarriedAmmo{}, fmt.Errorf("弹药 %s 不存在", ammoID)
-	}
-	if ammo.CaliberID != weapon.CaliberID {
-		return engine.CarriedAmmo{}, fmt.Errorf("弹药口径 %s 与武器口径 %s 不匹配", ammo.CaliberID, weapon.CaliberID)
-	}
-	if err := removeInventoryItem(tx, userID, ammoID, rounds); err != nil {
-		return engine.CarriedAmmo{}, err
-	}
-	return carriedAmmoWithPreference(ammo, rounds, ammo, rounds), nil
+	return result
 }
 
-// returnCarriedAmmoTx 会话终态把仍有剩余的携行弹药加回库存并清空携带状态，避免弹药随会话流失。
+// reserveCarriedAmmoStacks 开局时按携带弹药槽位校验口径与下限，并从库存逐栈扣出发数。
+// 返回带自动补给偏好的携带栈（每栈偏好自身，供耗尽时按等级自动补给）。
+func reserveCarriedAmmoStacks(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, weaponID string, cells []models.AmmoCell) ([]engine.CarriedAmmo, error) {
+	cells = compactAmmoCells(cells)
+	weapon, ok := snapshot.Weapons[weaponID]
+	if !ok {
+		return nil, fmt.Errorf("武器 %s 不在场景快照中", weaponID)
+	}
+	if weapon.AmmoPerRound <= 0 {
+		if len(cells) > 0 {
+			return nil, fmt.Errorf("近战武器不能携带弹药")
+		}
+		return nil, nil
+	}
+	if len(cells) == 0 {
+		return nil, fmt.Errorf("未配置携带弹药，请先在角色页面设置")
+	}
+	stacks := make([]engine.CarriedAmmo, 0, len(cells))
+	usable := 0
+	for _, cell := range cells {
+		if cell.AmmoID == "" || cell.Rounds <= 0 {
+			return nil, fmt.Errorf("携带弹药栏位配置不完整")
+		}
+		ammo, ok := snapshot.Ammos[cell.AmmoID]
+		if !ok {
+			return nil, fmt.Errorf("弹药 %s 不存在", cell.AmmoID)
+		}
+		if ammo.CaliberID != weapon.CaliberID {
+			return nil, fmt.Errorf("弹药 %s 口径与武器 %s 不匹配", ammo.Name, weapon.Name)
+		}
+		if err := removeInventoryItem(tx, userID, cell.AmmoID, cell.Rounds); err != nil {
+			return nil, err
+		}
+		if cell.Rounds >= weapon.AmmoPerRound {
+			usable++
+		}
+		stacks = append(stacks, carriedAmmoWithPreference(ammo, cell.Rounds, ammo, cell.Rounds))
+	}
+	if usable == 0 {
+		return nil, fmt.Errorf("携带弹药不足以完成一次攻击，请适当增加发数")
+	}
+	return stacks, nil
+}
+
+// returnCarriedAmmoTx 会话终态把弹药池各栈剩余发数加回库存并清空携带状态，避免弹药随会话流失。
 func returnCarriedAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) error {
-	if state.Ammo.ID == "" || state.Ammo.Rounds <= 0 {
+	stacks := engine.CarriedAmmoStacks(state)
+	if len(stacks) == 0 {
 		state.Ammo = engine.CarriedAmmo{}
 		return nil
 	}
-	if err := returnAmmoRoundsTx(tx, userID, snapshot, state.Ammo); err != nil {
-		return err
+	for _, stack := range stacks {
+		if stack.ID == "" || stack.Rounds <= 0 {
+			continue
+		}
+		if err := returnAmmoRoundsTx(tx, userID, snapshot, stack); err != nil {
+			return err
+		}
 	}
 	state.Ammo = engine.CarriedAmmo{}
+	state.AmmoStacks = nil
 	return nil
 }
 
@@ -114,61 +150,110 @@ func reservePresetAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnaps
 	state := engine.EngineState{Ammo: engine.CarriedAmmo{
 		CaliberID: ammo.CaliberID, PreferredID: ammo.ID, PreferredLevel: ammo.Level, TargetRounds: preset.AmmoRounds,
 	}}
-	refill, err := refillSessionAmmoTx(tx, userID, snapshot, weapon.ID, &state)
-	return state.Ammo, refill, err
+	refills, err := refillSessionAmmoTx(tx, userID, snapshot, weapon.ID, &state)
+	if err != nil {
+		return engine.CarriedAmmo{}, nil, err
+	}
+	if len(refills) == 0 {
+		return engine.CarriedAmmo{}, nil, fmt.Errorf("恢复预设弹药补给结果为空")
+	}
+	return state.Ammo, refills[0], nil
 }
 
-// ensureSessionAmmoTx 在下一局开始前保证至少具备一次有效攻击所需的弹药。
+// ensureSessionAmmoTx 在下一局开始前保证至少具备一次有效攻击所需的弹药，并返回逐栈补给结果。
 // 业务失败时不修改数据库和 state，调用方可以安全地按原状态完成 Session 结算。
-func ensureSessionAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) (*ammoRefillResult, error) {
+func ensureSessionAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, state *engine.EngineState) ([]*ammoRefillResult, error) {
 	weapon, ok := snapshot.Weapons[state.Loadout.WeaponID]
 	if !ok {
 		return nil, fmt.Errorf("自动补给武器 %s 不在场景快照中", state.Loadout.WeaponID)
 	}
-	if weapon.AmmoPerRound <= 0 || state.Ammo.Rounds >= weapon.AmmoPerRound {
+	if weapon.AmmoPerRound <= 0 || engine.HasUsableCarriedAmmoStack(snapshot, weapon, engine.CarriedAmmoStacks(state)) {
 		return nil, nil
 	}
-	if state.Ammo.PreferredID == "" || state.Ammo.TargetRounds < weapon.AmmoPerRound {
+	preferred := state.Ammo
+	if preferred.PreferredID == "" {
+		preferred = engine.BestCarriedAmmoSummary(engine.CarriedAmmoStacks(state))
+		state.Ammo = preferred
+	}
+	if preferred.PreferredID == "" || preferred.TargetRounds < weapon.AmmoPerRound {
 		return nil, fmt.Errorf("%w：Session 缺少有效弹药补给配置", ErrPurchaseUnavailable)
 	}
 	return refillSessionAmmoTx(tx, userID, snapshot, weapon.ID, state)
 }
 
 // refillSessionAmmoTx 自动补给弹药：先校验偏好口径/等级与目标数量，扣现金后归还旧弹并换为商人供应的新弹。
-func refillSessionAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, weaponID string, state *engine.EngineState) (*ammoRefillResult, error) {
+// 补给成功后按原栈顺序生成多个补给栈，每个栈保留自己的自动补给偏好。
+func refillSessionAmmoTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, weaponID string, state *engine.EngineState) ([]*ammoRefillResult, error) {
 	weapon, ok := snapshot.Weapons[weaponID]
 	if !ok || weapon.AmmoPerRound <= 0 {
 		return nil, fmt.Errorf("自动补给武器 %s 无效", weaponID)
 	}
-	preference, ok := snapshot.Ammos[state.Ammo.PreferredID]
-	if !ok || preference.CaliberID != weapon.CaliberID || preference.Level != state.Ammo.PreferredLevel || state.Ammo.TargetRounds < weapon.AmmoPerRound {
+	stacks := engine.CarriedAmmoStacks(state)
+	if len(stacks) == 0 && state.Ammo.PreferredID != "" {
+		// 恢复预设的自动补给路径只有全局偏好，没有实际旧栈，包装成一个合成栈。
+		stacks = []engine.CarriedAmmo{state.Ammo}
+	}
+	if len(stacks) == 0 {
 		return nil, fmt.Errorf("Session 自动补给目标无效")
 	}
-	fromID, fromLevel := state.Ammo.ID, state.Ammo.Level
-	targetRounds := state.Ammo.TargetRounds
-	supply, err := selectMerchantAmmoSupply(snapshot, preference.CaliberID, preference.Level)
-	if err != nil {
-		return nil, err
+	type refillPlan struct {
+		index        int
+		stack        engine.CarriedAmmo
+		preference   engine.Ammo
+		supply       engine.AmmoSupply
+		targetRounds int
 	}
-	totalPrice := supply.UnitPrice * targetRounds
+	plans := make([]refillPlan, 0, len(stacks))
+	totalPrice := 0
+	for index, stack := range stacks {
+		preferredID, preferredLevel, targetRounds := stack.PreferredID, stack.PreferredLevel, stack.TargetRounds
+		if preferredID == "" {
+			preferredID, preferredLevel, targetRounds = state.Ammo.PreferredID, state.Ammo.PreferredLevel, state.Ammo.TargetRounds
+		}
+		if preferredID == "" && stack.ID != "" {
+			preferredID, preferredLevel, targetRounds = stack.ID, stack.Level, stack.Rounds
+		}
+		preference, ok := snapshot.Ammos[preferredID]
+		if !ok || preference.CaliberID != weapon.CaliberID || preference.Level != preferredLevel || targetRounds < weapon.AmmoPerRound {
+			return nil, fmt.Errorf("Session 自动补给目标无效")
+		}
+		supply, err := selectMerchantAmmoSupply(snapshot, preference.CaliberID, preference.Level)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, refillPlan{
+			index: index, stack: stack, preference: preference, supply: supply, targetRounds: targetRounds,
+		})
+		totalPrice += supply.UnitPrice * targetRounds
+	}
 	if err := deductCash(tx, userID, totalPrice); err != nil {
 		if errors.Is(err, ErrPurchaseUnavailable) {
-			return nil, fmt.Errorf("%w：自动补给 %d 发 N%d 弹药需要 ￥%d", ErrPurchaseUnavailable, targetRounds, supply.Level, totalPrice)
+			return nil, fmt.Errorf("%w：自动补给需要 ￥%d", ErrPurchaseUnavailable, totalPrice)
 		}
 		return nil, err
 	}
 	// 所有可预期的业务失败都已完成校验。从这里开始的错误必须由外层事务整体回滚。
-	if state.Ammo.ID != "" && state.Ammo.Rounds > 0 {
-		if err := returnAmmoRoundsTx(tx, userID, snapshot, state.Ammo); err != nil {
-			return nil, err
+	refilledStacks := make([]engine.CarriedAmmo, len(plans))
+	results := make([]*ammoRefillResult, 0, len(plans))
+	for _, plan := range plans {
+		stack := plan.stack
+		if stack.ID != "" && stack.Rounds > 0 {
+			if err := returnAmmoRoundsTx(tx, userID, snapshot, stack); err != nil {
+				return nil, err
+			}
 		}
+		current := snapshot.Ammos[plan.supply.AmmoID]
+		refilled := carriedAmmoWithPreference(current, plan.targetRounds, plan.preference, plan.targetRounds)
+		refilledStacks[plan.index] = refilled
+		results = append(results, &ammoRefillResult{
+			StackIndex: plan.index, FromAmmoID: stack.ID, ToAmmoID: current.ID,
+			FromLevel: stack.Level, ToLevel: current.Level, Rounds: refilled.Rounds,
+			UnitPrice: plan.supply.UnitPrice, TotalPrice: plan.supply.UnitPrice * plan.targetRounds, Source: "merchant_fallback",
+		})
 	}
-	current := snapshot.Ammos[supply.AmmoID]
-	state.Ammo = carriedAmmoWithPreference(current, targetRounds, preference, targetRounds)
-	return &ammoRefillResult{
-		FromAmmoID: fromID, ToAmmoID: current.ID, FromLevel: fromLevel, ToLevel: current.Level,
-		Rounds: state.Ammo.Rounds, UnitPrice: supply.UnitPrice, TotalPrice: totalPrice, Source: "merchant_fallback",
-	}, nil
+	state.AmmoStacks = refilledStacks
+	state.Ammo = engine.BestCarriedAmmoSummary(refilledStacks)
+	return results, nil
 }
 
 // selectMerchantAmmoSupply 从快照商人供应中选择可用且等级不超过偏好等级的最高级同口径弹药。

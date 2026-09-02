@@ -84,10 +84,10 @@ func purchaseRecoveryPresetTx(tx *gorm.DB, userID uint, presetIndex int, snapsho
 	updates := models.PlayerLoadout{
 		WeaponID: preset.Loadout.WeaponID, ArmorID: preset.Loadout.ArmorID,
 		ChestRigID: preset.Loadout.ChestRigID, BackpackID: preset.Loadout.BackpackID, HelmetID: preset.Loadout.HelmetID, HeadsetID: preset.Loadout.HeadsetID,
-		Consumables: loadoutConsumableIDs(preset.Consumables), ConsumableRefs: []models.LoadoutItemRef{},
+		Consumables: loadoutConsumableIDs(preset.Consumables), ConsumableRefs: []models.LoadoutItemRef{}, CarriedAmmo: []models.AmmoCell{},
 	}
 	if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadoutID).
-		Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs").Updates(&updates).Error; err != nil {
+		Select("WeaponID", "ArmorID", "ChestRigID", "BackpackID", "HelmetID", "HeadsetID", "Consumables", "ConsumableRefs", "CarriedAmmo").Updates(&updates).Error; err != nil {
 		return fmt.Errorf("启用补购装备: %w", err)
 	}
 	return nil
