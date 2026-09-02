@@ -93,3 +93,38 @@ func TestAmmoEventUsesActualRoundDelta(t *testing.T) {
 		t.Fatalf("弹药补充结算异常: rounds=%d used=%d", state.Player.AmmoRounds, state.AmmoUsed)
 	}
 }
+
+func TestAmmoEventUpdatesCarriedAmmoStack(t *testing.T) {
+	snapshot := ScenarioSnapshot{
+		Ammos: map[string]Ammo{
+			"ammo": {ID: "ammo", CaliberID: "c", Level: 2, FleshDamageMultiplier: 1, ArmorDamageMultiplier: 1},
+		},
+	}
+	state := eventRunState{
+		Snapshot: &snapshot,
+		Player: &BattleActor{Weapon: Weapon{CaliberID: "c", AmmoPerRound: 3}},
+		AmmoStacks: []CarriedAmmo{{ID: "ammo", CaliberID: "c", Level: 2, Rounds: 10, PreferredID: "ammo", PreferredLevel: 2, TargetRounds: 30}},
+	}
+	if _, err := applyEventEffect(EventEffect{Type: "ammo", Value: -4}, &state); err != nil {
+		t.Fatalf("执行弹药池消耗事件: %v", err)
+	}
+	if state.AmmoStacks[0].Rounds != 6 || state.Player.AmmoRounds != 6 || state.AmmoUsed != 4 {
+		t.Fatalf("弹药池消耗未同步: stacks=%+v player=%d used=%d", state.AmmoStacks, state.Player.AmmoRounds, state.AmmoUsed)
+	}
+	if _, err := applyEventEffect(EventEffect{Type: "ammo", Value: 5}, &state); err != nil {
+		t.Fatalf("执行弹药池补充事件: %v", err)
+	}
+	if state.AmmoStacks[0].Rounds != 11 || state.Player.AmmoRounds != 11 {
+		t.Fatalf("弹药池补充未同步: stacks=%+v player=%d", state.AmmoStacks, state.Player.AmmoRounds)
+	}
+}
+
+func TestAmmoEventConditionUsesPoolTotal(t *testing.T) {
+	state := eventRunState{
+		Player:     &BattleActor{AmmoRounds: 1},
+		AmmoStacks: []CarriedAmmo{{ID: "ammo-a", Rounds: 2}, {ID: "ammo-b", Rounds: 4}},
+	}
+	if !eventConditionMatches(EventCondition{Type: "ammo", Operator: "eq", Value: 6}, &state) {
+		t.Fatal("弹药条件应按弹药池总发数判定")
+	}
+}

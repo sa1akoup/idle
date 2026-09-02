@@ -109,6 +109,67 @@ func TestNodeTravelReducesStressIncludingExtraction(t *testing.T) {
 	}
 }
 
+func TestSimulateRunAllowsNoArmor(t *testing.T) {
+	snapshot := replayTestSnapshot()
+	result, err := SimulateRun(snapshot, RunInput{
+		SessionSeed: 20260824,
+		RunIndex:    1,
+		Style:       ActionStyleBalanced,
+		State: EngineState{
+			Character: CharacterState{Name: "无甲角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, HP: 100, Energy: 100, Hydration: 100},
+			Loadout:   LoadoutState{WeaponID: "weapon_test"},
+			Carry:     CarryState{TotalSlots: 20, TotalWeight: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("无甲出征不应失败: %v", err)
+	}
+	if result.Result != "success" {
+		t.Fatalf("无甲出征结果 = %s，期望 success", result.Result)
+	}
+}
+
+func TestSimulateRunAllowsBrokenArmorWithoutArmorEvacuation(t *testing.T) {
+	result, err := SimulateRun(replayTestSnapshot(), RunInput{
+		SessionSeed: 20260824,
+		RunIndex:    1,
+		Style:       ActionStyleBalanced,
+		State: EngineState{
+			Character:       CharacterState{Name: "破损甲角色", Strength: 50, Agility: 50, Perception: 50, Stealth: 50, Resist: 50, HP: 100, Energy: 100, Hydration: 100},
+			Loadout:         LoadoutState{WeaponID: "weapon_test", ArmorID: "armor_test"},
+			ArmorDurability: 0,
+			Carry:           CarryState{TotalSlots: 20, TotalWeight: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("开局穿破损护甲不应失败: %v", err)
+	}
+	if result.Result != "success" || result.ArmorBrokenDuringRun {
+		t.Fatalf("开局破损护甲运行结果异常: result=%s brokenDuringRun=%v", result.Result, result.ArmorBrokenDuringRun)
+	}
+	for _, event := range result.Trace {
+		if event.Type == TraceEvacuationStarted && event.Payload["reason"] == "armor" {
+			t.Fatalf("开局破损护甲不应触发 armor 撤离: %+v", event)
+		}
+	}
+}
+
+func TestShouldEscapeTracksArmorBrokenAfterRepair(t *testing.T) {
+	policy := DefaultStylePolicies()[0]
+	actor := BattleActor{
+		MaxHP: 100, HP: 100, StressThreshold: 100,
+		Armor:           Armor{ID: "armor_test", ProtectionLevel: 4, MaxDurability: 100},
+		ArmorDurability: 0, ArmorMaxDur: 100, IgnoreBrokenArmorEscape: true,
+	}
+	if shouldEscape(actor, policy) {
+		t.Fatal("开局已损坏护甲不应触发战斗内护甲撤离")
+	}
+	actor.IgnoreBrokenArmorEscape = false
+	if !shouldEscape(actor, policy) {
+		t.Fatal("护甲恢复后再次损坏应触发战斗内护甲撤离")
+	}
+}
+
 // v6 出生点随机化后，捷径机制测试改用"单出生候选"夹具（出生节点是唯一非锚点），
 // 保证捷径必定在出生节点触发；断言聚焦在下一段移动的缩短量与 0 耗时下限。
 func TestShortcutReducesNextMoveByValue(t *testing.T) {

@@ -174,6 +174,15 @@ func TestSessionStartAndSellCurrentWeaponAreSerialized(t *testing.T) {
 	if err := config.Seed(db); err != nil {
 		t.Fatalf("写入测试种子: %v", err)
 	}
+	seedTestAmmoInventory(t, db, models.DefaultUserID, "ammo_762x39_n4", 180)
+	var guardLoadout models.PlayerLoadout
+	if err := db.Where("user_id = ?", models.DefaultUserID).First(&guardLoadout).Error; err != nil {
+		t.Fatalf("读取测试配装: %v", err)
+	}
+	guardLoadout.CarriedAmmo = []models.AmmoCell{{AmmoID: "ammo_762x39_n4", Rounds: 60}}
+	if err := db.Model(&models.PlayerLoadout{}).Where("id = ?", guardLoadout.ID).Select("CarriedAmmo").Updates(&guardLoadout).Error; err != nil {
+		t.Fatalf("写入携带弹药槽: %v", err)
+	}
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +203,6 @@ func TestSessionStartAndSellCurrentWeaponAreSerialized(t *testing.T) {
 		<-start
 		started, startErr = service.Start(StartReq{
 			MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
-			AmmoID: "ammo_762x39_n4", AmmoRounds: 60,
 		})
 	}()
 	go func() {
@@ -241,6 +249,15 @@ func TestSessionStartAndRepairCurrentArmorAreSerialized(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	seedTestAmmoInventory(t, db, models.DefaultUserID, "ammo_762x39_n4", 180)
+	var guardLoadout models.PlayerLoadout
+	if err := db.Where("user_id = ?", models.DefaultUserID).First(&guardLoadout).Error; err != nil {
+		t.Fatalf("读取测试配装: %v", err)
+	}
+	guardLoadout.CarriedAmmo = []models.AmmoCell{{AmmoID: "ammo_762x39_n4", Rounds: 60}}
+	if err := db.Model(&models.PlayerLoadout{}).Where("id = ?", guardLoadout.ID).Select("CarriedAmmo").Updates(&guardLoadout).Error; err != nil {
+		t.Fatalf("写入携带弹药槽: %v", err)
+	}
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +278,6 @@ func TestSessionStartAndRepairCurrentArmorAreSerialized(t *testing.T) {
 		<-start
 		started, startErr = service.Start(StartReq{
 			MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
-			AmmoID: "ammo_762x39_n4", AmmoRounds: 60,
 		})
 	}()
 	go func() {

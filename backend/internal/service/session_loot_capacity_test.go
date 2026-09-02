@@ -181,9 +181,9 @@ func TestBuildEngineStateRejectsAmmoOverCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	loadout := &models.PlayerLoadout{UserID: userID, CharacterID: character.ID, WeaponID: "weapon_test", ArmorID: "armor_test"}
-	_, err := buildEngineState(db, userID, character, loadout, engine.CarriedAmmo{
+	_, err := buildEngineState(db, userID, character, loadout, []engine.CarriedAmmo{{
 		ID: "ammo_test", CaliberID: "9x19", Level: 1, Rounds: 9999,
-	})
+	}})
 	if err == nil || !strings.Contains(err.Error(), "超过携行容量") {
 		t.Fatalf("超容量弹药开局错误 = %v，期望拒绝", err)
 	}
@@ -194,6 +194,15 @@ func TestLegacyV16SessionFinishesAndReturnsCarriedAssets(t *testing.T) {
 	if err := config.Seed(db); err != nil {
 		t.Fatalf("写入测试种子: %v", err)
 	}
+	seedTestAmmoInventory(t, db, models.DefaultUserID, "ammo_762x39_n4", 180)
+	var testLoadout models.PlayerLoadout
+	if err := db.Where("user_id = ?", models.DefaultUserID).First(&testLoadout).Error; err != nil {
+		t.Fatalf("读取测试配装: %v", err)
+	}
+	testLoadout.CarriedAmmo = []models.AmmoCell{{AmmoID: "ammo_762x39_n4", Rounds: 60}}
+	if err := db.Model(&models.PlayerLoadout{}).Where("id = ?", testLoadout.ID).Select("CarriedAmmo").Updates(&testLoadout).Error; err != nil {
+		t.Fatalf("写入携带弹药槽: %v", err)
+	}
 	initialAmmo, err := ammoInventoryQuantity(db, models.DefaultUserID, "ammo_762x39_n4")
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +211,6 @@ func TestLegacyV16SessionFinishesAndReturnsCarriedAssets(t *testing.T) {
 	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	sess, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
-		AmmoID: "ammo_762x39_n4", AmmoRounds: 60,
 	})
 	if err != nil {
 		t.Fatalf("启动测试 Session: %v", err)

@@ -1,7 +1,7 @@
-// 角色装备辅助函数测试：覆盖空装备、当前装备和三套预设的字段映射及数组隔离。
+// 角色装备辅助函数测试：覆盖空装备、当前装备（含随身弹药）、三套预设的字段映射及数组隔离。
 import { describe, expect, it } from 'vitest'
 import type { PlayerLoadout } from '../types'
-import { emptySet, fromLoadout, presetFromLoadout } from './characterLoadoutHelpers'
+import { emptySet, emptyAmmoCells, fromLoadout, presetFromLoadout } from './characterLoadoutHelpers'
 
 function makeLoadout(): PlayerLoadout {
   return {
@@ -14,6 +14,10 @@ function makeLoadout(): PlayerLoadout {
     helmetId: 'helmet-current',
     headsetId: 'headset-current',
     consumables: ['consumable-current'],
+    carriedAmmo: [
+      { ammoId: 'ammo_cal_n2', rounds: 30 },
+      { ammoId: 'ammo_cal_n2', rounds: 30 },
+    ],
     presetWeaponId: 'weapon-preset-1',
     presetArmorId: 'armor-preset-1',
     presetChestRigId: 'chest-preset-1',
@@ -58,6 +62,7 @@ describe('characterLoadoutHelpers', () => {
       helmetId: '',
       headsetId: '',
       consumables: [],
+      ammo: emptyAmmoCells(),
       name: '空白预设',
       ammoId: '',
       ammoRounds: 0,
@@ -75,6 +80,12 @@ describe('characterLoadoutHelpers', () => {
       helmetId: 'helmet-current',
       headsetId: 'headset-current',
       consumables: ['consumable-current'],
+      ammo: [
+        { ammoId: 'ammo_cal_n2', rounds: 30 },
+        { ammoId: 'ammo_cal_n2', rounds: 30 },
+        { ammoId: '', rounds: 0 },
+        { ammoId: '', rounds: 0 },
+      ],
       name: '',
       ammoId: '',
       ammoRounds: 0,
@@ -92,6 +103,7 @@ describe('characterLoadoutHelpers', () => {
       helmetId: 'helmet-preset-1',
       headsetId: 'headset-preset-1',
       consumables: ['consumable-preset-1'],
+      ammo: emptyAmmoCells(),
       name: '预设一',
       ammoId: 'ammo-preset-1',
       ammoRounds: 30,
@@ -104,6 +116,7 @@ describe('characterLoadoutHelpers', () => {
       helmetId: 'helmet-preset-2',
       headsetId: 'headset-preset-2',
       consumables: ['consumable-preset-2'],
+      ammo: emptyAmmoCells(),
       name: '预设二',
       ammoId: 'ammo-preset-2',
       ammoRounds: 60,
@@ -116,6 +129,7 @@ describe('characterLoadoutHelpers', () => {
       helmetId: 'helmet-preset-3',
       headsetId: 'headset-preset-3',
       consumables: ['consumable-preset-3'],
+      ammo: emptyAmmoCells(),
       name: '预设三',
       ammoId: 'ammo-preset-3',
       ammoRounds: 90,

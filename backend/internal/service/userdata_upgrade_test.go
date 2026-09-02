@@ -90,6 +90,7 @@ func TestUpgradeFromLegacyV10Database(t *testing.T) {
 		WeaponID: "ghost_weapon", ArmorID: "light_01",
 		Consumables:       []string{"bandage", "ghost_food"},
 		PresetConsumables: []string{"medkit", "gone_snack"},
+		CarriedAmmo:       []models.AmmoCell{{AmmoID: "gone_ammo", Rounds: 30}, {}},
 		ConsumableRefs: []models.LoadoutItemRef{
 			{ItemID: "bandage", Quantity: 1},
 			{ItemID: "ghost_food", Quantity: 1},
@@ -140,6 +141,9 @@ func TestUpgradeFromLegacyV10Database(t *testing.T) {
 	}
 	if loadout.WeaponID != "" {
 		t.Fatalf("悬空武器引用未被摘除: %q", loadout.WeaponID)
+	}
+	if len(loadout.CarriedAmmo) != 2 || loadout.CarriedAmmo[0].AmmoID != "" || loadout.CarriedAmmo[0].Rounds != 0 {
+		t.Fatalf("悬空携带弹药引用未被清理: %+v", loadout.CarriedAmmo)
 	}
 	if loadout.ArmorID != "light_01" {
 		t.Fatalf("有效护甲引用不应被动: %q", loadout.ArmorID)
@@ -266,5 +270,68 @@ func TestUserDataUpgradeRefusesWithoutCatalogSeed(t *testing.T) {
 		Select("COALESCE(SUM(CASE WHEN item_id = 'cash' THEN quantity ELSE 0 END), 0)").Scan(&cashQty)
 	if medkitQty != 2 || cashQty != 777 {
 		t.Fatalf("拒绝执行时资产被改动：medkit=%d cash=%d", medkitQty, cashQty)
+	}
+}
+
+// TestPurgeRetiredItemResidue 验证下架道具（弹药箱 ammo_box）的残留清理：
+// 只有先删除其目录定义残留行，既有的悬空扫描才会把玩家配装引用与仓库存量一并摘除。
+func TestPurgeRetiredItemResidue(t *testing.T) {
+	db := newInventoryTestDB(t)
+
+	// 残留三件套：目录定义行、仓库库存、预设补给引用（bandage 属合法目录项，应保留）。
+	if err := db.Create(&models.ConsumableDef{ID: "bandage", Name: "止血带", Price: 100, MerchantCategory: "medical"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ConsumableDef{ID: "ammo_box", Name: "弹药箱", Price: 150, MerchantCategory: "weapon"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var character models.Character
+	if err := db.Where("user_id = ?", models.DefaultUserID).First(&character).Error; err != nil {
+		t.Fatalf("读取测试角色: %v", err)
+	}
+	if err := db.Create(&models.PlayerLoadout{
+		UserID: models.DefaultUserID, CharacterID: character.ID,
+		WeaponID: "weapon", ArmorID: "armor",
+		Preset2Consumables: []string{"bandage", "ammo_box"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Inventory{
+		UserID: models.DefaultUserID, ItemID: "ammo_box", Name: "弹药箱", Kind: "consumable", Quantity: 60, Price: 150,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	purged := 0
+	if err := purgeRetiredCatalogDefsTx(db, &purged); err != nil {
+		t.Fatalf("清除下架道具定义: %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("清除定义行数 = %d，期望 1（仅 consumable_defs 残留）", purged)
+	}
+	catalog, err := loadUpgradeCatalog(db)
+	if err != nil {
+		t.Fatalf("读取目录: %v", err)
+	}
+	if catalog.has("ammo_box") {
+		t.Fatal("下架道具不应再出现在目录中")
+	}
+	if _, err := stripDanglingCatalogRefsTx(db, models.DefaultUserID, catalog); err != nil {
+		t.Fatalf("摘除悬空引用: %v", err)
+	}
+
+	loadout, err := GetPlayerLoadoutForUser(db, models.DefaultUserID)
+	if err != nil {
+		t.Fatalf("读取配装: %v", err)
+	}
+	if len(loadout.Preset2Consumables) != 1 || loadout.Preset2Consumables[0] != "bandage" {
+		t.Fatalf("预设补给应摘除 ammo_box 且保留 bandage，实际 %+v", loadout.Preset2Consumables)
+	}
+	quantity, err := ammoInventoryQuantity(db, models.DefaultUserID, "ammo_box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quantity != 0 {
+		t.Fatalf("仓库中的 ammo_box 应被清除，实际 %d", quantity)
 	}
 }

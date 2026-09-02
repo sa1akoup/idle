@@ -30,11 +30,19 @@ func TestSessionReservesAndReturnsCarriedAmmo(t *testing.T) {
 		ammoID        = "ammo_762x39_n4"
 		carriedRounds = 60
 	)
+	seedTestAmmoInventory(t, db, models.DefaultUserID, ammoID, 180)
+	var testLoadout models.PlayerLoadout
+	if err := db.Where("user_id = ?", models.DefaultUserID).First(&testLoadout).Error; err != nil {
+		t.Fatalf("读取测试配装: %v", err)
+	}
+	testLoadout.CarriedAmmo = []models.AmmoCell{{AmmoID: ammoID, Rounds: carriedRounds}}
+	if err := db.Model(&models.PlayerLoadout{}).Where("id = ?", testLoadout.ID).Select("CarriedAmmo").Updates(&testLoadout).Error; err != nil {
+		t.Fatalf("写入携带弹药槽: %v", err)
+	}
 	scheduler := newStartedTestScheduler(t, db)
 	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	sess, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
-		AmmoID: ammoID, AmmoRounds: carriedRounds,
 	})
 	if err != nil {
 		t.Fatalf("启动 Session: %v", err)
@@ -102,11 +110,19 @@ func TestSessionSettlementRefillsAmmoAndWritesEvent(t *testing.T) {
 		t.Fatalf("写入测试种子: %v", err)
 	}
 
+	seedTestAmmoInventory(t, db, models.DefaultUserID, "ammo_762x39_n4", 180)
+	var refillLoadout models.PlayerLoadout
+	if err := db.Where("user_id = ?", models.DefaultUserID).First(&refillLoadout).Error; err != nil {
+		t.Fatalf("读取测试配装: %v", err)
+	}
+	refillLoadout.CarriedAmmo = []models.AmmoCell{{AmmoID: "ammo_762x39_n4", Rounds: 60}}
+	if err := db.Model(&models.PlayerLoadout{}).Where("id = ?", refillLoadout.ID).Select("CarriedAmmo").Updates(&refillLoadout).Error; err != nil {
+		t.Fatalf("写入携带弹药槽: %v", err)
+	}
 	scheduler := newStartedTestScheduler(t, db)
 	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	sess, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
-		AmmoID: "ammo_762x39_n4", AmmoRounds: 60,
 	})
 	if err != nil {
 		t.Fatalf("启动 Session: %v", err)
@@ -133,6 +149,9 @@ func TestSessionSettlementRefillsAmmoAndWritesEvent(t *testing.T) {
 
 	// 模拟本局消耗到不足一次攻击，结算层应返还剩弹并按快照购买 N2。
 	state.Ammo.Rounds = 2
+	if len(state.AmmoStacks) > 0 && state.AmmoStacks[0].ID == state.Ammo.ID {
+		state.AmmoStacks[0].Rounds = 2
+	}
 	result := engine.RunResult{
 		Result: "success", DurationSec: 1, AmmoUsed: 58,
 		NextState: state, SkipResourceConsumption: true,
@@ -144,6 +163,9 @@ func TestSessionSettlementRefillsAmmoAndWritesEvent(t *testing.T) {
 	if state.Ammo.ID != fallbackID || state.Ammo.Level != 2 || state.Ammo.Rounds != 60 ||
 		state.Ammo.PreferredID != "ammo_762x39_n4" || state.Ammo.TargetRounds != 60 {
 		t.Fatalf("结算后 Session 弹药异常: %+v", state.Ammo)
+	}
+	if len(state.AmmoStacks) != 1 || state.AmmoStacks[0].ID != fallbackID || state.AmmoStacks[0].Rounds != 60 {
+		t.Fatalf("结算后弹药池异常: %+v", state.AmmoStacks)
 	}
 	assertAmmoQuantity(t, db, models.DefaultUserID, "ammo_762x39_n4", 122)
 	assertAmmoQuantity(t, db, models.DefaultUserID, "cash", cashBefore-supply.UnitPrice*60)
@@ -175,11 +197,19 @@ func TestSessionSettlementAmmoPurchaseFailureReturnsCarriedAmmoOnce(t *testing.T
 		t.Fatalf("写入测试种子: %v", err)
 	}
 
+	seedTestAmmoInventory(t, db, models.DefaultUserID, "ammo_762x39_n4", 180)
+	var failureLoadout models.PlayerLoadout
+	if err := db.Where("user_id = ?", models.DefaultUserID).First(&failureLoadout).Error; err != nil {
+		t.Fatalf("读取测试配装: %v", err)
+	}
+	failureLoadout.CarriedAmmo = []models.AmmoCell{{AmmoID: "ammo_762x39_n4", Rounds: 60}}
+	if err := db.Model(&models.PlayerLoadout{}).Where("id = ?", failureLoadout.ID).Select("CarriedAmmo").Updates(&failureLoadout).Error; err != nil {
+		t.Fatalf("写入携带弹药槽: %v", err)
+	}
 	scheduler := newStartedTestScheduler(t, db)
 	service := NewSessionServiceWithScheduler(db, models.DefaultUserID, scheduler)
 	sess, err := service.Start(StartReq{
 		MapID: "city_ruins", Style: "balanced", RecoveryPreset: 1,
-		AmmoID: "ammo_762x39_n4", AmmoRounds: 60,
 	})
 	if err != nil {
 		t.Fatalf("启动 Session: %v", err)
@@ -195,6 +225,9 @@ func TestSessionSettlementAmmoPurchaseFailureReturnsCarriedAmmoOnce(t *testing.T
 		t.Fatalf("解析 Session 状态: %v", err)
 	}
 	state.Ammo.Rounds = 2
+	if len(state.AmmoStacks) > 0 && state.AmmoStacks[0].ID == state.Ammo.ID {
+		state.AmmoStacks[0].Rounds = 2
+	}
 	if result := db.Model(&models.Inventory{}).
 		Where("user_id = ? AND item_id = ?", models.DefaultUserID, "cash").
 		Update("quantity", 0); result.Error != nil || result.RowsAffected != 1 {

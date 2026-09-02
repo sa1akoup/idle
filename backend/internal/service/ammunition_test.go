@@ -48,17 +48,17 @@ func TestReserveAndReturnCarriedAmmo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	carried, err := reserveCarriedAmmo(db, userID, snapshot, "rifle", ammo.ID, 60)
+	carried, err := reserveCarriedAmmoStacks(db, userID, snapshot, "rifle", []models.AmmoCell{{AmmoID: ammo.ID, Rounds: 60}})
 	if err != nil {
 		t.Fatalf("预留弹药: %v", err)
 	}
-	if carried.Rounds != 60 || carried.PreferredID != ammo.ID || carried.PreferredLevel != 4 || carried.TargetRounds != 60 {
+	if len(carried) != 1 || carried[0].Rounds != 60 || carried[0].PreferredID != ammo.ID || carried[0].PreferredLevel != 4 || carried[0].TargetRounds != 60 {
 		t.Fatalf("Session 携弹目标异常: %+v", carried)
 	}
 	assertAmmoQuantity(t, db, userID, ammo.ID, 30)
 
-	state := engine.EngineState{Ammo: carried}
-	state.Ammo.Rounds = 42
+	state := engine.EngineState{AmmoStacks: carried}
+	state.AmmoStacks[0].Rounds = 42
 	if err := returnCarriedAmmoTx(db, userID, snapshot, &state); err != nil {
 		t.Fatalf("返还剩余弹药: %v", err)
 	}
@@ -117,10 +117,14 @@ func TestRefillSessionAmmoDowngradesToHighestAvailableLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := engine.EngineState{Ammo: carriedAmmoWithPreference(n4, 2, n4, 120)}
-	refill, err := refillSessionAmmoTx(db, userID, snapshot, "rifle", &state)
+	refills, err := refillSessionAmmoTx(db, userID, snapshot, "rifle", &state)
 	if err != nil {
 		t.Fatalf("自动降级补给: %v", err)
 	}
+	if len(refills) != 1 {
+		t.Fatalf("单栈自动补给结果数量 = %d，期望 1", len(refills))
+	}
+	refill := refills[0]
 	if state.Ammo.ID != n2.ID || state.Ammo.Level != 2 || state.Ammo.Rounds != 120 {
 		t.Fatalf("自动补给弹药异常: %+v", state.Ammo)
 	}
@@ -132,6 +136,83 @@ func TestRefillSessionAmmoDowngradesToHighestAvailableLevel(t *testing.T) {
 	}
 	assertAmmoQuantity(t, db, userID, n4.ID, 2)
 	assertAmmoQuantity(t, db, userID, "cash", 760)
+}
+
+func TestEnsureSessionAmmoUsesDepletedStackPreference(t *testing.T) {
+	db := newAmmunitionTestDB(t)
+	const userID uint = 13
+	n4 := engine.Ammo{ID: "ammo_556x45_n4", Name: "5.56×45mm N4级弹", CaliberID: "556x45", Level: 4, Price: 8, RoundsPerSlot: 999, MerchantCategory: "weapon"}
+	n2 := engine.Ammo{ID: "ammo_556x45_n2", Name: "5.56×45mm N2级弹", CaliberID: "556x45", Level: 2, Price: 2, RoundsPerSlot: 999, MerchantCategory: "weapon"}
+	snapshot := engine.ScenarioSnapshot{
+		Weapons: map[string]engine.Weapon{"rifle": {ID: "rifle", CaliberID: "556x45", AmmoPerRound: 3}},
+		Ammos:   map[string]engine.Ammo{n2.ID: n2, n4.ID: n4},
+		AmmoSupplies: map[string]engine.AmmoSupply{
+			n2.ID: {AmmoID: n2.ID, CaliberID: n2.CaliberID, Level: 2, UnitPrice: 2, Available: true},
+		},
+	}
+	if err := db.Create(&models.Inventory{UserID: userID, ItemID: "cash", Name: "现金", Kind: "currency", Quantity: 1000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	state := engine.EngineState{
+		Loadout: engine.LoadoutState{WeaponID: "rifle"},
+		AmmoStacks: []engine.CarriedAmmo{{
+			ID: n4.ID, CaliberID: n4.CaliberID, Level: n4.Level, Rounds: 0,
+			PreferredID: n4.ID, PreferredLevel: n4.Level, TargetRounds: 60,
+		}},
+	}
+	refills, err := ensureSessionAmmoTx(db, userID, snapshot, &state)
+	if err != nil {
+		t.Fatalf("耗尽栈应按偏好自动补弹: %v", err)
+	}
+	if len(refills) != 1 || len(state.AmmoStacks) != 1 || state.AmmoStacks[0].ID != n2.ID || state.AmmoStacks[0].Rounds != 60 {
+		t.Fatalf("耗尽栈补弹结果异常: state=%+v refills=%+v", state, refills)
+	}
+	if state.Ammo.PreferredID != n4.ID || state.Ammo.TargetRounds != 60 {
+		t.Fatalf("补弹后原始偏好丢失: %+v", state.Ammo)
+	}
+}
+
+func TestRefillSessionAmmoPreservesMultipleStacks(t *testing.T) {
+	db := newAmmunitionTestDB(t)
+	const userID uint = 15
+	n4 := engine.Ammo{ID: "ammo_556x45_n4", Name: "5.56×45mm N4级弹", CaliberID: "556x45", Level: 4, Price: 8, RoundsPerSlot: 999, MerchantCategory: "weapon"}
+	n1 := engine.Ammo{ID: "ammo_556x45_n1", Name: "5.56×45mm N1级弹", CaliberID: "556x45", Level: 1, Price: 1, RoundsPerSlot: 999, MerchantCategory: "weapon"}
+	snapshot := engine.ScenarioSnapshot{
+		Weapons: map[string]engine.Weapon{"rifle": {ID: "rifle", CaliberID: "556x45", AmmoPerRound: 3}},
+		Ammos:   map[string]engine.Ammo{n1.ID: n1, n4.ID: n4},
+		AmmoSupplies: map[string]engine.AmmoSupply{
+			n1.ID: {AmmoID: n1.ID, CaliberID: n1.CaliberID, Level: 1, UnitPrice: 1, Available: true},
+			n4.ID: {AmmoID: n4.ID, CaliberID: n4.CaliberID, Level: 4, UnitPrice: 8, Available: true},
+		},
+	}
+	if err := db.Create(&models.Inventory{UserID: userID, ItemID: "cash", Name: "现金", Kind: "currency", Quantity: 10000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	state := engine.EngineState{
+		Loadout: engine.LoadoutState{WeaponID: "rifle"},
+		AmmoStacks: []engine.CarriedAmmo{
+			{ID: n4.ID, CaliberID: n4.CaliberID, Level: n4.Level, Rounds: 2, PreferredID: n4.ID, PreferredLevel: n4.Level, TargetRounds: 60},
+			{ID: n1.ID, CaliberID: n1.CaliberID, Level: n1.Level, Rounds: 1, PreferredID: n1.ID, PreferredLevel: n1.Level, TargetRounds: 30},
+		},
+	}
+
+	refills, err := refillSessionAmmoTx(db, userID, snapshot, "rifle", &state)
+	if err != nil {
+		t.Fatalf("多栈自动补给: %v", err)
+	}
+	if len(refills) != 2 || len(state.AmmoStacks) != 2 {
+		t.Fatalf("多栈补给结果数量异常: stacks=%+v refills=%+v", state.AmmoStacks, refills)
+	}
+	if state.AmmoStacks[0].ID != n4.ID || state.AmmoStacks[0].Rounds != 60 || state.AmmoStacks[0].PreferredID != n4.ID ||
+		state.AmmoStacks[1].ID != n1.ID || state.AmmoStacks[1].Rounds != 30 || state.AmmoStacks[1].PreferredID != n1.ID {
+		t.Fatalf("多栈补给覆盖了原始配置: %+v", state.AmmoStacks)
+	}
+	if refills[0].StackIndex != 0 || refills[1].StackIndex != 1 || refills[0].TotalPrice != 480 || refills[1].TotalPrice != 30 {
+		t.Fatalf("多栈补给结果明细异常: %+v", refills)
+	}
+	assertAmmoQuantity(t, db, userID, n4.ID, 2)
+	assertAmmoQuantity(t, db, userID, n1.ID, 1)
+	assertAmmoQuantity(t, db, userID, "cash", 9490)
 }
 
 func TestRefillSessionAmmoReturnsLeftoverWhenCashIsInsufficient(t *testing.T) {
@@ -195,5 +276,28 @@ func assertAmmoQuantity(t *testing.T, db *gorm.DB, userID uint, ammoID string, w
 	}
 	if quantity != want {
 		t.Fatalf("弹药 %s 数量 = %d，期望 %d", ammoID, quantity, want)
+	}
+}
+
+// seedTestAmmoInventory 为测试用户直接写入/累加指定弹药库存，使集成用例不依赖初始种子中的弹药搭配。
+func seedTestAmmoInventory(t *testing.T, db *gorm.DB, userID uint, ammoID string, rounds int) {
+	t.Helper()
+	var inv models.Inventory
+	err := db.Where("user_id = ? AND item_id = ? AND raid_extract = ?", userID, ammoID, false).First(&inv).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if err := db.Create(&models.Inventory{
+			UserID: userID, ItemID: ammoID, Name: "测试弹药", Kind: "ammo",
+			Quantity: rounds, Price: 1, Slots: 1, MerchantCategory: "weapon",
+		}).Error; err != nil {
+			t.Fatalf("写入测试弹药库存 %s: %v", ammoID, err)
+		}
+	case err != nil:
+		t.Fatalf("读取测试弹药库存 %s: %v", ammoID, err)
+	default:
+		if err := db.Model(&models.Inventory{}).Where("user_id = ? AND id = ?", userID, inv.ID).
+			Updates(map[string]interface{}{"quantity": gorm.Expr("quantity + ?", rounds)}).Error; err != nil {
+			t.Fatalf("累加测试弹药库存 %s: %v", ammoID, err)
+		}
 	}
 }
