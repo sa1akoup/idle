@@ -243,7 +243,11 @@ func eventConditionMatches(condition EventCondition, state *eventRunState) bool 
 	case "stress_ratio":
 		actual = state.Player.Stress / state.Player.StressThreshold
 	case "ammo":
-		actual = float64(state.Player.AmmoRounds)
+		if len(state.AmmoStacks) > 0 {
+			actual = float64(state.totalAmmoRounds())
+		} else {
+			actual = float64(state.Player.AmmoRounds)
+		}
 	case "heat":
 		actual = float64(state.Heat)
 	case "carry_ratio":

@@ -103,7 +103,10 @@ func resolveNodeEncounter(snapshot ScenarioSnapshot, state *eventRunState, event
 	if forceEscape {
 		*state.Lines = append(*state.Lines, "  当前因负重撤离，战斗内优先尝试脱离")
 	}
+	// 交战前从携带弹药池中选中本次主弹（等级最高者），战后写回消耗。
+	state.syncActiveAmmo(snapshot)
 	result := simulateEncounter(snapshot.Tuning, state.Player, &enemyActor, node.Distance, state.Heat, state.hasItem("smoke"), approach, policy, enemyPolicy, forceEscape, rng)
+	state.writeBackActiveAmmo()
 	*state.Lines = append(*state.Lines, result.Lines[1:]...)
 	battleStartedAt := state.DurationSec
 	for _, battleEvent := range result.Trace {
@@ -156,7 +159,7 @@ func encounterApproach(policy StylePolicy, role string) string {
 }
 
 // evaluateAutomaticEvacuation 检查血量/压力/弹药/护甲/负重，任一触线即自动进入撤离。
-func evaluateAutomaticEvacuation(state *eventRunState, weapon Weapon) {
+func evaluateAutomaticEvacuation(snapshot ScenarioSnapshot, state *eventRunState, weapon Weapon) {
 	if state.Player.HP <= 0 {
 		return
 	}
@@ -167,10 +170,14 @@ func evaluateAutomaticEvacuation(state *eventRunState, weapon Weapon) {
 	if state.Player.Stress >= state.Player.StressThreshold*policy.StressEvacRatio {
 		state.beginEvacuation("stress", false)
 	}
-	if weapon.AmmoPerRound > 0 && state.Player.AmmoRounds < weapon.AmmoPerRound {
+	if weapon.AmmoPerRound > 0 && !HasUsableCarriedAmmoStack(snapshot, weapon, state.AmmoStacks) {
 		state.beginEvacuation("ammo", true)
 	}
-	if state.Player.ArmorDurability <= 0 {
+	if state.Player.ArmorDurability > 0 {
+		state.Player.IgnoreBrokenArmorEscape = false
+	}
+	if state.Player.Armor.ProtectionLevel > 0 && state.Player.ArmorMaxDur > 0 && state.Player.ArmorDurability <= 0 && !state.Player.IgnoreBrokenArmorEscape {
+		state.ArmorBrokenDuringRun = true
 		state.beginEvacuation("armor", true)
 	}
 	if state.CarryBlocked || state.carryRatio() >= policy.CarryEvacRatio {

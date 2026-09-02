@@ -65,13 +65,12 @@ func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) 
 		state.Player.ArmorDurability = clamp(state.Player.ArmorDurability+float64(effect.Value), 0, state.Player.ArmorMaxDur)
 		return fmt.Sprintf("护甲耐久 %+d，当前 %.0f", effect.Value, state.Player.ArmorDurability), nil
 	case "ammo":
-		previousRounds := state.Player.AmmoRounds
-		state.Player.AmmoRounds = maxInt(state.Player.AmmoRounds+effect.Value, 0)
+		previousRounds, nextRounds := state.adjustAmmo(effect.Value)
 		// 弹药负数即消耗，需要计入本局总弹药用量。
 		if effect.Value < 0 {
-			state.AmmoUsed += previousRounds - state.Player.AmmoRounds
+			state.AmmoUsed += previousRounds - nextRounds
 		}
-		return fmt.Sprintf("弹药 %+d，当前 %d", effect.Value, state.Player.AmmoRounds), nil
+		return fmt.Sprintf("弹药 %+d，当前 %d", effect.Value, nextRounds), nil
 	case "container":
 		if state.CollectContainer == nil {
 			return "", fmt.Errorf("容器收集器未初始化")

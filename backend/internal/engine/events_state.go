@@ -10,6 +10,7 @@ import (
 type eventRunState struct {
 	Character       *CharacterState
 	Player          *BattleActor
+	Snapshot        *ScenarioSnapshot
 	Node            Node
 	ExtractionPoint *ExtractionPoint
 	Mode            string
@@ -17,10 +18,15 @@ type eventRunState struct {
 	Styles          []StylePolicy
 	Tuning          Tuning
 
-	EvacuationReason    string
-	EvacuationEmergency bool
-	EvacuationPending   bool
-	EvacuationStarted   bool
+	// 携带弹药池与当前主弹索引：交战时从池中选栈、战后写回。
+	AmmoStacks      []CarriedAmmo
+	activeAmmoIndex int
+
+	EvacuationReason     string
+	EvacuationEmergency  bool
+	EvacuationPending    bool
+	EvacuationStarted    bool
+	ArmorBrokenDuringRun bool
 
 	DurationSec   int64
 	Heat          int
@@ -102,6 +108,60 @@ func (state *eventRunState) consumeItem(itemID string) bool {
 		}
 	}
 	return false
+}
+
+// syncActiveAmmo 交战前从携带弹药池中选中本次攻击使用的主弹（等级最高且发数足够），
+// 同步到 BattleActor；池中无可用弹药时清空当前弹药，后续由弹药耗尽规则接管。
+func (state *eventRunState) syncActiveAmmo(snapshot ScenarioSnapshot) {
+	profile, rounds, index, ok := selectUsableAmmoStack(snapshot, state.Player.Weapon, state.AmmoStacks)
+	state.activeAmmoIndex = index
+	if !ok {
+		state.Player.Ammo = Ammo{}
+		state.Player.AmmoRounds = 0
+		return
+	}
+	state.Player.Ammo = profile
+	state.Player.AmmoRounds = rounds
+}
+
+// adjustAmmo 修改事件涉及的实际弹药栈，并返回修改前后的发数。
+// 没有完整快照时保留旧的 Player.AmmoRounds 语义，兼容独立事件单测和旧调用方。
+func (state *eventRunState) adjustAmmo(delta int) (int, int) {
+	if state.Snapshot == nil || state.Player.Weapon.AmmoPerRound <= 0 {
+		previous := state.Player.AmmoRounds
+		next := maxInt(previous+delta, 0)
+		state.Player.AmmoRounds = next
+		return previous, next
+	}
+
+	profile, index, ok := selectAmmoStackForEffect(*state.Snapshot, state.Player.Weapon, state.AmmoStacks)
+	if !ok {
+		previous := state.Player.AmmoRounds
+		next := maxInt(previous+delta, 0)
+		state.Player.AmmoRounds = next
+		return previous, next
+	}
+	state.activeAmmoIndex = index
+	previous := state.AmmoStacks[index].Rounds
+	next := maxInt(previous+delta, 0)
+	state.AmmoStacks[index].Rounds = next
+	state.Player.Ammo = profile
+	state.Player.AmmoRounds = next
+	return previous, next
+}
+
+// writeBackActiveAmmo 交战结束后把本次消耗写回弹药池，耗尽栈保留余量供终局返还。
+func (state *eventRunState) writeBackActiveAmmo() {
+	if state.activeAmmoIndex < 0 || state.activeAmmoIndex >= len(state.AmmoStacks) {
+		return
+	}
+	state.AmmoStacks[state.activeAmmoIndex].Rounds = state.Player.AmmoRounds
+	state.activeAmmoIndex = -1
+}
+
+// totalAmmoRounds 取携带弹药池总发数（含未选中栈），用于弹药耗尽的自动撤离判定。
+func (state *eventRunState) totalAmmoRounds() int {
+	return ammoStacksRounds(state.AmmoStacks)
 }
 
 // consumeCarriedItem 扣减单个携带实例：可堆叠品减数量，实例品按使用耐久扣减。

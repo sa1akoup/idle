@@ -8,7 +8,7 @@ import (
 )
 
 // simulateSingleRun 推进一整局：规划路线、按节点执行事件/战斗/搜索、撤离结算，全程只依赖传入 RNG 保证可重放。
-func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weapon Weapon, armor Armor, armorDurability int, ammo Ammo, ammoRounds int, consumables []ItemStack, carriedItems []CarriedItem, itemUseDefs map[string]ItemUseDefinition, nodes []Node, rng *rand.Rand, style string, carrySlots int, carryWeight float64, runIndex int, hearing int) (*simulatedRun, error) {
+func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weapon Weapon, armor Armor, armorDurability int, ammoStacks []CarriedAmmo, consumables []ItemStack, carriedItems []CarriedItem, itemUseDefs map[string]ItemUseDefinition, nodes []Node, rng *rand.Rand, style string, carrySlots int, carryWeight float64, runIndex int, hearing int) (*simulatedRun, error) {
 	byID := make(map[string]Node, len(nodes))
 	for _, node := range nodes {
 		byID[node.ID] = node
@@ -37,14 +37,20 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		"route": append([]string(nil), routePlan.NodeIDs...), "extractionId": routePlan.ExtractionID,
 		"anchorNodeId": routePlan.AnchorNodeID,
 	})
-	playerActor := buildPlayerActor(snapshot.Tuning, character, weapon, armor, armorDurability, ammo, ammoRounds, hearing)
+	// 开局从携带弹药池中选中主弹；校验层已保证枪械至少有一栈可开火。
+	activeProfile, activeRounds, activeIndex, activeOK := selectUsableAmmoStack(snapshot, weapon, ammoStacks)
+	if !activeOK {
+		activeProfile, activeRounds, activeIndex = Ammo{}, 0, -1
+	}
+	playerActor := buildPlayerActor(snapshot.Tuning, character, weapon, armor, armorDurability, activeProfile, activeRounds, hearing)
 	availableItems := make(map[string]int, len(consumables))
 	for _, item := range consumables {
 		availableItems[item.ItemID] += item.Quantity
 	}
 	state := &eventRunState{
-		Character: &character, Player: &playerActor, Mode: runModeExploring, Style: style, Styles: snapshot.Styles,
+		Character: &character, Player: &playerActor, Snapshot: &snapshot, Mode: runModeExploring, Style: style, Styles: snapshot.Styles,
 		Tuning:     snapshot.Tuning,
+		AmmoStacks: CloneCarriedAmmoStacks(ammoStacks), activeAmmoIndex: activeIndex,
 		CarrySlots: carrySlots, CarryWeight: carryWeight, AvailableItems: availableItems, CarriedItems: CloneCarriedItems(carriedItems), ItemUseDefs: itemUseDefs,
 		ConsumedItems: make(map[string]int), Flags: make(map[string]bool), EventCounts: make(map[string]int),
 		LastEventVisit: make(map[string]int), Lines: &lines, Trace: &trace,
@@ -249,7 +255,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		if err := events.Trigger(state, eventPhaseEnterNode, rng); err != nil {
 			return nil, err
 		}
-		evaluateAutomaticEvacuation(state, weapon)
+		evaluateAutomaticEvacuation(snapshot, state, weapon)
 		if err := startEvacuationEvents(events, state, rng); err != nil {
 			return nil, err
 		}
@@ -257,12 +263,12 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			if err := events.Trigger(state, eventPhaseEvacStep, rng); err != nil {
 				return nil, err
 			}
-			evaluateAutomaticEvacuation(state, weapon)
+			evaluateAutomaticEvacuation(snapshot, state, weapon)
 		}
 		if err := events.Trigger(state, eventPhasePreEncounter, rng); err != nil {
 			return nil, err
 		}
-		evaluateAutomaticEvacuation(state, weapon)
+		evaluateAutomaticEvacuation(snapshot, state, weapon)
 		if err := startEvacuationEvents(events, state, rng); err != nil {
 			return nil, err
 		}
@@ -282,7 +288,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		}
 		maybeAutoRecoverNeeds(state)
 		maybeAutoHeal(state)
-		evaluateAutomaticEvacuation(state, weapon)
+		evaluateAutomaticEvacuation(snapshot, state, weapon)
 		if err := startEvacuationEvents(events, state, rng); err != nil {
 			return nil, err
 		}
@@ -299,7 +305,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 			if err := events.Trigger(state, eventPhasePreSearch, rng); err != nil {
 				return nil, err
 			}
-			evaluateAutomaticEvacuation(state, weapon)
+			evaluateAutomaticEvacuation(snapshot, state, weapon)
 			if searchAllowed && !state.SkipSearch {
 				for _, assignment := range materialized[node.ID] {
 					for i := 0; i < assignment.Count; i++ {
@@ -318,7 +324,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 					return nil, err
 				}
 			}
-			evaluateAutomaticEvacuation(state, weapon)
+			evaluateAutomaticEvacuation(snapshot, state, weapon)
 			if err := startEvacuationEvents(events, state, rng); err != nil {
 				return nil, err
 			}
@@ -410,12 +416,16 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 	if lootQuantity(extractedLoot) < lootQuantity(loot) {
 		lines = append(lines, fmt.Sprintf(">> %s仅保留 %d 件物品", extractionLabel(result), lootQuantity(extractedLoot)))
 	}
+	// 局末把主弹余量写回弹药池，剩余各栈（含耗尽栈余量）作为终局返还依据。
+	state.writeBackActiveAmmo()
 	return &simulatedRun{
 		result: result, durationSec: state.DurationSec, heat: state.Heat, ammoUsed: state.AmmoUsed,
 		ammoRounds: state.Player.AmmoRounds,
+		ammoStacks: CloneCarriedAmmoStacks(state.AmmoStacks),
 		playerHP:   state.Player.HP, energy: character.Energy, hydration: character.Hydration,
 		playerStress: state.Player.Stress,
 		finished:     finishedSession, armorDurability: int(math.Round(state.Player.ArmorDurability)), carriedItems: CloneCarriedItems(state.CarriedItems),
-		loot: cloneLoot(loot), extractedLoot: extractedLoot, consumedItems: state.ConsumedItems, report: lines, trace: trace,
+		armorBrokenDuringRun: state.ArmorBrokenDuringRun,
+		loot:                 cloneLoot(loot), extractedLoot: extractedLoot, consumedItems: state.ConsumedItems, report: lines, trace: trace,
 	}, nil
 }

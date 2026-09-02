@@ -14,6 +14,7 @@ type simulatedRun struct {
 	heat                    int
 	ammoUsed                int
 	ammoRounds              int
+	ammoStacks              []CarriedAmmo
 	playerHP                float64
 	energy                  float64
 	hydration               float64
@@ -22,6 +23,7 @@ type simulatedRun struct {
 	finished                bool
 	skipResourceConsumption bool
 	armorDurability         int
+	armorBrokenDuringRun    bool
 	loot                    []LootDrop
 	extractedLoot           []LootDrop
 	consumedItems           map[string]int
@@ -42,33 +44,46 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	if !ok {
 		return RunResult{}, fmt.Errorf("武器 %s 不存在", input.State.Loadout.WeaponID)
 	}
-	armor, ok := snapshot.Armors[input.State.Loadout.ArmorID]
-	if !ok {
-		return RunResult{}, fmt.Errorf("护甲 %s 不存在", input.State.Loadout.ArmorID)
-	}
-	var ammo Ammo
-	if weapon.AmmoPerRound > 0 {
-		ammo, ok = snapshot.Ammos[input.State.Ammo.ID]
+	armor := Armor{}
+	if input.State.Loadout.ArmorID != "" {
+		var ok bool
+		armor, ok = snapshot.Armors[input.State.Loadout.ArmorID]
 		if !ok {
-			return RunResult{}, fmt.Errorf("弹药 %s 不存在", input.State.Ammo.ID)
+			return RunResult{}, fmt.Errorf("护甲 %s 不存在", input.State.Loadout.ArmorID)
 		}
-		if ammo.CaliberID != weapon.CaliberID || input.State.Ammo.CaliberID != ammo.CaliberID || input.State.Ammo.Level != ammo.Level {
-			return RunResult{}, fmt.Errorf("携带弹药与武器口径或快照配置不匹配")
+	}
+	stacks := CarriedAmmoStacks(&input.State)
+	if weapon.AmmoPerRound > 0 {
+		if len(stacks) == 0 {
+			return RunResult{}, fmt.Errorf("未配置携带弹药")
 		}
-		if input.State.Ammo.Rounds < weapon.AmmoPerRound {
+		// 逐栈校验：快照存在、口径与等级匹配；空/耗尽栈跳过校验，仅作为返还余量保留。
+		for _, stack := range stacks {
+			if stack.ID == "" || stack.Rounds <= 0 {
+				continue
+			}
+			stackProfile, ok := snapshot.Ammos[stack.ID]
+			if !ok {
+				return RunResult{}, fmt.Errorf("弹药 %s 不存在", stack.ID)
+			}
+			if stackProfile.CaliberID != weapon.CaliberID || stack.CaliberID != stackProfile.CaliberID || stack.Level != stackProfile.Level {
+				return RunResult{}, fmt.Errorf("携带弹药与武器口径或快照配置不匹配")
+			}
+		}
+		_, _, activeIdx, ok := selectUsableAmmoStack(snapshot, weapon, stacks)
+		if !ok {
 			return RunResult{}, fmt.Errorf("携带弹药不足以完成一次攻击")
 		}
-		preferred, ok := snapshot.Ammos[input.State.Ammo.PreferredID]
-		if !ok || preferred.CaliberID != weapon.CaliberID || preferred.Level != input.State.Ammo.PreferredLevel {
-			return RunResult{}, fmt.Errorf("首选弹药与武器口径或快照配置不匹配")
+		// 首选弹药校验：以主弹自带的自动补给偏好为准（旧单栈路径的偏好字段一并生效）。
+		preferred, ok := snapshot.Ammos[stacks[activeIdx].PreferredID]
+		if !ok || preferred.CaliberID != weapon.CaliberID || preferred.Level != stacks[activeIdx].PreferredLevel ||
+			stacks[activeIdx].Level > preferred.Level || stacks[activeIdx].TargetRounds < weapon.AmmoPerRound {
+			return RunResult{}, fmt.Errorf("首选弹药与武器口径或自动补给配置不匹配")
 		}
-		if ammo.Level > preferred.Level || input.State.Ammo.TargetRounds < weapon.AmmoPerRound {
-			return RunResult{}, fmt.Errorf("当前弹药等级或自动补给目标无效")
-		}
-	} else if input.State.Ammo.ID != "" || input.State.Ammo.Rounds != 0 || input.State.Ammo.PreferredID != "" || input.State.Ammo.PreferredLevel != 0 || input.State.Ammo.TargetRounds != 0 {
+	} else if len(stacks) > 0 {
 		return RunResult{}, fmt.Errorf("近战武器不能携带弹药")
 	}
-	usedSlots, usedWeight, err := LoadoutUsage(snapshot, input.State.Loadout, input.State.Consumables, input.State.Ammo)
+	usedSlots, usedWeight, err := LoadoutUsage(snapshot, input.State.Loadout, input.State.Consumables, stacks)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("计算当前配装容量: %w", err)
 	}
@@ -85,7 +100,7 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 		}
 	}
 	rng := rand.New(rand.NewSource(sessionRunSeed(input.SessionSeed, input.RunIndex)))
-	outcome, err := simulateSingleRun(snapshot, input.State.Character, weapon, armor, input.State.ArmorDurability, ammo, input.State.Ammo.Rounds, input.State.Consumables, input.State.CarriedItems, snapshot.ItemUseDefs, snapshot.Nodes, rng, style, freeSlots, freeWeight, input.RunIndex, hearing)
+	outcome, err := simulateSingleRun(snapshot, input.State.Character, weapon, armor, input.State.ArmorDurability, stacks, input.State.Consumables, input.State.CarriedItems, snapshot.ItemUseDefs, snapshot.Nodes, rng, style, freeSlots, freeWeight, input.RunIndex, hearing)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -102,8 +117,9 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	}
 	remaining := subtractItemStacks(nextState.Consumables, outcome.consumedItems)
 	nextState.Consumables = remaining
-	nextState.Ammo.Rounds = outcome.ammoRounds
-	nextState.Carry.UsedSlots, nextState.Carry.UsedWeight, err = LoadoutUsage(snapshot, nextState.Loadout, nextState.Consumables, nextState.Ammo)
+	nextState.AmmoStacks = CloneCarriedAmmoStacks(outcome.ammoStacks)
+	nextState.Ammo = BestCarriedAmmoSummary(nextState.AmmoStacks)
+	nextState.Carry.UsedSlots, nextState.Carry.UsedWeight, err = LoadoutUsage(snapshot, nextState.Loadout, nextState.Consumables, nextState.AmmoStacks)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("计算单局后配装容量: %w", err)
 	}
@@ -126,6 +142,7 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 		Trace:                   append([]TraceEvent(nil), outcome.trace...),
 		NextState:               nextState,
 		Finished:                outcome.finished,
+		ArmorBrokenDuringRun:    outcome.armorBrokenDuringRun,
 		SkipResourceConsumption: outcome.skipResourceConsumption || outcome.result == "incapacitated",
 	}, nil
 }
@@ -144,6 +161,7 @@ func SimulateRunVersion(version string, snapshot ScenarioSnapshot, input RunInpu
 func cloneEngineState(state EngineState) EngineState {
 	state.Consumables = cloneItemStacks(state.Consumables)
 	state.CarriedItems = CloneCarriedItems(state.CarriedItems)
+	state.AmmoStacks = CloneCarriedAmmoStacks(state.AmmoStacks)
 	return state
 }
 
@@ -205,8 +223,8 @@ func subtractItemStacks(stacks []ItemStack, consumed map[string]int) []ItemStack
 	return result
 }
 
-// LoadoutUsage 统计当前配装、消耗品和自带弹药占用的格子与负重。
-func LoadoutUsage(snapshot ScenarioSnapshot, loadout LoadoutState, consumables []ItemStack, ammo CarriedAmmo) (int, float64, error) {
+// LoadoutUsage 统计当前配装、消耗品和携带弹药池占用的格子与负重。
+func LoadoutUsage(snapshot ScenarioSnapshot, loadout LoadoutState, consumables []ItemStack, ammoStacks []CarriedAmmo) (int, float64, error) {
 	ids := []string{loadout.WeaponID, loadout.ArmorID, loadout.ChestRigID, loadout.BackpackID, loadout.HelmetID, loadout.HeadsetID}
 	slots, weight := 0, 0.0
 	for _, itemID := range ids {
@@ -234,9 +252,16 @@ func LoadoutUsage(snapshot ScenarioSnapshot, loadout LoadoutState, consumables [
 		slots += item.Slots * stack.Quantity
 		weight += float64(item.Weight * stack.Quantity)
 	}
-	ammoSlots, ammoWeight, err := ammoUsage(snapshot, ammo.ID, ammo.Rounds)
-	if err != nil {
-		return 0, 0, err
+	for _, stack := range ammoStacks {
+		if stack.ID == "" || stack.Rounds <= 0 {
+			continue
+		}
+		ammoSlots, ammoWeight, err := ammoUsage(snapshot, stack.ID, stack.Rounds)
+		if err != nil {
+			return 0, 0, err
+		}
+		slots += ammoSlots
+		weight += ammoWeight
 	}
-	return slots + ammoSlots, weight + ammoWeight, nil
+	return slots, weight, nil
 }

@@ -28,6 +28,8 @@ type BattleActor struct {
 	WeaponControl   float64
 	Ammo            Ammo
 	AmmoRounds      int
+	// IgnoreBrokenArmorEscape 表示本局开始时护甲已经损坏；修复事件恢复耐久后会清除此标记。
+	IgnoreBrokenArmorEscape bool
 }
 
 type BattleResult struct {
@@ -194,7 +196,8 @@ func buildPlayerActor(t Tuning, character CharacterState, weapon Weapon, armor A
 		Name: character.Name, MaxHP: maxHP, HP: hp,
 		Stress: float64(character.Stress), StressThreshold: CalcStressThreshold(t, resistEff), Weapon: weapon, Armor: armor,
 		ArmorDurability: float64(armorDurability), ArmorMaxDur: float64(armor.MaxDurability),
-		Evasion: calcEvasion(t, float64(character.Agility), float64(armor.Mobility)), Mobility: float64(armor.Mobility),
+		IgnoreBrokenArmorEscape: armor.ID != "" && armorDurability <= 0,
+		Evasion:                 calcEvasion(t, float64(character.Agility), float64(armor.Mobility)), Mobility: float64(armor.Mobility),
 		PerceptionEff: percepEff, StealthEff: stealthEff, Agility: float64(character.Agility), Intellect: float64(character.Intellect),
 		Hearing: float64(hearing), ResistEff: resistEff,
 		WeaponControl: finalWeaponControl(t, attrControl, getProf(character, weapon.Category)), Ammo: ammo, AmmoRounds: ammoRounds,
@@ -274,7 +277,7 @@ func shouldEscape(actor BattleActor, policy StylePolicy) bool {
 	return actor.HP < actor.MaxHP*policy.HealthEvacRatio ||
 		actor.Stress >= actor.StressThreshold*policy.StressEvacRatio ||
 		(actor.Weapon.AmmoPerRound > 0 && actor.AmmoRounds < actor.Weapon.AmmoPerRound) ||
-		(actor.Armor.ProtectionLevel > 0 && actor.ArmorMaxDur > 0 && actor.ArmorDurability <= 0)
+		(actor.Armor.ProtectionLevel > 0 && actor.ArmorMaxDur > 0 && actor.ArmorDurability <= 0 && !actor.IgnoreBrokenArmorEscape)
 }
 
 // canAttack 判定弹药是否足够发动一次攻击，无弹药消耗的武器恒可攻击。

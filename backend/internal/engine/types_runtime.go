@@ -8,10 +8,28 @@ type EngineState struct {
 	Character       CharacterState `json:"character"`
 	Loadout         LoadoutState   `json:"loadout"`
 	ArmorDurability int            `json:"armorDurability"`
-	Ammo            CarriedAmmo    `json:"ammo"`
+	Ammo            CarriedAmmo    `json:"ammo"`       // 当前主弹药摘要（UI/会话行展示与旧状态兼容）
+	AmmoStacks      []CarriedAmmo  `json:"ammoStacks"` // 携带弹药池：最多 4 栈，逐栈扣减与返还
 	Consumables     []ItemStack    `json:"consumables"`
 	CarriedItems    []CarriedItem  `json:"carriedItems"`
 	Carry           CarryState     `json:"carry"`
+}
+
+// CloneCarriedAmmoStacks 拷贝携带弹药池切片，避免跨局修改共享底层数组。
+func CloneCarriedAmmoStacks(stacks []CarriedAmmo) []CarriedAmmo {
+	return append([]CarriedAmmo(nil), stacks...)
+}
+
+// CarriedAmmoStacks 归一化状态内的携带弹药池：新状态的 AmmoStacks 为空但 Ammo 有值时，
+// 视为旧版单栈状态并包装成单栈池，保证存量会话与单栈路径继续可用。
+func CarriedAmmoStacks(state *EngineState) []CarriedAmmo {
+	if len(state.AmmoStacks) > 0 {
+		return state.AmmoStacks
+	}
+	if state.Ammo.ID != "" && state.Ammo.Rounds > 0 {
+		return []CarriedAmmo{state.Ammo}
+	}
+	return nil
 }
 
 // CarriedItem 是行动内携带的聚合补给或耐久实例。
@@ -57,6 +75,7 @@ type RunResult struct {
 	Trace                   []TraceEvent `json:"trace"`
 	NextState               EngineState  `json:"nextState"`
 	Finished                bool         `json:"finished"`
+	ArmorBrokenDuringRun    bool         `json:"armorBrokenDuringRun,omitempty"`
 	SkipResourceConsumption bool         `json:"skipResourceConsumption"`
 }
 
