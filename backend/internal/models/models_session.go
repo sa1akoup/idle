@@ -103,6 +103,7 @@ type PlayerLoadout struct {
 	HeadsetID             string           `json:"headsetId"`
 	Consumables           []string         `gorm:"serializer:json" json:"consumables"`
 	ConsumableRefs        []LoadoutItemRef `gorm:"serializer:json" json:"consumableRefs"`
+	CarriedAmmo           []AmmoCell       `gorm:"serializer:json" json:"carriedAmmo"` // 随身携带弹药：最多 4 格，每格 1-60 发
 	PresetWeaponID        string           `json:"presetWeaponId"`
 	PresetArmorID         string           `json:"presetArmorId"`
 	PresetChestRigID      string           `json:"presetChestRigId"`
@@ -144,6 +145,12 @@ type LoadoutItemRef struct {
 	InstanceID uint   `json:"instanceId"`
 	ItemID     string `json:"itemId"`
 	Quantity   int    `json:"quantity"`
+}
+
+// AmmoCell 是随身携带弹药的一个槽位：弹药 ID + 携弹发数（1-60）。
+type AmmoCell struct {
+	AmmoID string `json:"ammoId"`
+	Rounds int    `json:"rounds"`
 }
 
 // RecoveryPlan 是 Session 结束后自动执行的恢复计划。

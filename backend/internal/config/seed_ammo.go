@@ -76,9 +76,10 @@ func seedAmmo(db *gorm.DB) error {
 }
 
 func initialAmmoInventory() []models.Inventory {
+	// 与三套初始预设配套：直接可用的最低级无门槛弹药（N1/N2），各备 60 发（够两轮预设携弹）。
 	return []models.Inventory{
-		{ItemID: "ammo_762x39_n4", Name: "7.62×39mm N4级弹", Kind: "ammo", Quantity: 180, Price: 16, Slots: 1, MerchantCategory: "weapon", RepRequirement: 30},
-		{ItemID: "ammo_9x19_n3", Name: "9×19mm N3级弹", Kind: "ammo", Quantity: 90, Price: 4, Slots: 1, MerchantCategory: "weapon", RepRequirement: 15},
-		{ItemID: "ammo_12g_n3", Name: "12 Gauge N3级弹", Kind: "ammo", Quantity: 30, Price: 8, Slots: 1, MerchantCategory: "weapon", RepRequirement: 15},
+		{ItemID: "ammo_762x39_n2", Name: "7.62×39mm N2级弹", Kind: "ammo", Quantity: 60, Price: 4, Slots: 1, MerchantCategory: "weapon", RepRequirement: 0},
+		{ItemID: "ammo_9x19_n1", Name: "9×19mm N1级弹", Kind: "ammo", Quantity: 60, Price: 1, Slots: 1, MerchantCategory: "weapon", RepRequirement: 0},
+		{ItemID: "ammo_12g_n1", Name: "12 Gauge N1级弹", Kind: "ammo", Quantity: 60, Price: 2, Slots: 1, MerchantCategory: "weapon", RepRequirement: 0},
 	}
 }

@@ -16,7 +16,12 @@ import (
 	"gorm.io/gorm"
 )
 
-const currentUserDataUpgradeVersion = 2
+const currentUserDataUpgradeVersion = 4
+
+// retiredCatalogItemIDs 是历史上存在于目录种子、现已下架的道具；
+// 升级时先删除其残留定义行，随后既有的悬空扫描会把玩家数据中的引用一并摘除。
+// ammo_box：被分级弹药系统（ammo_defs）替代的旧"弹药箱"补给（补充弹药）。
+var retiredCatalogItemIDs = []string{"ammo_box"}
 
 type userDataUpgradeRecord struct {
 	Version          int       `gorm:"primaryKey;column:version"`
@@ -43,6 +48,12 @@ func RunUserDataUpgrades(db *gorm.DB) (int, error) {
 
 	userIDs, err := listUpgradableUserIDs(db)
 	if err != nil {
+		return 0, err
+	}
+	// 先清除已下架道具的定义残留，否则悬空扫描会误判其为目录内合法道具，
+	// 导致玩家配置与仓库中的引用永远无法被清理。
+	purged := 0
+	if err := purgeRetiredCatalogDefsTx(db, &purged); err != nil {
 		return 0, err
 	}
 	if len(userIDs) == 0 {
@@ -80,7 +91,13 @@ func RunUserDataUpgrades(db *gorm.DB) (int, error) {
 
 			stripped, err := stripDanglingCatalogRefsTx(tx, userID, catalog)
 			strippedRefs += stripped
-			return err
+			if err != nil {
+				return err
+			}
+			if err := fillDefaultPresetAmmoTx(tx, userID); err != nil {
+				return err
+			}
+			return nil
 		})
 		if txErr != nil {
 			return len(userIDs), fmt.Errorf("用户 %d 存量数据适配失败: %w", userID, txErr)
@@ -320,6 +337,25 @@ func stripDanglingCatalogRefsTx(tx *gorm.DB, userID uint, catalog upgradeCatalog
 		filterConsumables("preset2_consumables", "Preset2Consumables", loadout.Preset2Consumables)
 		filterConsumables("preset3_consumables", "Preset3Consumables", loadout.Preset3Consumables)
 
+		filteredAmmo := append([]models.AmmoCell(nil), loadout.CarriedAmmo...)
+		ammoChanged := false
+		for index, cell := range filteredAmmo {
+			if cell.AmmoID == "" && cell.Rounds == 0 {
+				continue
+			}
+			if cell.AmmoID != "" && cell.Rounds > 0 && catalog.has(cell.AmmoID) {
+				continue
+			}
+			log.Printf("[数据适配] 用户%d 携带弹药槽摘除悬空或无效引用 %s（carried_ammo[%d]）", userID, cell.AmmoID, index)
+			filteredAmmo[index] = models.AmmoCell{}
+			stripped++
+			ammoChanged = true
+		}
+		if ammoChanged {
+			loadout.CarriedAmmo = filteredAmmo
+			changedFields = append(changedFields, "CarriedAmmo")
+		}
+
 		filterRefs := func(column, field string, refs []models.LoadoutItemRef) {
 			kept := make([]models.LoadoutItemRef, 0, len(refs))
 			for _, ref := range refs {
@@ -419,6 +455,146 @@ func sweepDanglingRows(tx *gorm.DB, userID uint, catalog upgradeCatalog, table s
 		*stripped++
 	}
 	return nil
+}
+
+// defaultPresetAmmoRounds 预设默认携弹量：最低级且商人可直接购买（无好感度门槛）的 30 发。
+const defaultPresetAmmoRounds = 30
+
+// defaultPresetAmmoStock 回填预设弹药时配套补足的仓库余量：按两轮预设携弹备货。
+const defaultPresetAmmoStock = 60
+
+// purgeRetiredCatalogDefsTx 删除已下架道具在各目录定义表中的残留行（弹药等按主键列区分）。
+func purgeRetiredCatalogDefsTx(tx *gorm.DB, deleted *int) error {
+	purgeTables := []struct {
+		table  string
+		model  interface{}
+		column string
+	}{
+		{"consumable_defs", &models.ConsumableDef{}, "id"},
+		{"loot_item_defs", &models.LootItemDef{}, "id"},
+		{"item_use_defs", &models.ItemUseDef{}, "item_id"},
+	}
+	removed := 0
+	for _, table := range purgeTables {
+		result := tx.Table(table.table).Where(fmt.Sprintf("%s IN ?", table.column), retiredCatalogItemIDs).Delete(table.model)
+		if result.Error != nil {
+			return fmt.Errorf("清理下架道具定义表 %s: %w", table.table, result.Error)
+		}
+		removed += int(result.RowsAffected)
+	}
+	if removed > 0 {
+		log.Printf("[数据适配] 删除下架道具定义 %d 行（%v）", removed, retiredCatalogItemIDs)
+	}
+	*deleted += removed
+	return nil
+}
+
+// fillDefaultPresetAmmoTx 为弹药栏为空的存量子配装回填预设默认弹药（最低等级 + 30 发），
+// 已手工配置过弹药的预设保持原样；近战武器或无可用弹药时保持为空。
+// 回填的同时确保仓库有配套弹药余量，否则启动行动时的按预设扣弹会因缺货失败。
+func fillDefaultPresetAmmoTx(tx *gorm.DB, userID uint) error {
+	var loadout models.PlayerLoadout
+	if err := tx.Where("user_id = ?", userID).First(&loadout).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("读取装备配置: %w", err)
+	}
+	type slot struct {
+		weaponID string
+		ammoID   *string
+		rounds   *int
+	}
+	changed := false
+	for _, s := range []slot{
+		{loadout.PresetWeaponID, &loadout.PresetAmmoID, &loadout.PresetAmmoRounds},
+		{loadout.Preset2WeaponID, &loadout.Preset2AmmoID, &loadout.Preset2AmmoRounds},
+		{loadout.Preset3WeaponID, &loadout.Preset3AmmoID, &loadout.Preset3AmmoRounds},
+	} {
+		if s.weaponID == "" || s.rounds == nil || s.ammoID == nil {
+			continue
+		}
+		if *s.ammoID != "" && *s.rounds > 0 {
+			continue // 已配置过弹药，不覆盖玩家选择
+		}
+		ammo, rounds, err := defaultAmmoForWeaponTx(tx, s.weaponID)
+		if err != nil {
+			return err
+		}
+		if ammo.ID == "" {
+			continue // 近战武器或该口径无可用弹药，保持空配置
+		}
+		*s.ammoID = ammo.ID
+		*s.rounds = rounds
+		if err := ensureAmmoStockTx(tx, userID, ammo, defaultPresetAmmoStock); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if changed {
+		if err := tx.Model(&models.PlayerLoadout{}).Where("user_id = ? AND id = ?", userID, loadout.ID).
+			Select("PresetAmmoID", "PresetAmmoRounds", "Preset2AmmoID", "Preset2AmmoRounds", "Preset3AmmoID", "Preset3AmmoRounds").
+			Updates(&loadout).Error; err != nil {
+			return fmt.Errorf("保存预设默认弹药: %w", err)
+		}
+		log.Printf("[数据适配] 用户%d 回填预设默认弹药", userID)
+	}
+	return nil
+}
+
+// defaultAmmoForWeaponTx 取武器口径下无好感度门槛的最低等级弹药，默认 30 发（不低于单次消耗）。
+// 口径不存在免门槛弹药时退回最低等级；近战武器或无弹药口径返回空定义。
+func defaultAmmoForWeaponTx(tx *gorm.DB, weaponID string) (models.AmmoDef, int, error) {
+	var weapon models.WeaponDef
+	if err := tx.Where("id = ?", weaponID).First(&weapon).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return models.AmmoDef{}, 0, nil
+		}
+		return models.AmmoDef{}, 0, fmt.Errorf("读取武器 %s: %w", weaponID, err)
+	}
+	if weapon.AmmoPerRound <= 0 {
+		return models.AmmoDef{}, 0, nil
+	}
+	var ammo models.AmmoDef
+	err := tx.Where("caliber_id = ? AND rep_requirement = 0", weapon.CaliberID).Order("level asc, id asc").First(&ammo).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		err = tx.Where("caliber_id = ?", weapon.CaliberID).Order("level asc, id asc").First(&ammo).Error
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return models.AmmoDef{}, 0, nil
+	}
+	if err != nil {
+		return models.AmmoDef{}, 0, fmt.Errorf("读取弹药口径 %s: %w", weapon.CaliberID, err)
+	}
+	rounds := defaultPresetAmmoRounds
+	if rounds < weapon.AmmoPerRound {
+		rounds = weapon.AmmoPerRound
+	}
+	return ammo, rounds, nil
+}
+
+// ensureAmmoStockTx 保证指定弹药在仓库（非局内带出）至少还有 target 发的余量，不足部分补齐。
+func ensureAmmoStockTx(tx *gorm.DB, userID uint, ammo models.AmmoDef, target int) error {
+	onHand, err := ammoInventoryQuantity(tx, userID, ammo.ID)
+	if err != nil {
+		return err
+	}
+	if onHand >= target {
+		return nil
+	}
+	var inv models.Inventory
+	err = tx.Where("user_id = ? AND item_id = ? AND raid_extract = ?", userID, ammo.ID, false).First(&inv).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return tx.Create(&models.Inventory{
+			UserID: userID, ItemID: ammo.ID, Name: ammo.Name, Kind: "ammo",
+			Quantity: target, Price: ammo.Price, Slots: 1, MerchantCategory: ammo.MerchantCategory, RepRequirement: ammo.RepRequirement,
+		}).Error
+	}
+	if err != nil {
+		return fmt.Errorf("读取弹药库存 %s: %w", ammo.ID, err)
+	}
+	return tx.Model(&models.Inventory{}).Where("user_id = ? AND id = ?", userID, inv.ID).
+		Updates(map[string]interface{}{"quantity": gorm.Expr("quantity + ?", target-onHand)}).Error
 }
 
 // sweepDanglingArmorsTx 清理护甲定义已不存在的护甲实例。

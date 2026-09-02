@@ -31,6 +31,10 @@ func seedSurvivalDefinitions(db *gorm.DB) error {
 		"bandage": {hp: 20, maxDurability: 100, useDurability: 100, priority: 1, instance: true, session: true, hideout: true},
 		"medkit":  {hp: 45, maxDurability: 100, useDurability: 100, priority: 2, instance: true, session: true, hideout: true},
 
+		// 事件用补给：无恢复效果，可带入行动参与事件判定/自动使用，不实例化。
+		"smoke":   {priority: 1, session: true},
+		"toolkit": {priority: 1, session: true},
+
 		// Tarkov Wiki 医疗品：HPRecovery 是单次使用回复，耐久是整包治疗池。
 		"ai2_medkit": {hp: 50, maxDurability: 100, useDurability: 50, priority: 3, instance: true, session: true, hideout: true},
 		"ifak":       {hp: 50, maxDurability: 300, useDurability: 50, priority: 4, instance: true, session: true, hideout: true},

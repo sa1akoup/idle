@@ -127,9 +127,9 @@ func seedLoadoutForUser(db *gorm.DB, userID uint) error {
 		WeaponID: "rifle_ak", ArmorID: "light_01", ChestRigID: "chestrig_01", BackpackID: "backpack_01", HelmetID: "helmet_01", HeadsetID: "headset_01",
 		Consumables:    []string{"smoke", "toolkit"},
 		PresetWeaponID: "rifle_ak", PresetArmorID: "light_01", PresetChestRigID: "chestrig_01", PresetBackpackID: "backpack_01", PresetHelmetID: "helmet_01", PresetHeadsetID: "headset_01",
-		PresetName: "标准突击", PresetConsumables: []string{"smoke", "toolkit"}, PresetAmmoID: "ammo_762x39_n4", PresetAmmoRounds: 120,
-		Preset2WeaponID: "pistol_glock", Preset2ArmorID: "light_02", Preset2Name: "轻装渗透", Preset2Consumables: []string{"bandage"}, Preset2AmmoID: "ammo_9x19_n3", Preset2AmmoRounds: 60,
-		Preset3WeaponID: "shotgun_m870", Preset3ArmorID: "heavy_01", Preset3Name: "重装攻坚", Preset3Consumables: []string{"bandage", "medkit"}, Preset3AmmoID: "ammo_12g_n3", Preset3AmmoRounds: 30,
+		PresetName: "标准突击", PresetConsumables: []string{"smoke", "toolkit"}, PresetAmmoID: "ammo_762x39_n2", PresetAmmoRounds: 30,
+		Preset2WeaponID: "pistol_glock", Preset2ArmorID: "light_02", Preset2Name: "轻装渗透", Preset2Consumables: []string{"bandage"}, Preset2AmmoID: "ammo_9x19_n1", Preset2AmmoRounds: 30,
+		Preset3WeaponID: "shotgun_m870", Preset3ArmorID: "heavy_01", Preset3Name: "重装攻坚", Preset3Consumables: []string{"bandage", "medkit"}, Preset3AmmoID: "ammo_12g_n1", Preset3AmmoRounds: 30,
 	}
 	var player models.Character
 	if err := db.Where("user_id = ?", userID).First(&player).Error; err != nil {

@@ -20,7 +20,7 @@ var requiredSchema = []schemaExpectation{
 	{table: "sessions", columns: []string{"status", "terminal_reason", "recovery_policy_json", "armor_instance_id", "next_run_at", "engine_version"}},
 	{table: "session_runs", columns: []string{"start_hp", "end_hp", "start_energy", "end_energy", "start_hydration", "end_hydration", "item_instance_changes"}},
 	{table: "session_events", columns: []string{"run_index", "sequence", "event_type", "available_at"}},
-	{table: "player_loadouts", columns: []string{"consumables", "consumable_refs", "preset_consumable_refs", "preset2_consumable_refs", "preset3_consumable_refs", "armor_instance_id"}},
+	{table: "player_loadouts", columns: []string{"consumables", "consumable_refs", "carried_ammo", "preset_consumable_refs", "preset2_consumable_refs", "preset3_consumable_refs", "armor_instance_id"}},
 	{table: "inventories", columns: []string{"item_id", "quantity", "raid_extract"}},
 	{table: "armor_instances", columns: []string{"armor_id", "cur_durability", "max_durability", "repair_count", "status"}},
 	{table: "item_use_defs", columns: []string{"instance_required", "usable_in_session", "usable_in_hideout"}},

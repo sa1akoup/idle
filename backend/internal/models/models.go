@@ -15,7 +15,7 @@ const PlayerLoadoutID uint = 1
 const InventoryCapacity = 480
 
 // BaseCarrySlots 基础可携带物品格数（不含胸挂/背包加成）。
-const BaseCarrySlots = 20
+const BaseCarrySlots = 5
 
 // BaseCarryWeight 基础可携带负重：初始 50kg +（力量-50）*0.3。
 func BaseCarryWeight(strength int) float64 {
