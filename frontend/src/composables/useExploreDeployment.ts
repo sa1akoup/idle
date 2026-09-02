@@ -1,4 +1,5 @@
-// 探索部署逻辑：管理地图、风格、预设装备和启动请求。
+// 探索部署逻辑：管理地图、风格、失能预案与启动请求。
+// 携带弹药不再在此配置：弹药槽统一在角色页设置，开局按槽位从仓库预留。
 import { computed, ref, watchEffect } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import api, { getApiError } from '../api'
@@ -6,7 +7,6 @@ import type {
   ActionStyle,
   Ammo,
   Armor,
-  Consumable,
   GameMap,
   InventoryItem,
   Player,
@@ -27,7 +27,6 @@ export interface ExploreProps {
   weapons: Weapon[]
   ammos: Ammo[]
   armors: Armor[]
-  consumables: Consumable[]
   inventory: InventoryItem[]
   recovery: RecoveryView | null
 }
@@ -42,12 +41,10 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
     { value: 'aggressive' as ActionStyle, label: '激进型', desc: '主动伏击和清除敌人，接受更高战斗与热度代价' },
     { value: 'greedy' as ActionStyle, label: '贪婪型', desc: '优先高价值物资与情报，愿意为收益延后撤离' },
   ]
-  
+
   const selectedMap = ref('')
   const selectedStyle = ref<ActionStyle>('balanced')
   const selectedPreset = ref(1)
-  const selectedAmmoId = ref('')
-  const selectedAmmoRounds = ref(0)
   const selectedHPRecoveryMethod = ref<RecoveryMethod>('inventory')
   const selectedEnergyRecoveryMethod = ref<RecoveryMethod>('inventory')
   const selectedHydrationRecoveryMethod = ref<RecoveryMethod>('inventory')
@@ -63,61 +60,27 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
     props.recovery?.plan.status === 'running'
     && props.recovery.tasks.some((task) => task.status !== 'completed' && task.currentValue < task.targetValue - 0.000001),
   ))
-  
+
   const selectedPresetSlot = computed(() => presetOf(props.loadout, selectedPreset.value))
-  const currentWeapon = computed(() => props.weapons.find((item) => item.id === props.loadout.weaponId)
-    ?? props.weapons.find((item) => item.id === selectedPresetSlot.value.weaponId))
-  const deploymentArmor = computed(() => props.armors.find((item) => item.id === props.loadout.armorId)
-    ?? props.armors.find((item) => item.id === selectedPresetSlot.value.armorId))
-  const compatibleOwnedAmmos = computed(() => {
-    const caliberId = currentWeapon.value?.caliberId
-    if (!caliberId) return []
-    return props.ammos
-      .filter((ammo) => ammo.caliberId === caliberId && ammoInventoryQuantity(ammo.id) > 0)
-      .sort((left, right) => right.level - left.level)
-  })
-  const selectedAmmoStock = computed(() => ammoInventoryQuantity(selectedAmmoId.value))
-  
-  function ammoInventoryQuantity(ammoId: string) {
-    return props.inventory
-      .filter((item) => item.kind === 'ammo' && item.itemId === ammoId)
-      .reduce((total, item) => total + item.quantity, 0)
-  }
-  
+  // 当前携行只反映真实装备：无预设兜底，未装备即显示空。
+  const currentWeapon = computed(() => props.weapons.find((item) => item.id === props.loadout.weaponId))
+  const currentArmor = computed(() => props.armors.find((item) => item.id === props.loadout.armorId))
+  const hasCurrentWeapon = computed(() => Boolean(currentWeapon.value))
+  const hasCurrentArmor = computed(() => Boolean(currentArmor.value))
+  const currentLoadoutIsEmpty = computed(() => Boolean(
+    !props.loadout.weaponId && !props.loadout.armorId && !props.loadout.chestRigId && !props.loadout.backpackId
+    && !props.loadout.helmetId && !props.loadout.headsetId && props.loadout.consumables.length === 0,
+  ))
+
   watchEffect(() => {
     if (!props.maps.some((item) => item.id === selectedMap.value)) selectedMap.value = props.maps[0]?.id ?? ''
-  
-  
-    const weapon = currentWeapon.value
-    if (!weapon || weapon.ammoPerRound <= 0) {
-      selectedAmmoId.value = ''
-      selectedAmmoRounds.value = 0
-      return
-    }
-    const selectedIsCompatible = compatibleOwnedAmmos.value.some((item) => item.id === selectedAmmoId.value)
-    if (!selectedIsCompatible) selectedAmmoId.value = compatibleOwnedAmmos.value[0]?.id ?? ''
-    const stock = ammoInventoryQuantity(selectedAmmoId.value)
-    if (stock <= 0) {
-      selectedAmmoRounds.value = 0
-      return
-    }
-    if (selectedAmmoRounds.value < weapon.ammoPerRound || selectedAmmoRounds.value > stock) {
-      selectedAmmoRounds.value = Math.min(120, stock)
-    }
   })
-  
-  function presetSummary(index: number) {
+
+  // 失能预案卡片只显示预设名称（数据为保存快照，不实时展示明细）。
+  function presetLabel(index: number): string {
     const slot = presetOf(props.loadout, index)
-    const weapon = props.weapons.find((item) => item.id === slot.weaponId)
-    const armor = props.armors.find((item) => item.id === slot.armorId)
-    if (!slot.weaponId || !slot.armorId || !weapon || !armor) return '未配置，请先在角色页面设置'
-    const supplies = slot.consumables.map((id) => props.consumables.find((item) => item.id === id)?.name ?? id).join('、')
-    const ammo = props.ammos.find((item) => item.id === slot.ammoId)
-    const ammoText = weapon.ammoPerRound > 0 ? ` · ${ammo?.name ?? '未配置弹药'} ×${slot.ammoRounds}` : ''
-    return `${weapon.name} · ${armor.name}${ammoText}${supplies ? ` · ${supplies}` : ' · 无补给'}`
+    return slot.name?.trim() ? slot.name.trim() : `预设 ${index}`
   }
-  
-  const selectedPresetSummary = computed(() => presetSummary(selectedPreset.value))
 
   function recoveryMethodLabel(method: RecoveryMethod): string {
     return recoveryMethods.find((item) => item.value === method)?.label ?? method
@@ -140,29 +103,21 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
 
   const canSubmit = computed(() => {
     const preset = selectedPresetSlot.value
-    const weapon = currentWeapon.value
-    const hasCompatibleAmmo = !weapon || weapon.ammoPerRound <= 0 || Boolean(
-      selectedAmmoId.value
-      && selectedAmmoRounds.value >= weapon.ammoPerRound
-      && selectedAmmoRounds.value <= selectedAmmoStock.value,
-    )
     return Boolean(
-      selectedMap.value && ((props.loadout.weaponId && props.loadout.armorId) || (preset.weaponId && preset.armorId))
-      && preset.weaponId && preset.armorId && hasCompatibleAmmo,
+      selectedMap.value && preset.weaponId && preset.armorId
+      && (Boolean(props.loadout.weaponId) || currentLoadoutIsEmpty.value),
     )
   })
-  
+
   function buildRequest(): StartSessionRequest {
     return {
       mapId: selectedMap.value,
       style: selectedStyle.value,
       recoveryPreset: selectedPreset.value,
       recoveryPolicy: buildRecoveryPolicy(),
-      ammoId: selectedAmmoId.value || selectedPresetSlot.value.ammoId,
-      ammoRounds: selectedAmmoRounds.value || selectedPresetSlot.value.ammoRounds,
     }
   }
-  
+
   async function startSession() {
     starting.value = true
     try {
@@ -177,9 +132,9 @@ export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
   }
 
   return {
-    styles, selectedMap, selectedStyle, selectedPreset, selectedAmmoId, selectedAmmoRounds, starting,
+    styles, selectedMap, selectedStyle, selectedPreset, starting,
     recoveryMethods, selectedHPRecoveryMethod, selectedEnergyRecoveryMethod, selectedHydrationRecoveryMethod,
-    currentWeapon, deploymentArmor, recoveryPending, compatibleOwnedAmmos, ammoInventoryQuantity, selectedAmmoStock,
-    presetSummary, selectedPresetSummary, recoveryMethodLabel, canSubmit, startSession,
+    currentWeapon, currentArmor, hasCurrentWeapon, hasCurrentArmor, recoveryPending,
+    presetLabel, recoveryMethodLabel, canSubmit, startSession,
   }
 }

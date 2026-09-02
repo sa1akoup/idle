@@ -6,11 +6,23 @@ import { useExploreDeployment, type ExploreEmit, type ExploreProps } from '../co
 const props = defineProps<ExploreProps>()
 const emit = defineEmits<ExploreEmit>()
 const {
-  styles, selectedMap, selectedStyle, selectedPreset, selectedAmmoId, selectedAmmoRounds, starting,
+  styles, selectedMap, selectedStyle, selectedPreset, starting,
   recoveryMethods, selectedHPRecoveryMethod, selectedEnergyRecoveryMethod, selectedHydrationRecoveryMethod,
-  currentWeapon, deploymentArmor, recoveryPending, compatibleOwnedAmmos, ammoInventoryQuantity, selectedAmmoStock,
-  presetSummary, selectedPresetSummary, recoveryMethodLabel, canSubmit, startSession,
+  currentWeapon, currentArmor, hasCurrentWeapon, hasCurrentArmor, recoveryPending,
+  presetLabel, recoveryMethodLabel, canSubmit, startSession,
 } = useExploreDeployment(props, emit)
+
+// 随身弹药只读摘要：弹药槽在角色页配置，这里仅展示名称与发数。
+function carriedAmmoSummary(): string {
+  const cells = props.loadout.carriedAmmo ?? []
+  const parts = cells
+    .filter((cell) => cell.ammoId && cell.rounds > 0)
+    .map((cell) => {
+      const ammo = props.ammos?.find((item) => item.id === cell.ammoId)
+      return `${ammo?.name ?? cell.ammoId} ×${cell.rounds}`
+    })
+  return parts.length ? parts.join('、') : '未配置'
+}
 </script>
 
 <template>
@@ -91,44 +103,18 @@ const {
               @click="selectedPreset = index"
             >
               <span class="preset-card__index">预设 {{ index }}</span>
-              <span class="preset-card__summary">{{ presetSummary(index) }}</span>
+              <span class="preset-card__summary">{{ presetLabel(index) }}</span>
             </button>
           </div>
-          <small>当前所选：{{ selectedPresetSummary }}</small>
         </div>
 
         <div class="loadout-row">
           <div class="deployment-loadout">
             <span>当前携行</span>
-            <strong>{{ currentWeapon?.name || '自动补购武器' }} · {{ deploymentArmor?.name || '自动补购护甲' }}</strong>
-            <small>补给：{{ loadout.consumables.map((id) => consumables.find((item) => item.id === id)?.name ?? id).join('、') || '无' }}，装备配置请在角色页面调整</small>
+            <strong>{{ currentWeapon?.name || '未装备武器' }} · {{ currentArmor?.name || '未装备护甲' }}</strong>
+            <small v-if="hasCurrentWeapon || hasCurrentArmor">携带弹药：{{ carriedAmmoSummary() }}（弹药槽请在角色页面配置）</small>
+            <small v-else>当前未装备任何装备，开局将按失能预案自动补购</small>
           </div>
-        </div>
-
-        <div v-if="currentWeapon?.ammoPerRound" class="form-grid">
-          <label class="field-group">
-            <span>携带弹药</span>
-            <el-select v-model="selectedAmmoId" size="large" placeholder="仓库中没有兼容弹药">
-              <el-option
-                v-for="ammo in compatibleOwnedAmmos"
-                :key="ammo.id"
-                :label="`${ammo.name} · 库存 ${ammoInventoryQuantity(ammo.id)} 发`"
-                :value="ammo.id"
-              />
-            </el-select>
-          </label>
-          <label class="field-group">
-            <span>携弹发数</span>
-            <el-input-number
-              v-model="selectedAmmoRounds"
-              :min="currentWeapon.ammoPerRound"
-              :max="Math.max(currentWeapon.ammoPerRound, selectedAmmoStock)"
-              :step="currentWeapon.ammoPerRound"
-              size="large"
-              controls-position="right"
-            />
-            <small>启动后从仓库预留；本批弹药耗尽后，按 Session 启动时可购买的最高等级自动降级补给</small>
-          </label>
         </div>
       </div>
 
@@ -141,9 +127,9 @@ const {
         <div class="launch-summary">
           <div><span>目标区域</span><strong>{{ maps.find((item) => item.id === selectedMap)?.name || '未选择' }}</strong></div>
           <div><span>行动风格</span><strong>{{ styles.find((item) => item.value === selectedStyle)?.label }}</strong></div>
-          <div><span>失能预案</span><strong>预设 {{ selectedPreset }}</strong></div>
+          <div><span>失能预案</span><strong>{{ presetLabel(selectedPreset) }}</strong></div>
           <div><span>生命恢复</span><strong>{{ recoveryMethodLabel(selectedHPRecoveryMethod) }}</strong></div>
-          <div v-if="currentWeapon?.ammoPerRound"><span>携带弹药</span><strong>{{ ammos.find((item) => item.id === selectedAmmoId)?.name || '未配置' }} ×{{ selectedAmmoRounds }}</strong></div>
+          <div><span>携带弹药</span><strong>{{ carriedAmmoSummary() }}</strong></div>
         </div>
 
         <div class="launch-block">

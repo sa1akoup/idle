@@ -992,6 +992,29 @@ b {
 .consumable-block__label { color: var(--text-secondary); font-size: 11px; font-weight: 600; }
 .consumable-block .slot-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+/* 随身弹药：4 格弹药槽，槽位点击选弹、行内改发数 */
+.ammo-block { display: flex; flex-direction: column; gap: var(--space-2); }
+.ammo-block__label { color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.ammo-block__hint { color: var(--text-muted); font-size: 9px; }
+.ammo-cell { min-height: 92px; gap: var(--space-2); }
+.slot-cell__pick {
+  width: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.slot-cell__pick strong { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.slot-cell__pick strong.empty { color: var(--text-muted); font-weight: 400; }
+.ammo-cell .el-input-number { width: 100%; }
+.ammo-block .slot-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
 .carry-strip {
   padding: var(--space-3) var(--space-4);
   display: flex;
@@ -1471,6 +1494,21 @@ b {
 .el-loading-mask { background: rgb(17 19 15 / 76%); }
 .el-skeleton { --el-skeleton-color: var(--bg-surface-2); --el-skeleton-to-color: var(--bg-raised); }
 .el-empty__description p { color: var(--text-muted); }
+
+/* 消息框暗色适配：与遮罩、面板一致（背景/边框/标题/内容/输入框）。 */
+.el-message-box {
+  --el-bg-color: var(--bg-surface);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+}
+.el-message-box__title { color: var(--text-primary); }
+.el-message-box__content { color: var(--text-secondary); }
+.el-message-box__headerbtn .el-message-box__close { color: var(--text-secondary); }
+.el-message-box__input .el-input__wrapper { background: var(--bg-page); }
+.el-overlay { --el-overlay-color-lighter: rgb(8 10 7 / 72%); }
 
 @media (max-width: 1100px) {
   .deployment-layout,

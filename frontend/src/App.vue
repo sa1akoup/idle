@@ -1,7 +1,8 @@
 <!-- 应用工作台：加载全局游戏数据并组织七个功能视图。 -->
 <script setup lang="ts">
-import { defineAsyncComponent } from 'vue'
+import { defineAsyncComponent, ref } from 'vue'
 import { Menu, Refresh } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import AppSidebar from './components/AppSidebar.vue'
 import AuthView from './views/AuthView.vue'
 import { useAppWorkspace } from './composables/useAppWorkspace'
@@ -27,7 +28,26 @@ const {
   repairArmor, upgradeFacility, toggleGenerator, loadGeneratorFuel, unloadGeneratorFuel, craftingId, upgradingFacilityId, startCraft, handleSessionCreated, handleAuthenticated, logout,
 } = useAppWorkspace()
 
+// 角色页是否存在未保存的装备调整（由 CharacterView 的 dirtyChange 事件维护）。
+const characterDirty = ref(false)
+
 function selectView(view: NavKey) {
+  if (view === activeView.value) return
+  // 离开角色页且存在未保存的装备调整时，先提示用户，避免静默丢失修改。
+  if (view !== 'character' && characterDirty.value) {
+    ElMessageBox.confirm('当前装备调整尚未保存，直接离开将丢失这些修改。', '未保存的装备调整', {
+      confirmButtonText: '直接离开',
+      cancelButtonText: '留下继续编辑',
+      type: 'warning',
+    })
+      .then(() => {
+        characterDirty.value = false
+        activeView.value = view
+        void loadViewData(view)
+      })
+      .catch(() => undefined) // 取消或关闭：留在角色页继续编辑
+    return
+  }
   activeView.value = view
   void loadViewData(view)
 }
@@ -83,6 +103,7 @@ function selectView(view: NavKey) {
               :chest-rigs="chestRigs" :backpacks="backpacks" :helmets="helmets" :headsets="headsets" :merchants="merchants"
               :saving-name="savingPlayer" :saving-loadout="savingLoadout"
               @save-name="savePlayerName" @save-loadout="saveLoadout"
+              @dirty-change="characterDirty = $event"
             />
             <InventoryView v-else-if="activeView === 'inventory'" :inventory="inventory" :item-instances="itemInstances" :loadout="loadout" :storage-capacity="storageCapacity" />
             <MerchantView

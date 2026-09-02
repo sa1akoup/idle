@@ -16,6 +16,12 @@ export interface RecoveryPolicy {
   merchantEnable: boolean
 }
 
+// AmmoCell 是随身携带弹药的一个槽位：弹药 ID + 携弹发数（1-60）。
+export interface AmmoCell {
+  ammoId: string
+  rounds: number
+}
+
 export interface InventoryItem {
   id: number
   itemId: string
@@ -74,6 +80,7 @@ export interface PlayerLoadout {
   helmetId: string
   headsetId: string
   consumables: string[]
+  carriedAmmo?: AmmoCell[]
   presetWeaponId: string
   presetArmorId: string
   presetChestRigId: string
@@ -115,6 +122,7 @@ export interface SaveLoadoutRequest {
   helmetId: string
   headsetId: string
   consumables: string[]
+  carriedAmmo?: AmmoCell[]
   presetWeaponId: string
   presetArmorId: string
   presetChestRigId: string
@@ -149,6 +157,7 @@ export interface SaveLoadoutRequest {
 
 // 预设装备序号对应的 loadout 字段组合
 export interface PresetSlot {
+  name: string
   weaponId: string
   armorId: string
   consumables: string[]
@@ -159,11 +168,11 @@ export interface PresetSlot {
 export function presetOf(loadout: PlayerLoadout, index: number): PresetSlot {
   switch (index) {
     case 2:
-      return { weaponId: loadout.preset2WeaponId, armorId: loadout.preset2ArmorId, consumables: loadout.preset2Consumables, ammoId: loadout.preset2AmmoId, ammoRounds: loadout.preset2AmmoRounds }
+      return { name: loadout.preset2Name ?? '', weaponId: loadout.preset2WeaponId, armorId: loadout.preset2ArmorId, consumables: loadout.preset2Consumables, ammoId: loadout.preset2AmmoId, ammoRounds: loadout.preset2AmmoRounds }
     case 3:
-      return { weaponId: loadout.preset3WeaponId, armorId: loadout.preset3ArmorId, consumables: loadout.preset3Consumables, ammoId: loadout.preset3AmmoId, ammoRounds: loadout.preset3AmmoRounds }
+      return { name: loadout.preset3Name ?? '', weaponId: loadout.preset3WeaponId, armorId: loadout.preset3ArmorId, consumables: loadout.preset3Consumables, ammoId: loadout.preset3AmmoId, ammoRounds: loadout.preset3AmmoRounds }
     default:
-      return { weaponId: loadout.presetWeaponId, armorId: loadout.presetArmorId, consumables: loadout.presetConsumables, ammoId: loadout.presetAmmoId, ammoRounds: loadout.presetAmmoRounds }
+      return { name: loadout.presetName ?? '', weaponId: loadout.presetWeaponId, armorId: loadout.presetArmorId, consumables: loadout.presetConsumables, ammoId: loadout.presetAmmoId, ammoRounds: loadout.presetAmmoRounds }
   }
 }
 
@@ -277,6 +286,4 @@ export interface StartSessionRequest {
   style: ActionStyle
   recoveryPreset: number
   recoveryPolicy: RecoveryPolicy
-  ammoId: string
-  ammoRounds: number
 }

@@ -473,6 +473,7 @@ export interface Enemy {
 
 
 export type {
+  AmmoCell,
   InventoryItem,
   Merchant,
   MerchantCatalogItem,

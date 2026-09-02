@@ -8,6 +8,7 @@ import { ElInput } from 'element-plus/es/components/input/index'
 import { ElInputNumber } from 'element-plus/es/components/input-number/index'
 import { ElLoadingDirective } from 'element-plus/es/components/loading/index'
 import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { ElOption, ElSelect } from 'element-plus/es/components/select/index'
 import { ElProgress } from 'element-plus/es/components/progress/index'
 import { ElSkeleton } from 'element-plus/es/components/skeleton/index'
@@ -21,6 +22,7 @@ import 'element-plus/es/components/input/style/css'
 import 'element-plus/es/components/input-number/style/css'
 import 'element-plus/es/components/loading/style/css'
 import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
 import 'element-plus/es/components/option/style/css'
 import 'element-plus/es/components/progress/style/css'
 import 'element-plus/es/components/select/style/css'
@@ -48,5 +50,6 @@ app
   .component('ElTabPane', ElTabPane)
   .component('ElTabs', ElTabs)
   .use(ElMessage)
+  .use(ElMessageBox)
   .directive('loading', ElLoadingDirective)
   .mount('#app')

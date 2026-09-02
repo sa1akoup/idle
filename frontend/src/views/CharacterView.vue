@@ -1,5 +1,6 @@
 <!-- 角色页：展示玩家属性，并以 RPG 部位格子管理当前装备与失能后补购预设。 -->
 <script setup lang="ts">
+import { watch } from "vue";
 import { Check, EditPen, User } from "@element-plus/icons-vue";
 import {
   useCharacterLoadout,
@@ -22,9 +23,15 @@ const {
   proficiencies,
   openPicker,
   openConsumablePicker,
+  openAmmoPicker,
   slotName,
   consumableSlotCount,
   consumableAt,
+  ammoSlotCount,
+  ammoSlotMaxRounds,
+  ammoAt,
+  ammoNameAt,
+  ammoCellMaxRounds,
   activePresetWeapon,
   activePresetAmmoOptions,
   repTag,
@@ -35,7 +42,11 @@ const {
   pickOption,
   submitName,
   submitLoadout,
+  hasUnsavedChanges,
 } = useCharacterLoadout(props, emit);
+
+// 未保存修改状态上报工作区，供离开角色页前的拦截提示使用。
+watch(hasUnsavedChanges, (dirty) => emit("dirtyChange", dirty), { immediate: true });
 </script>
 
 <template>
@@ -177,6 +188,33 @@ const {
                   consumableAt(current, i - 1) || "空"
                 }}</strong>
               </button>
+            </div>
+          </div>
+          <div class="ammo-block">
+            <span class="ammo-block__label">携带弹药</span>
+            <span class="ammo-block__hint"
+              >每格 ≤ {{ ammoSlotMaxRounds }} 发，点击选择仓库弹药</span
+            >
+            <div class="slot-row">
+              <div v-for="i in ammoSlotCount" :key="i" class="slot-cell ammo-cell">
+                <button
+                  type="button"
+                  class="slot-cell__pick"
+                  @click="openAmmoPicker('current', i - 1)"
+                >
+                  <span class="slot-label">弹药{{ i }}</span>
+                  <strong :class="{ empty: !ammoNameAt(current, i - 1) }">{{ ammoNameAt(current, i - 1) || "空" }}</strong>
+                </button>
+                <el-input-number
+                  v-model="ammoAt(current, i - 1).rounds"
+                  :min="0"
+                  :max="ammoCellMaxRounds(ammoAt(current, i - 1).ammoId, ammoAt(current, i - 1).rounds)"
+                  :disabled="!ammoAt(current, i - 1).ammoId"
+                  :step="1"
+                  size="small"
+                  controls-position="right"
+                />
+              </div>
             </div>
           </div>
         </div>
