@@ -248,6 +248,9 @@ func (s *SessionService) finishUnscheduledSession(sess *models.Session, state *e
 		if err := createRecoveryPlanTx(tx, s.userID, sess.ID, state.Character, sess.RecoveryPolicyJSON); err != nil {
 			return err
 		}
+		if err := grantSessionSuccessReputationTx(tx, s.userID); err != nil {
+			return err
+		}
 		encoded, err := json.Marshal(state)
 		if err != nil {
 			return err

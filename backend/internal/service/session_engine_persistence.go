@@ -158,6 +158,9 @@ func refreshEngineCarryUsage(state *engine.EngineState, snapshot engine.Scenario
 // updateCharacterFromEngine 把引擎结算后的角色连续状态（属性/生命/体力/饮水）写回角色表。
 func updateCharacterFromEngine(tx *gorm.DB, userID uint, characterID uint, state engine.CharacterState) error {
 	updates := map[string]interface{}{
+		"strength": state.Strength, "agility": state.Agility, "intellect": state.Intellect, "charisma": state.Charisma,
+		"stealth": state.Stealth, "perception": state.Perception, "negotiation": state.Negotiation, "luck": state.Luck,
+		"survival": state.Survival, "resist": state.Resist, "engineering": state.Engineering, "medical": state.Medical,
 		"stress": state.Stress, "melee_prof": state.MeleeProf, "pistol_prof": state.PistolProf, "smg_prof": state.SMGProf,
 		"shotgun_prof": state.ShotgunProf, "rifle_prof": state.RifleProf, "sniper_prof": state.SniperProf,
 		"hp": state.HP, "energy": state.Energy, "hydration": state.Hydration, "needs_updated_at": time.Now(),

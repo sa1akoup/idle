@@ -69,6 +69,9 @@ func (h *Handler) Register(r *gin.Engine) {
 	protected.GET("/session/:id/events/stream", h.StreamSessionEvents)
 	protected.GET("/sessions", h.ListSessions)
 	protected.GET("/enemies", h.ListEnemies)
+	protected.GET("/quests", h.ListQuests)
+	protected.POST("/quests/:id/accept", h.AcceptQuest)
+	protected.POST("/quests/:id/turnin", h.TurnInQuest)
 }
 
 // GetPlayer 返回唯一的玩家角色。

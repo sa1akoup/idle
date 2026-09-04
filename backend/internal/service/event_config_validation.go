@@ -31,6 +31,7 @@ func ValidateEventConfig(db *gorm.DB) error {
 	var containers []models.LootContainerDef
 	var nodeContainers []models.NodeContainerDef
 	var consumables []models.ConsumableDef
+	var lootItems []models.LootItemDef
 	if err := db.Find(&maps).Error; err != nil {
 		return fmt.Errorf("校验事件地图: %w", err)
 	}
@@ -79,8 +80,11 @@ func ValidateEventConfig(db *gorm.DB) error {
 	if err := db.Find(&consumables).Error; err != nil {
 		return fmt.Errorf("校验消耗品引用: %w", err)
 	}
+	if err := db.Find(&lootItems).Error; err != nil {
+		return fmt.Errorf("校验战利品引用: %w", err)
+	}
 
-	mapIDs, nodeIDs, enemyIDs, containerIDs, consumableIDs := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	mapIDs, nodeIDs, enemyIDs, containerIDs, itemIDs, consumableIDs := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	mapTags, nodeTags := map[string]bool{}, map[string]bool{}
 	extractionIDs, extractionTags := map[string]bool{}, map[string]bool{}
 	for _, gameMap := range maps {
@@ -150,7 +154,15 @@ func ValidateEventConfig(db *gorm.DB) error {
 		containerIDs[container.ID] = true
 	}
 	for _, consumable := range consumables {
+		itemIDs[consumable.ID] = true
 		consumableIDs[consumable.ID] = true
+	}
+	keyIDs := map[string]bool{}
+	for _, item := range lootItems {
+		itemIDs[item.ID] = true
+		if item.Category == "key" {
+			keyIDs[item.ID] = true
+		}
 	}
 	nodeContainerWeights := make(map[string]int)
 	nodeContainerCounts := make(map[string]int)
@@ -179,11 +191,11 @@ func ValidateEventConfig(db *gorm.DB) error {
 
 	for _, definition := range definitions {
 		for _, option := range definition.Options {
-			if option.Check.ItemBonusRef != "" && !consumableIDs[option.Check.ItemBonusRef] {
+			if option.Check.ItemBonusRef != "" && !itemIDs[option.Check.ItemBonusRef] {
 				return fmt.Errorf("事件 %s 的判定加成引用不存在的消耗品 %s", definition.ID, option.Check.ItemBonusRef)
 			}
 			for _, condition := range option.Conditions {
-				if condition.Type == "has_item" && (condition.Ref == "" || !consumableIDs[condition.Ref]) {
+				if condition.Type == "has_item" && (condition.Ref == "" || !itemIDs[condition.Ref]) {
 					return fmt.Errorf("事件 %s 的物品条件引用无效 %s", definition.ID, condition.Ref)
 				}
 				if condition.Type == "flag" && condition.Ref == "" {
@@ -240,8 +252,8 @@ func ValidateEventConfig(db *gorm.DB) error {
 					}
 					roles[effect.Ref] = true
 				case "consume_item":
-					if effect.Ref == "" || !consumableIDs[effect.Ref] {
-						return fmt.Errorf("事件 %s 引用不存在消耗品 %s", definition.ID, effect.Ref)
+					if effect.Ref == "" || (!consumableIDs[effect.Ref] && !keyIDs[effect.Ref]) {
+						return fmt.Errorf("事件 %s 引用不存在消耗品或钥匙 %s", definition.ID, effect.Ref)
 					}
 				case "set_flag":
 					if effect.Ref == "" {

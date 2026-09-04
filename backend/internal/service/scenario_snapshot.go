@@ -324,12 +324,57 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 	if err := attachRecoveryPresets(db, userID, nil, &snapshot); err != nil {
 		return engine.ScenarioSnapshot{}, "", "", err
 	}
+	intelBonus, physicalGrowth, err := hideoutProgressionBonusesTx(db, userID)
+	if err != nil {
+		return engine.ScenarioSnapshot{}, "", "", err
+	}
+	snapshot.Tuning.Encounter.IntelReconBonus = float64(intelBonus)
+	snapshot.Tuning.Encounter.IntelEventBPBonus = intelBonus * 20
+	snapshot.Tuning.Encounter.PhysicalSkillGrowthPercent = physicalGrowth
+	contracts, err := activeQuestContractsTx(db, userID)
+	if err != nil {
+		return engine.ScenarioSnapshot{}, "", "", err
+	}
+	snapshot.Contracts = contracts
+	stashKeys, err := raidExtractStashKeysTx(db, userID, lootDefs)
+	if err != nil {
+		return engine.ScenarioSnapshot{}, "", "", err
+	}
+	snapshot.StashKeys = stashKeys
 
 	encoded, hash, err := finalizeScenarioSnapshot(snapshot)
 	if err != nil {
 		return engine.ScenarioSnapshot{}, "", "", err
 	}
 	return snapshot, encoded, hash, nil
+}
+
+// raidExtractStashKeysTx 读取仓库中局内带出的钥匙，供本局 has_item 判定使用，不占用携带格。
+func raidExtractStashKeysTx(db *gorm.DB, userID uint, lootDefs []models.LootItemDef) ([]string, error) {
+	keyIDs := make([]string, 0)
+	for _, definition := range lootDefs {
+		if definition.Category == "key" {
+			keyIDs = append(keyIDs, definition.ID)
+		}
+	}
+	if len(keyIDs) == 0 {
+		return nil, nil
+	}
+	var inventories []models.Inventory
+	if err := db.Where("user_id = ? AND raid_extract = ? AND quantity > 0 AND item_id IN ?", userID, true, keyIDs).
+		Order("item_id asc").Find(&inventories).Error; err != nil {
+		return nil, fmt.Errorf("读取仓库钥匙: %w", err)
+	}
+	keys := make([]string, 0, len(inventories))
+	seen := make(map[string]bool, len(inventories))
+	for _, inventory := range inventories {
+		if seen[inventory.ItemID] {
+			continue
+		}
+		seen[inventory.ItemID] = true
+		keys = append(keys, inventory.ItemID)
+	}
+	return keys, nil
 }
 
 // convertMap 把数据库地图定义转为引擎 DTO，标签做一次切片拷贝避免共享底层数组。

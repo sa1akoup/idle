@@ -129,9 +129,20 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 			if err := createRecoveryPlanTx(tx, s.userID, sess.ID, stateAfter.Character, sess.RecoveryPolicyJSON); err != nil {
 				return err
 			}
+			if status == "success" {
+				if err := grantSessionSuccessReputationTx(tx, s.userID); err != nil {
+					return err
+				}
+			}
+		}
+		if err := consumeUsedStashKeysTx(tx, s.userID, &result); err != nil {
+			return err
 		}
 		storedLoot, overflowLoot, err = s.storeSuccessfulLootTx(tx, snapshot, result)
 		if err != nil {
+			return err
+		}
+		if err := applyQuestProgressTx(tx, s.userID, sess.Style, snapshot, result); err != nil {
 			return err
 		}
 		if err := ensureInventoryWithinCapacityTx(tx, s.userID); err != nil {
