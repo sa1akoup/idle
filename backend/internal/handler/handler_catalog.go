@@ -109,8 +109,8 @@ func (h *Handler) ListMaps(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 func (h *Handler) ListInventory(c *gin.Context) {
-	var list []models.Inventory
-	if err := h.db.Where("user_id = ?", userID(c)).Find(&list).Error; err != nil {
+	list, err := service.ListInventoryForUser(h.db, userID(c))
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "仓库数据读取失败"})
 		return
 	}

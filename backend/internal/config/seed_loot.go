@@ -43,6 +43,7 @@ func seedLoot(db *gorm.DB) error {
 		{ID: "fierce_blow_sledgehammer", Name: "Fierce Blow 大锤", Category: "tool", Desc: "用于破拆和重型施工的大锤。", Price: 650, Weight: 5, Slots: 2, MerchantCategory: "mechanical"},
 		{ID: "metal_cutting_scissors", Name: "金属剪", Category: "tool", Desc: "用于剪切薄金属板的工业剪。", Price: 320, Weight: 2, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "round_pliers", Name: "圆嘴钳", Category: "tool", Desc: "用于弯折细金属丝的圆嘴钳。", Price: 180, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
+		{ID: "pliers_elite", Name: "精英折弯钳", Category: "tool", Desc: "高精度金属加工用折弯钳。", Price: 640, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "leatherman", Name: "Leatherman 多功能工具", Category: "tool", Desc: "可折叠的多功能维修工具。", Price: 520, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "set_of_files_master", Name: "大师级锉刀套装", Category: "tool", Desc: "用于精细加工的高品质锉刀套装。", Price: 480, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "wd40", Name: "WD-40", Category: "tool", Desc: "通用防锈润滑剂。", Price: 150, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
@@ -54,6 +55,8 @@ func seedLoot(db *gorm.DB) error {
 		{ID: "power_cord", Name: "电源线", Category: "electronics", Desc: "带插头的通用电源线。", Price: 110, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "printed_circuit_board", Name: "电路板", Category: "electronics", Desc: "从家用设备中拆出的印刷电路板。", Price: 240, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "capacitors", Name: "电容", Category: "electronics", Desc: "电子设备维修用电容元件。", Price: 180, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
+		{ID: "spark_plug", Name: "火花塞", Category: "electronics", Desc: "小型发动机点火用火花塞。", Price: 160, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
+		{ID: "working_lcd", Name: "可用液晶屏", Category: "electronics", Desc: "仍能点亮的拆机液晶显示屏。", Price: 420, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "cpu_fan", Name: "CPU 风扇", Category: "electronics", Desc: "电脑处理器散热风扇。", Price: 260, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "ram", Name: "内存条", Category: "electronics", Desc: "拆机获得的电脑内存模块。", Price: 350, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
 		{ID: "broken_gphone", Name: "损坏的 GPhone 手机", Category: "electronics", Desc: "屏幕破裂但仍有回收价值的智能手机。", Price: 280, Weight: 1, Slots: 1, MerchantCategory: "mechanical"},
@@ -94,6 +97,7 @@ func seedLoot(db *gorm.DB) error {
 		{ID: "intelligence_folder", Name: "情报文件夹", Category: "info", Desc: "整理过的行动情报和人员档案。", Price: 500, Weight: 1, Slots: 1, MerchantCategory: "union"},
 		{ID: "tech_manual", Name: "技术手册", Category: "info", Desc: "工业设备的技术说明书。", Price: 380, Weight: 1, Slots: 1, MerchantCategory: "union"},
 		{ID: "topographic_maps", Name: "地形调查地图", Category: "info", Desc: "标注城区地形与旧设施的地图。", Price: 450, Weight: 1, Slots: 1, MerchantCategory: "union"},
+		{ID: "factory_plan_map", Name: "工厂平面图", Category: "info", Desc: "标注旧厂区通道和机房位置的平面图。", Price: 480, Weight: 1, Slots: 1, MerchantCategory: "union"},
 		{ID: "sas_drive", Name: "SAS 硬盘", Category: "info", Desc: "服务器拆下的高速硬盘。", Price: 700, Weight: 1, Slots: 1, MerchantCategory: "union"},
 		{ID: "terragroup_blue_folder", Name: "TerraGroup 蓝色文件夹", Category: "info", Desc: "与 TerraGroup 有关的机密资料。", Price: 1200, Weight: 1, Slots: 1, MerchantCategory: "union"},
 		{ID: "slim_diary", Name: "薄型日记本", Category: "info", Desc: "记录着封锁区人员和路线的薄型日记。", Price: 260, Weight: 1, Slots: 1, MerchantCategory: "union"},
@@ -182,9 +186,34 @@ func seedLoot(db *gorm.DB) error {
 		{ID: "fireklean_lube", Name: "FireKlean 枪械润滑油", Category: "weaponpart", Desc: "用于保养枪械的高品质润滑油。", Price: 320, Weight: 1, Slots: 1, MerchantCategory: "weapon"},
 		{ID: "ofz_shell", Name: "OFZ 30x165mm 炮弹", Category: "weaponpart", Desc: "重型武器使用的炮弹。", Price: 900, Weight: 3, Slots: 2, MerchantCategory: "weapon"},
 		{ID: "dogtag", Name: "身份牌", Category: "weaponpart", Desc: "记录身份信息的金属身份牌。", Price: 150, Weight: 1, Slots: 1, MerchantCategory: "black"},
+
+		// 钥匙：只从局内搜出，不进商人柜台。仓库里的局内带出钥匙可直接打开对应上锁房间。
+		{ID: "key_customs_office", Name: "海关内务室钥匙", Category: "key", Desc: "海关办公楼内务室的钢制钥匙。", Price: 1800, Weight: 1, Slots: 1},
+		{ID: "key_clinic_pharmacy", Name: "诊所药房钥匙", Category: "key", Desc: "社区诊所药房的备用钥匙。", Price: 1400, Weight: 1, Slots: 1},
+		{ID: "key_warehouse_office", Name: "仓库办公室钥匙", Category: "key", Desc: "废弃仓库二楼办公室的钥匙。", Price: 1200, Weight: 1, Slots: 1},
 	}
 
+	applyMechanicalRepRequirements(items)
+	applyLootRarity(items)
 	return upsertLootItems(db, items)
+}
+
+func applyMechanicalRepRequirements(items []models.LootItemDef) {
+	for i, item := range items {
+		if item.MerchantCategory != "mechanical" || item.RepRequirement > 0 {
+			continue
+		}
+		switch {
+		case item.Price <= 100:
+			items[i].RepRequirement = 0
+		case item.Price <= 250:
+			items[i].RepRequirement = 10
+		case item.Price <= 500:
+			items[i].RepRequirement = 20
+		default:
+			items[i].RepRequirement = 30
+		}
+	}
 }
 
 func upsertLootItems(db *gorm.DB, items []models.LootItemDef) error {

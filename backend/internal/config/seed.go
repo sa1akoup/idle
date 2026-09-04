@@ -59,6 +59,9 @@ func Seed(db *gorm.DB) error {
 	if err := seedCrafting(db); err != nil {
 		return err
 	}
+	if err := seedQuests(db); err != nil {
+		return err
+	}
 	if err := seedLoadout(db); err != nil {
 		return err
 	}
@@ -74,15 +77,14 @@ func seedPlayer(db *gorm.DB) error {
 }
 
 func seedPlayerForUser(db *gorm.DB, userID uint) error {
-	// 初始角色按白板配置：全部属性与武器熟练度为 0（成长交由后续系统），
-	// 生命上限由力量动态计算，白板力量为 0 时上限为 90；能量/饮水保持满值。
+	// 初始角色主属性白板 25，子技能与武器熟练度从 0 成长；生命上限随力量为 95。
 	player := models.Character{
 		UserID: userID, Name: "幸存者", Desc: "在封锁区中寻找生路的行动员",
-		Strength: 0, Agility: 0, Intellect: 0, Charisma: 0,
+		Strength: 25, Agility: 25, Intellect: 25, Charisma: 25,
 		Stealth: 0, Perception: 0, Negotiation: 0, Luck: 0,
 		Survival: 0, Resist: 0, Engineering: 0, Medical: 0,
 		MeleeProf: 0, PistolProf: 0, SMGProf: 0, ShotgunProf: 0, RifleProf: 0, SniperProf: 0,
-		HP: 90, Energy: 100, Hydration: 100, NeedsUpdatedAt: time.Now(),
+		HP: 95, Energy: 100, Hydration: 100, NeedsUpdatedAt: time.Now(),
 	}
 	return db.Where("user_id = ?", userID).FirstOrCreate(&player).Error
 }
@@ -111,6 +113,11 @@ func seedMerchantStatesForUser(db *gorm.DB, userID uint) error {
 		if err := db.Where("user_id = ? AND merchant_id = ?", userID, merchant.ID).
 			FirstOrCreate(&state).Error; err != nil {
 			return err
+		}
+		if merchant.Open && !state.Unlocked {
+			if err := db.Model(&state).Update("unlocked", true).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil

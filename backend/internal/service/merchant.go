@@ -143,8 +143,11 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 			base.RepairValue, base.FuelSeconds, base.MaxDurability, base.InstanceRequired = use.RepairValue, use.FuelSeconds, use.MaxDurability, use.InstanceRequired
 		case "loot":
 			use, ok := useByID[item.ID]
-			if !ok || (!use.UsableInSession && !use.UsableInHideout && use.RepairValue <= 0 && use.FuelSeconds <= 0) {
-				base.Buyable = false
+			usable := ok && (use.UsableInSession || use.UsableInHideout || use.RepairValue > 0 || use.FuelSeconds > 0)
+			if merchant.Category == "mechanical" {
+				base.Buyable = item.RepRequirement <= merchant.Reputation
+			} else {
+				base.Buyable = usable
 			}
 			base.Category = item.Category
 			base.Detail = usableItemDetail(item.Desc, use)
@@ -336,6 +339,9 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 					return fmt.Errorf("删除出售物品实例 %d: %w", instance.ID, err)
 				}
 			}
+			if err := grantSellReputationTx(tx, userID, merchantID, total); err != nil {
+				return err
+			}
 			if operation != nil {
 				resultJSON, err := json.Marshal(map[string]int{"total": total})
 				if err != nil {
@@ -375,6 +381,9 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 			return err
 		}
 		if err := removeInventoryItem(tx, userID, itemID, quantity); err != nil {
+			return err
+		}
+		if err := grantSellReputationTx(tx, userID, merchantID, total); err != nil {
 			return err
 		}
 		if operation != nil {

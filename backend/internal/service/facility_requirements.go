@@ -9,7 +9,6 @@ import (
 	"idle/internal/repository/catalog"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // facilityRequirementViewsTx 批量读取某设施下一等级的全部升级条件并换算为视图（材料、前置设施、商人好感、技能），返回是否全部满足。
@@ -40,7 +39,7 @@ func facilityRequirementViewsTx(db *gorm.DB, userID uint, character models.Chara
 	views := make([]HideoutRequirementView, 0, len(requirements)+1)
 	itemViewIndexes := make(map[string]int)
 	appendItemView := func(requirement models.FacilityRequirement, quantity int) error {
-		owned, err := ownedItemQuantityTx(db, userID, requirement.ReferenceID)
+		owned, err := ownedRaidExtractQuantityTx(db, userID, requirement.ReferenceID)
 		if err != nil {
 			return err
 		}
@@ -109,7 +108,7 @@ func currentRequirementValueTx(db *gorm.DB, userID uint, character models.Charac
 	// 按条件类型换算当前值：物品/设施/商人/技能四种情况。
 	switch requirement.RequirementType {
 	case "item":
-		owned, err := ownedItemQuantityTx(db, userID, requirement.ReferenceID)
+		owned, err := ownedRaidExtractQuantityTx(db, userID, requirement.ReferenceID)
 		if err != nil {
 			return 0, err
 		}
@@ -166,61 +165,10 @@ func facilityRequirementLabel(db *gorm.DB, catalogItems map[string]catalog.Item,
 	}
 }
 
-// ownedItemQuantityTx 统计材料持有量：聚合库存数量与仓库中完好实例数量之和（实例口径与聚合口径换算）。
-func ownedItemQuantityTx(db *gorm.DB, userID uint, itemID string) (int, error) {
-	var inventoryQuantity int
-	if err := db.Model(&models.Inventory{}).
-		Where("user_id = ? AND item_id = ? AND quantity > 0", userID, itemID).
-		Select("COALESCE(SUM(quantity), 0)").Scan(&inventoryQuantity).Error; err != nil {
-		return 0, fmt.Errorf("统计库存材料 %s: %w", itemID, err)
-	}
-	var instanceQuantity int64
-	if err := db.Model(&models.ItemInstance{}).
-		Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ? AND current_durability > 0", userID, itemID, "inventory", "normal").
-		Count(&instanceQuantity).Error; err != nil {
-		return 0, fmt.Errorf("统计材料实例 %s: %w", itemID, err)
-	}
-	return inventoryQuantity + int(instanceQuantity), nil
-}
-
-// consumeRequirementItemTx 扣除升级材料：优先扣聚合库存，不足部分再按耐久升序逐个消耗仓库实例。
+// consumeRequirementItemTx 扣除升级/制造材料：只消耗局内带出（raidExtract）库存与实例。
 func consumeRequirementItemTx(tx *gorm.DB, userID uint, itemID string, quantity int) error {
-	if quantity <= 0 {
-		return nil
-	}
-	var inventoryQuantity int
-	if err := tx.Model(&models.Inventory{}).
-		Where("user_id = ? AND item_id = ? AND quantity > 0", userID, itemID).
-		Select("COALESCE(SUM(quantity), 0)").Scan(&inventoryQuantity).Error; err != nil {
-		return fmt.Errorf("统计材料 %s: %w", itemID, err)
-	}
-	// 先扣聚合库存，扣完后剩余数量再走实例消耗。
-	fromInventory := quantity
-	if fromInventory > inventoryQuantity {
-		fromInventory = inventoryQuantity
-	}
-	if fromInventory > 0 {
-		if err := removeInventoryItem(tx, userID, itemID, fromInventory); err != nil {
-			return err
-		}
-		quantity -= fromInventory
-	}
-	if quantity <= 0 {
-		return nil
-	}
-	var instances []models.ItemInstance
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ? AND current_durability > 0", userID, itemID, "inventory", "normal").
-		Order("current_durability asc, id asc").Limit(quantity).Find(&instances).Error; err != nil {
-		return fmt.Errorf("读取材料实例 %s: %w", itemID, err)
-	}
-	if len(instances) < quantity {
-		return fmt.Errorf("材料 %s 数量不足", itemID)
-	}
-	for _, instance := range instances {
-		if err := tx.Delete(&instance).Error; err != nil {
-			return fmt.Errorf("消耗材料实例 %d: %w", instance.ID, err)
-		}
+	if err := consumeRaidExtractItemsTx(tx, userID, itemID, quantity); err != nil {
+		return fmt.Errorf("需要从局内带出 %s: %w", itemID, err)
 	}
 	return nil
 }

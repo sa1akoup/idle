@@ -149,7 +149,7 @@ func returnCarriedItemsTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnap
 		if err != nil {
 			return err
 		}
-		if err := addInventoryItem(tx, userID, catalog, item.Quantity, false); err != nil {
+		if err := addInventoryItem(tx, userID, catalog, item.Quantity, item.RaidExtract); err != nil {
 			return fmt.Errorf("归还补给 %s: %w", item.ItemID, err)
 		}
 	}
@@ -158,14 +158,15 @@ func returnCarriedItemsTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnap
 
 type ItemInstanceView struct {
 	models.ItemInstance
-	Name             string `json:"name"`
-	Kind             string `json:"kind"`
-	Category         string `json:"category"`
-	Price            int    `json:"price"`
-	Weight           int    `json:"weight"`
-	Slots            int    `json:"slots"`
-	MerchantCategory string `json:"merchantCategory"`
-	RepRequirement   int    `json:"repRequirement"`
+	Name             string   `json:"name"`
+	Kind             string   `json:"kind"`
+	Category         string   `json:"category"`
+	Price            int      `json:"price"`
+	Weight           int      `json:"weight"`
+	Slots            int      `json:"slots"`
+	MerchantCategory string   `json:"merchantCategory"`
+	RepRequirement   int      `json:"repRequirement"`
+	Purposes         []string `json:"purposes"`
 }
 
 // ListItemInstancesForUser 列出用户仓库全部物品实例，并关联目录数据补齐展示字段。
@@ -181,6 +182,10 @@ func ListItemInstancesForUser(db *gorm.DB, userID uint) ([]ItemInstanceView, err
 	catalogItems, err := catalog.New(db).FindByIDs(itemIDs)
 	if err != nil {
 		return nil, fmt.Errorf("读取物品实例目录: %w", err)
+	}
+	purposes, err := itemPurposeLabelsTx(db, userID)
+	if err != nil {
+		return nil, err
 	}
 	result := make([]ItemInstanceView, 0, len(items))
 	for _, instance := range items {
@@ -198,6 +203,7 @@ func ListItemInstancesForUser(db *gorm.DB, userID uint) ([]ItemInstanceView, err
 			Slots:            item.Slots,
 			MerchantCategory: item.MerchantCategory,
 			RepRequirement:   item.RepRequirement,
+			Purposes:         purposeLabelsFor(instance.ItemID, instance.RaidExtract, purposes),
 		})
 	}
 	return result, nil

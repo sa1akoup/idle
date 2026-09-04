@@ -157,11 +157,31 @@ func eventDefinitions() []models.EventDef {
 		event("evt_pier_final_ambush", "码头最后拦截", "接近撤离点时发现埋伏痕迹。", "node", "encounter", "once_per_run",
 			styled(checked("counter", []string{modeEvacuating}, "perception", 60, "smoke", 15, "识破埋伏路线，从侧面进入码头。", "拦截者封锁了最后入口。", effects(fx("skip_combat", "", 0)), effects(fx("encounter", "extraction", 0))), []string{"balanced", "stealth"}, "bypass", 4, 1, 30),
 			styled(automatic("engage", []string{modeEvacuating}, "不再寻找侧路，直接清除撤离点最后的拦截者。", effects(fx("encounter", "extraction", 0))), []string{"aggressive", "greedy"}, "engage", 5, 2, 30)),
+		event("evt_market_vendor_cache", "摊位暗格", "旧摊位底板下有人藏过补给。", "node", "", "once_per_run",
+			annotated(automatic("search", []string{modeExploring}, "撬开暗格，搜出一批补给。", effects(fx("container_pool", "supply_reward", 0))), "search", 1, 3)),
+		event("evt_clinic_pharmacy", "诊所药柜", "药柜锁芯已经锈死，但仍有存货。", "node", "", "once_per_run",
+			annotated(checked("force", []string{modeExploring}, "strength", 48, "", 0, "撬开药柜并清点药品。", "柜门卡住，只摸到散装耗材。", effects(fx("container_pool", "medical_reward", 0)), effects(fx("container_pool", "medical_fallback", 0), fx("time", "", 2))), "search", 1, 3)),
+		event("evt_gas_utility", "加油站机房", "加油机旁的设备箱还没被翻过。", "node", "", "once_per_run",
+			annotated(automatic("search", []string{modeExploring}, "拆开设备箱，取出一批机电零件。", effects(fx("container_pool", "material_reward", 0))), "search", 1, 3)),
+		event("evt_customs_locked_office", "海关内务室", "内务室的钢门需要对应钥匙。", "node", "", "once_per_run",
+			annotated(conditioned("open", []string{modeExploring}, condition("has_item", "eq", "key_customs_office", 1), "", 0, "", 0, "用海关内务钥匙打开密室。", "", effects(fx("consume_item", "key_customs_office", 0), fx("container_pool", "locked_reward", 0)), nil), "intel", 1, 4)),
+		event("evt_clinic_locked_pharmacy", "上锁药房", "药房铁门完好，只能用钥匙打开。", "node", "", "once_per_run",
+			annotated(conditioned("open", []string{modeExploring}, condition("has_item", "eq", "key_clinic_pharmacy", 1), "", 0, "", 0, "用药房钥匙打开里间药柜。", "", effects(fx("consume_item", "key_clinic_pharmacy", 0), fx("container_pool", "locked_reward", 0)), nil), "search", 1, 4)),
+		event("evt_warehouse_locked_office", "仓库上锁办公室", "二楼办公室的门锁还在工作。", "node", "", "once_per_run",
+			annotated(conditioned("open", []string{modeExploring}, condition("has_item", "eq", "key_warehouse_office", 1), "", 0, "", 0, "用办公室钥匙打开工具间。", "", effects(fx("consume_item", "key_warehouse_office", 0), fx("container_pool", "locked_reward", 0)), nil), "search", 1, 4)),
+		event("evt_pier_washed_cargo", "冲上岸的货箱", "潮水把一只未开封的货箱推到栈桥下。", "node", "", "once_per_run",
+			annotated(automatic("haul", []string{modeExploring}, "拖上岸并拆开货箱。", effects(fx("container_pool", "supply_reward", 0))), "search", 1, 3)),
+		event("evt_market_register", "未清点的收银机", "摊位收银机的抽屉卡在半开位置。", "node", "", "once_per_run",
+			annotated(checked("pry", []string{modeExploring}, "strength", 48, "", 0, "撬开收银机，摸到零钱和杂物。", "抽屉卡住，只带出一点散件。", effects(fx("container_pool", "market_reward", 0)), effects(fx("time", "", 2))), "search", 2, 3)),
+		event("evt_gas_abandoned_car", "弃置轿车", "加油位停着一辆没上锁的轿车。", "node", "", "once_per_run",
+			annotated(automatic("search", []string{modeExploring}, "翻开车厢，找到一批油料和零件。", effects(fx("container_pool", "fuel_reward", 0))), "search", 1, 3)),
+		event("evt_tunnel_locker", "维护储物柜", "通道壁上的维修柜还挂着锈锁。", "node", "", "once_per_run",
+			annotated(checked("force", []string{modeExploring}, "engineering", 50, "toolkit", 15, "撬开储物柜，搜出维修零件。", "锁芯拧断，里面只剩空盒。", effects(fx("container_pool", "locker_reward", 0)), effects(fx("time", "", 2))), "unlock", 2, 3)),
 	}
 }
 
 func eventBindings() []models.EventBinding {
-	bindings := make([]models.EventBinding, 0, 48)
+	bindings := make([]models.EventBinding, 0, 64)
 	add := func(eventID, scopeType, scopeID, phase string, triggerBP, weight, priority, maxPerRun, cooldown int) {
 		bindings = append(bindings, models.EventBinding{
 			ID: "bind_" + eventID, EventID: eventID, ScopeType: scopeType, ScopeID: scopeID,
@@ -250,6 +270,16 @@ func eventBindings() []models.EventBinding {
 			binding.ScopeID = "extract_pier"
 		}
 	}
+	add("evt_market_vendor_cache", "node", "city_ruins_node_3", "post_search", 800, 100, 80, 1, 0)
+	add("evt_clinic_pharmacy", "node", "city_ruins_node_7", "post_search", 800, 100, 80, 1, 0)
+	add("evt_gas_utility", "node", "city_ruins_node_9", "post_search", 800, 100, 80, 1, 0)
+	add("evt_customs_locked_office", "node", "city_ruins_node_8", "post_search", 9000, 400, 95, 1, 0)
+	add("evt_clinic_locked_pharmacy", "node", "city_ruins_node_7", "post_search", 9000, 400, 95, 1, 0)
+	add("evt_warehouse_locked_office", "node", "city_ruins_node_2", "post_search", 9000, 400, 95, 1, 0)
+	add("evt_pier_washed_cargo", "node", "city_ruins_node_1", "post_search", 800, 100, 80, 1, 0)
+	add("evt_market_register", "node", "city_ruins_node_3", "post_search", 800, 100, 80, 1, 0)
+	add("evt_gas_abandoned_car", "node", "city_ruins_node_9", "post_search", 800, 100, 80, 1, 0)
+	add("evt_tunnel_locker", "node", "city_ruins_node_4", "post_search", 800, 100, 80, 1, 0)
 	return bindings
 }
 

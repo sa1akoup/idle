@@ -60,6 +60,7 @@ type HideoutFacilityView struct {
 	FuelSlotCount                   int                 `json:"fuelSlotCount"`
 	RequiresPower                   bool                `json:"requiresPower"`
 	EffectsJSON                     string              `json:"effectsJson"`
+	Runtime                         string              `json:"runtime"`
 	NextUpgrade                     *HideoutUpgradeView `json:"nextUpgrade"`
 }
 
@@ -191,7 +192,7 @@ func GetHideoutForUser(db *gorm.DB, userID uint) (*HideoutSnapshot, error) {
 			HydrationRecoveryPerHour: current.HydrationRecoveryPerHour, RepairKitDiscountPercent: current.RepairKitDiscountPercent,
 			FuelConsumptionReductionPercent: current.FuelConsumptionReductionPercent, PhysicalSkillGrowthPercent: current.PhysicalSkillGrowthPercent,
 			StressRecoveryPerHour: current.StressRecoveryPerHour, FuelSlotCount: current.FuelSlotCount, RequiresPower: current.RequiresPower,
-			EffectsJSON: current.EffectsJSON,
+			EffectsJSON: current.EffectsJSON, Runtime: hideoutFacilityRuntime(facility.ID),
 		}
 		if next, ok := levelsByFacility[facility.ID][state.Level+1]; ok {
 			requirements, requirementsSatisfied, err := facilityRequirementViewsTx(db, userID, character, facility.ID, next.Level)
@@ -557,7 +558,7 @@ func settleDueHideoutJobsTx(tx *gorm.DB, userID uint, now time.Time) error {
 				continue
 			}
 			// 产物走购买同款入库路径：耐久成品自动建满耐久实例。
-			if err := addInventoryItem(tx, userID, output, recipe.OutputQuantity, false); err != nil {
+			if err := addInventoryItem(tx, userID, output, recipe.OutputQuantity, true); err != nil {
 				return fmt.Errorf("发放制造产物 %s: %w", recipe.OutputItemID, err)
 			}
 		default:
