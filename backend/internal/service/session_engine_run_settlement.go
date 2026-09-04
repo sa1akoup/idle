@@ -101,6 +101,9 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 
 		if status != "running" {
 			if result.Result == "incapacitated" {
+				if err := settleSecureKeysTx(tx, s.userID, stateAfter.CarriedItems); err != nil {
+					return err
+				}
 				if err := discardSessionLoadoutTx(tx, s.userID, state.Loadout, stateAfter.CarriedItems); err != nil {
 					return err
 				}
@@ -119,6 +122,9 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 					return err
 				}
 				if err := returnCarriedItemsTx(tx, s.userID, snapshot, stateAfter.CarriedItems); err != nil {
+					return err
+				}
+				if err := settleSecureKeysTx(tx, s.userID, stateAfter.CarriedItems); err != nil {
 					return err
 				}
 				stateAfter.CarriedItems = nil
@@ -152,6 +158,9 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 		encodedState, err := json.Marshal(stateAfter)
 		if err != nil {
 			return fmt.Errorf("序列化单局后状态: %w", err)
+		}
+		if result.Result == "incapacitated" {
+			result.Report = appendSecureLootReport(result.Report, snapshot, storedLoot)
 		}
 		lootJSON, err := encodeEngineLoot(result.ExtractedLoot, snapshot)
 		if err != nil {
@@ -267,14 +276,23 @@ func (s *SessionService) settleEngineRun(sess *models.Session, state *engine.Eng
 				return err
 			}
 		}
-		if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, result.ExtractedLoot, sessionEventLootExtracted, result.DurationSec, now); err != nil {
-			return err
-		}
-		if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, storedLoot, sessionEventLootStored, result.DurationSec, now); err != nil {
-			return err
-		}
-		if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, overflowLoot, sessionEventLootOverflow, result.DurationSec, now); err != nil {
-			return err
+		if result.Result == "incapacitated" {
+			if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, storedLoot, sessionEventLootSecured, result.DurationSec, now); err != nil {
+				return err
+			}
+			if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, overflowLoot, sessionEventLootOverflow, result.DurationSec, now); err != nil {
+				return err
+			}
+		} else {
+			if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, result.ExtractedLoot, sessionEventLootExtracted, result.DurationSec, now); err != nil {
+				return err
+			}
+			if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, storedLoot, sessionEventLootStored, result.DurationSec, now); err != nil {
+				return err
+			}
+			if err := appendLootSettlementEvents(tx, s.userID, sess.ID, runIndex, snapshot, overflowLoot, sessionEventLootOverflow, result.DurationSec, now); err != nil {
+				return err
+			}
 		}
 		if err := appendSessionEventTx(tx, s.userID, sess.ID, runIndex, sessionEventRunSettled, result.DurationSec, now, "", "", map[string]interface{}{
 			"result": result.Result, "status": status, "durationSec": result.DurationSec, "heat": result.Heat, "ammoUsed": result.AmmoUsed,
@@ -309,9 +327,12 @@ func engineStateArmorBrokenDuringRun(previous, next engine.EngineState, result e
 	return previous.ArmorDurability > 0 || result.ArmorBrokenDuringRun
 }
 
-// storeSuccessfulLootTx 把成功搬出的战利品按剩余容量入库并返回入库/溢出两部分；失能局不产生战利品。
+// storeSuccessfulLootTx 成功撤离按 FIR 入库；失能则按安全箱格数从本局搜刮里保物并去掉带出标志。
 func (s *SessionService) storeSuccessfulLootTx(tx *gorm.DB, snapshot engine.ScenarioSnapshot, result engine.RunResult) ([]engine.LootDrop, []engine.LootDrop, error) {
-	if result.Result == "incapacitated" || len(result.ExtractedLoot) == 0 {
+	if result.Result == "incapacitated" {
+		return s.storeSecureLootTx(tx, snapshot, result.Loot)
+	}
+	if len(result.ExtractedLoot) == 0 {
 		return nil, nil, nil
 	}
 	stored, overflow, err := fitEngineLootToStorage(tx, s.userID, snapshot, result.ExtractedLoot)

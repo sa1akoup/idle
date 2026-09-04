@@ -235,6 +235,9 @@ func (s *SessionService) finishUnscheduledSession(sess *models.Session, state *e
 		if err := returnCarriedItemsTx(tx, s.userID, snapshot, state.CarriedItems); err != nil {
 			return err
 		}
+		if err := settleSecureKeysTx(tx, s.userID, state.CarriedItems); err != nil {
+			return err
+		}
 		state.CarriedItems = nil
 		state.Consumables = nil
 		state.Carry.UsedSlots = 0

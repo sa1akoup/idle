@@ -12,6 +12,9 @@ type SaveLoadoutReq struct {
 	BackpackID         string            `json:"backpackId"`
 	HelmetID           string            `json:"helmetId"`
 	HeadsetID          string            `json:"headsetId"`
+	KeyCaseID          string            `json:"keyCaseId"`
+	SecureContainerID  string            `json:"secureContainerId"`
+	KeyInstanceIDs     []uint            `json:"keyInstanceIds"`
 	Consumables        []string          `json:"consumables"`
 	CarriedAmmo        []models.AmmoCell `json:"carriedAmmo"`
 	PresetWeaponID     string            `json:"presetWeaponId"`

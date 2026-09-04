@@ -109,6 +109,12 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 	if err := db.Order("id asc").Find(&headsets).Error; err != nil {
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取耳机目录: %w", err)
 	}
+	var secureContainers []models.SecureContainerDef
+	if db.Migrator().HasTable(&models.SecureContainerDef{}) {
+		if err := db.Order("id asc").Find(&secureContainers).Error; err != nil {
+			return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取安全箱目录: %w", err)
+		}
+	}
 	var enemyTemplates []models.EnemyTemplateDef
 	if err := db.Order("sort_order asc, id asc").Find(&enemyTemplates).Error; err != nil {
 		return engine.ScenarioSnapshot{}, "", "", fmt.Errorf("读取敌人模板: %w", err)
@@ -300,6 +306,13 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 			Price: definition.Price, MerchantCategory: definition.MerchantCategory, RepRequirement: definition.RepRequirement,
 		}
 	}
+	for _, definition := range secureContainers {
+		snapshot.Items[definition.ID] = engine.ItemDefinition{
+			ID: definition.ID, Kind: "secure", Name: definition.Name, Price: definition.Price,
+			Weight: definition.Weight, Slots: definition.Slots, AddSlots: definition.InnerSlots,
+			MerchantCategory: definition.MerchantCategory, RepRequirement: definition.RepRequirement,
+		}
+	}
 	for _, definition := range generatedEnemies {
 		snapshot.Enemies[definition.ID] = definition
 	}
@@ -336,11 +349,6 @@ func buildScenarioSnapshotTx(db *gorm.DB, userID uint, mapID string) (engine.Sce
 		return engine.ScenarioSnapshot{}, "", "", err
 	}
 	snapshot.Contracts = contracts
-	stashKeys, err := raidExtractStashKeysTx(db, userID, lootDefs)
-	if err != nil {
-		return engine.ScenarioSnapshot{}, "", "", err
-	}
-	snapshot.StashKeys = stashKeys
 
 	encoded, hash, err := finalizeScenarioSnapshot(snapshot)
 	if err != nil {

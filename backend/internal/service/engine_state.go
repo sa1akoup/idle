@@ -34,6 +34,7 @@ func loadoutToEngineState(loadout *models.PlayerLoadout) engine.LoadoutState {
 	return engine.LoadoutState{
 		WeaponID: loadout.WeaponID, ArmorID: loadout.ArmorID, ChestRigID: loadout.ChestRigID, BackpackID: loadout.BackpackID,
 		ArmorInstanceID: armorInstanceID, HelmetID: loadout.HelmetID, HeadsetID: loadout.HeadsetID,
+		SecureContainerID: loadout.SecureContainerID,
 	}
 }
 
@@ -71,6 +72,11 @@ func buildEngineState(db *gorm.DB, userID uint, character models.Character, load
 	if err != nil {
 		return engine.EngineState{}, err
 	}
+	keys, err := carriedKeysForUser(db, userID)
+	if err != nil {
+		return engine.EngineState{}, err
+	}
+	carriedItems = append(carriedItems, keys...)
 	return engine.EngineState{
 		Character: characterToEngineState(character), Loadout: loadoutState,
 		ArmorDurability: armorDurability, Consumables: itemStacksFromCarriedItems(carriedItems), CarriedItems: carriedItems,

@@ -21,6 +21,7 @@ const (
 	sessionEventSessionFailed   = "session_failed"
 	sessionEventLootExtracted   = "loot_extracted"
 	sessionEventLootStored      = "loot_stored"
+	sessionEventLootSecured     = "loot_secured"
 	sessionEventLootOverflow    = "loot_overflow"
 	sessionEventAmmoRefilled    = "ammo_refilled"
 )

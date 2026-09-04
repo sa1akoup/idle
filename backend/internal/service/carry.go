@@ -17,6 +17,7 @@ import (
 type CarryCapacity struct {
 	BaseSlots   int     `json:"baseSlots"`   // 基础可携带格数
 	BonusSlots  int     `json:"bonusSlots"`  // 胸挂/背包增加的格数
+	SecureSlots int     `json:"secureSlots"` // 安全箱口袋格数
 	TotalSlots  int     `json:"totalSlots"`  // 总可携带格数
 	BaseWeight  float64 `json:"baseWeight"`  // 基础可携带负重 kg
 	BonusWeight float64 `json:"bonusWeight"` // 胸挂/背包增加的负重 kg
@@ -59,13 +60,16 @@ func carryCapacityCore(db *gorm.DB, userID uint, loadout *models.PlayerLoadout, 
 	ids := []string{loadout.WeaponID, loadout.ArmorID,
 		loadout.ChestRigID, loadout.BackpackID, loadout.HelmetID, loadout.HeadsetID}
 	ids = append(ids, loadout.Consumables...)
+	if loadout.SecureContainerID != "" {
+		ids = append(ids, loadout.SecureContainerID)
+	}
 	catalogRepo := catalog.New(db)
 	items, err := catalogRepo.FindByIDs(ids)
 	if err != nil {
 		return nil, fmt.Errorf("读取携行物品目录: %w", err)
 	}
 
-	bonusSlots, bonusWeight := 0, 0.0
+	bonusSlots, bonusWeight, secureSlots := 0, 0.0, 0
 	usedSlots, usedWeight := 0, 0.0
 	for _, id := range ids {
 		if id == "" {
@@ -75,8 +79,12 @@ func carryCapacityCore(db *gorm.DB, userID uint, loadout *models.PlayerLoadout, 
 		if !ok {
 			return nil, fmt.Errorf("读取携行物品 %s: %w", id, catalog.ErrItemNotFound)
 		}
-		usedSlots += item.Slots
 		usedWeight += float64(item.Weight)
+		if item.Kind == "secure" {
+			secureSlots += item.AddSlots
+			continue
+		}
+		usedSlots += item.Slots
 		// 只有胸挂与背包提供额外格数与负重加成。
 		switch item.Kind {
 		case "chestrig", "backpack":
@@ -103,7 +111,8 @@ func carryCapacityCore(db *gorm.DB, userID uint, loadout *models.PlayerLoadout, 
 	return &CarryCapacity{
 		BaseSlots:   baseSlots,
 		BonusSlots:  bonusSlots,
-		TotalSlots:  baseSlots + bonusSlots,
+		SecureSlots: secureSlots,
+		TotalSlots:  baseSlots + bonusSlots + secureSlots,
 		BaseWeight:  baseWeight,
 		BonusWeight: bonusWeight,
 		TotalWeight: baseWeight + bonusWeight,

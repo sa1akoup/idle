@@ -126,7 +126,7 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 				}
 			}
 		}
-		if err := validateOwnedLoadoutForUser(tx, s.userID, txLoadout.WeaponID, txLoadout.ArmorID, txLoadout.Consumables, txLoadout.ChestRigID, txLoadout.BackpackID, txLoadout.HelmetID, txLoadout.HeadsetID); err != nil {
+		if err := validateOwnedLoadoutForUser(tx, s.userID, txLoadout.WeaponID, txLoadout.ArmorID, txLoadout.Consumables, txLoadout.ChestRigID, txLoadout.BackpackID, txLoadout.HelmetID, txLoadout.HeadsetID, txLoadout.KeyCaseID, txLoadout.SecureContainerID); err != nil {
 			return err
 		}
 		if txLoadout.WeaponID == "" {
@@ -155,6 +155,9 @@ func (s *SessionService) Start(req StartReq) (*models.Session, error) {
 			return fmt.Errorf("配置探索弹药: %w", err)
 		}
 		seed := now.UnixNano()
+		if err := refillKeyCaseTx(tx, s.userID, txLoadout.KeyCaseID); err != nil {
+			return err
+		}
 		state, err := buildEngineState(tx, s.userID, txCharacter, txLoadout, carriedStacks)
 		if err != nil {
 			return err
@@ -283,6 +286,9 @@ func (s *SessionService) failSession(id uint, cause error) error {
 				return err
 			}
 			if err := returnCarriedItemsTx(tx, s.userID, snapshot, state.CarriedItems); err != nil {
+				return err
+			}
+			if err := settleSecureKeysTx(tx, s.userID, state.CarriedItems); err != nil {
 				return err
 			}
 			state.Ammo = engine.CarriedAmmo{}

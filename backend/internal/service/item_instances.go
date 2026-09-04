@@ -103,6 +103,9 @@ func reserveCarriedItemsTx(tx *gorm.DB, userID uint, items []engine.CarriedItem,
 	}
 	quantities := make(map[itemSource]int)
 	for _, item := range items {
+		if item.Secure {
+			continue
+		}
 		if item.InstanceID > 0 {
 			result := tx.Model(&models.ItemInstance{}).
 				Where("user_id = ? AND id = ? AND status = ? AND location_type = ?", userID, item.InstanceID, "normal", "inventory").
@@ -129,6 +132,9 @@ func reserveCarriedItemsTx(tx *gorm.DB, userID uint, items []engine.CarriedItem,
 // returnCarriedItemsTx 行动结束后归还携带物品：实例物品写回耐久与状态，聚合物品重新入库存。
 func returnCarriedItemsTx(tx *gorm.DB, userID uint, snapshot engine.ScenarioSnapshot, items []engine.CarriedItem) error {
 	for _, item := range items {
+		if item.Secure {
+			continue
+		}
 		if item.InstanceID > 0 {
 			status := "normal"
 			if item.CurrentDurability <= 0 {
@@ -172,7 +178,7 @@ type ItemInstanceView struct {
 // ListItemInstancesForUser 列出用户仓库全部物品实例，并关联目录数据补齐展示字段。
 func ListItemInstancesForUser(db *gorm.DB, userID uint) ([]ItemInstanceView, error) {
 	var items []models.ItemInstance
-	if err := db.Where("user_id = ? AND location_type = ?", userID, "inventory").Order("item_id asc, id asc").Find(&items).Error; err != nil {
+	if err := db.Where("user_id = ? AND location_type IN ?", userID, []string{"inventory", keyCaseLocation}).Order("item_id asc, id asc").Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("读取物品实例: %w", err)
 	}
 	itemIDs := make([]string, 0, len(items))
@@ -212,7 +218,7 @@ func ListItemInstancesForUser(db *gorm.DB, userID uint) ([]ItemInstanceView, err
 // discardCarriedItemsTx 丢弃已携带的实例物品（失能丢失场景），聚合物品不在此处理。
 func discardCarriedItemsTx(tx *gorm.DB, userID uint, items []engine.CarriedItem) error {
 	for _, item := range items {
-		if item.InstanceID == 0 {
+		if item.InstanceID == 0 || item.Secure {
 			continue
 		}
 		if err := tx.Where("user_id = ? AND id = ?", userID, item.InstanceID).Delete(&models.ItemInstance{}).Error; err != nil {
