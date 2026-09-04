@@ -22,6 +22,7 @@ var requiredSchema = []schemaExpectation{
 	{table: "session_events", columns: []string{"run_index", "sequence", "event_type", "available_at"}},
 	{table: "player_loadouts", columns: []string{"consumables", "consumable_refs", "carried_ammo", "preset_consumable_refs", "preset2_consumable_refs", "preset3_consumable_refs", "armor_instance_id"}},
 	{table: "inventories", columns: []string{"item_id", "quantity", "raid_extract"}},
+	{table: "loot_item_defs", columns: []string{"rarity", "drop_weight"}},
 	{table: "armor_instances", columns: []string{"armor_id", "cur_durability", "max_durability", "repair_count", "status"}},
 	{table: "item_use_defs", columns: []string{"instance_required", "usable_in_session", "usable_in_hideout"}},
 	{table: "item_instances", columns: []string{"current_durability", "max_durability", "status", "location_type", "raid_extract"}},
@@ -34,6 +35,8 @@ var requiredSchema = []schemaExpectation{
 	{table: "recipe_defs", columns: []string{"name", "facility_id", "required_level", "inputs_json", "output_item_id", "craft_seconds"}},
 	{table: "enemy_template_defs", columns: []string{"kind", "tier", "weapon_pool", "armor_pool", "backpack_pool", "ammo_level_min", "ammo_level_max", "intellect_base", "intellect_flux", "intellect_floor", "intellect_cap", "resist_base", "resist_flux", "resist_floor", "resist_cap"}},
 	{table: "user_data_migrations", columns: []string{"version", "completed_at", "processed_users", "created_instances", "stripped_refs"}},
+	{table: "quest_defs", columns: []string{"merchant_id", "objective_type", "objective_json", "reward_json", "prerequisite_id"}},
+	{table: "user_quests", columns: []string{"user_id", "quest_id", "status", "progress_json"}},
 	{table: "schema_migrations", columns: []string{"checksum"}},
 }
 

@@ -219,6 +219,7 @@ type LootItemDef struct {
 	Weight           int    `json:"weight"`
 	Slots            int    `json:"slots"`
 	DropWeight       int    `json:"dropWeight"`
+	Rarity           string `json:"rarity"` // common/uncommon/rare/superrare/legendary，对齐原版 Common/Rare/Superrare
 	MerchantCategory string `json:"merchantCategory"`
 	RepRequirement   int    `json:"repRequirement"`
 }
@@ -293,19 +294,19 @@ type MapDef struct {
 
 // NodeDef 节点
 type NodeDef struct {
-	ID             string   `gorm:"primaryKey" json:"id"`
-	MapID          string   `json:"mapId"`
-	Name           string   `json:"name"`
-	PositionX      int      `json:"positionX"`
-	PositionY      int      `json:"positionY"`
-	ExploreTime    int      `json:"exploreTime"` // 分钟
-	Distance       string   `json:"distance"`    // close/mid/far
-	EnemyID        string   `json:"enemyId"`
-	EncounterRole  string   `json:"encounterRole"`  // patrol/guard/elite 等行为角色
-	ContainerSlots int      `json:"containerSlots"` // 本节点每局生成的容器槽位
-	ValueTier      int      `json:"valueTier"`      // 节点整体价值等级，1-5
-	EncounterChance int     `json:"encounterChance"` // 本节点基础遇敌概率 0-100，0 表示使用引擎默认值
-	Tags           []string `gorm:"serializer:json" json:"tags"`
+	ID              string   `gorm:"primaryKey" json:"id"`
+	MapID           string   `json:"mapId"`
+	Name            string   `json:"name"`
+	PositionX       int      `json:"positionX"`
+	PositionY       int      `json:"positionY"`
+	ExploreTime     int      `json:"exploreTime"` // 分钟
+	Distance        string   `json:"distance"`    // close/mid/far
+	EnemyID         string   `json:"enemyId"`
+	EncounterRole   string   `json:"encounterRole"`   // patrol/guard/elite 等行为角色
+	ContainerSlots  int      `json:"containerSlots"`  // 本节点每局生成的容器槽位
+	ValueTier       int      `json:"valueTier"`       // 节点整体价值等级，1-5
+	EncounterChance int      `json:"encounterChance"` // 本节点基础遇敌概率 0-100，0 表示使用引擎默认值
+	Tags            []string `gorm:"serializer:json" json:"tags"`
 }
 
 // MapEdgeDef 地图节点之间的移动边；Bidirectional 决定是否允许反向通行。

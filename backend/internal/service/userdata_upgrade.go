@@ -17,6 +17,9 @@ import (
 )
 
 const currentUserDataUpgradeVersion = 4
+const progressionBootstrapVersion = 5
+
+const starterMainAttribute = 25
 
 // retiredCatalogItemIDs 是历史上存在于目录种子、现已下架的道具；
 // 升级时先删除其残留定义行，随后既有的悬空扫描会把玩家数据中的引用一并摘除。
@@ -36,8 +39,19 @@ func (userDataUpgradeRecord) TableName() string {
 	return "user_data_migrations"
 }
 
-// RunUserDataUpgrades 对当前版本的存量数据适配只执行一次，返回首次处理的用户数。
+// RunUserDataUpgrades 按版本顺序执行存量适配；已完成的版本不会重跑。
 func RunUserDataUpgrades(db *gorm.DB) (int, error) {
+	processed, err := runCatalogUpgradeIfNeeded(db)
+	if err != nil {
+		return processed, err
+	}
+	if err := runProgressionBootstrapIfNeeded(db); err != nil {
+		return processed, err
+	}
+	return processed, nil
+}
+
+func runCatalogUpgradeIfNeeded(db *gorm.DB) (int, error) {
 	var record userDataUpgradeRecord
 	// 版本已记录过则本次启动跳过，防止同一用户的存量数据被重复适配
 	if err := db.Where("version = ?", currentUserDataUpgradeVersion).First(&record).Error; err == nil {
@@ -114,6 +128,94 @@ func RunUserDataUpgrades(db *gorm.DB) (int, error) {
 	}
 	log.Printf("[数据适配] 已处理 %d 个用户：换算耐久实例 %d 件，摘除悬空引用 %d 处", len(userIDs), createdInstances, strippedRefs)
 	return len(userIDs), nil
+}
+
+func runProgressionBootstrapIfNeeded(db *gorm.DB) error {
+	var record userDataUpgradeRecord
+	if err := db.Where("version = ?", progressionBootstrapVersion).First(&record).Error; err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("读取成长白板适配记录: %w", err)
+	}
+	userIDs, err := listUpgradableUserIDs(db)
+	if err != nil {
+		return err
+	}
+	processed := 0
+	for _, userID := range userIDs {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := bootstrapStarterAttributesTx(tx, userID); err != nil {
+				return err
+			}
+			return unlockMerchantIfOpenTx(tx, userID, "mechanical")
+		}); err != nil {
+			return fmt.Errorf("用户 %d 成长白板适配失败: %w", userID, err)
+		}
+		processed++
+	}
+	if err := db.Create(&userDataUpgradeRecord{
+		Version:        progressionBootstrapVersion,
+		CompletedAt:    time.Now(),
+		ProcessedUsers: processed,
+	}).Error; err != nil {
+		return fmt.Errorf("记录成长白板适配版本: %w", err)
+	}
+	log.Printf("[数据适配] 成长白板已处理 %d 个用户", processed)
+	return nil
+}
+
+func bootstrapStarterAttributesTx(tx *gorm.DB, userID uint) error {
+	var character models.Character
+	if err := tx.Where("user_id = ?", userID).First(&character).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("读取角色白板: %w", err)
+	}
+	if character.Strength != 0 || character.Agility != 0 || character.Intellect != 0 || character.Charisma != 0 {
+		return nil
+	}
+	maxHP := engine.CalcMaxHP(engine.DefaultTuning(), starterMainAttribute)
+	hp := character.HP
+	if hp >= 90 {
+		hp = maxHP
+	}
+	updates := map[string]interface{}{
+		"strength": starterMainAttribute, "agility": starterMainAttribute,
+		"intellect": starterMainAttribute, "charisma": starterMainAttribute,
+		"hp": hp,
+	}
+	if err := tx.Model(&models.Character{}).Where("user_id = ? AND id = ?", userID, character.ID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("写入角色白板: %w", err)
+	}
+	return nil
+}
+
+func unlockMerchantIfOpenTx(tx *gorm.DB, userID uint, merchantID string) error {
+	var merchant models.MerchantDef
+	if err := tx.Where("id = ?", merchantID).First(&merchant).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("读取商人 %s: %w", merchantID, err)
+	}
+	if !merchant.Open {
+		return nil
+	}
+	state := models.UserMerchantState{UserID: userID, MerchantID: merchantID, Unlocked: true}
+	result := tx.Where("user_id = ? AND merchant_id = ?", userID, merchantID).FirstOrCreate(&state)
+	if result.Error != nil {
+		return fmt.Errorf("读取商人状态 %s: %w", merchantID, result.Error)
+	}
+	if state.Unlocked {
+		return nil
+	}
+	if err := tx.Model(&models.UserMerchantState{}).
+		Where("user_id = ? AND merchant_id = ?", userID, merchantID).
+		Update("unlocked", true).Error; err != nil {
+		return fmt.Errorf("解锁商人 %s: %w", merchantID, err)
+	}
+	return nil
 }
 
 // clampCharacterHPForCurrentRules 将存量角色生命值限制在当前力量对应的合法区间内。
