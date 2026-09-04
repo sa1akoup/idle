@@ -1145,6 +1145,8 @@ b {
 .merchant-view .catalog-action { flex-wrap: wrap; }
 .merchant-view .catalog-action small { color: var(--text-muted); font-size: 9px; }
 .merchant-view .catalog-action .el-input-number { width: 90px; }
+.merchant-view .barter-costs { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.merchant-view .barter-costs small.ready { color: var(--olive); }
 
 .repair-row { min-height: 78px; display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) 120px; align-items: center; gap: var(--space-5); border-bottom: 1px solid var(--border); }
 .repair-row:last-child { border-bottom: 0; }

@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus/es/components/message/index'
 import { Document, Select, Warning } from '@element-plus/icons-vue'
 import api, { getApiError } from '../api'
 import SessionTimeline from '../components/SessionTimeline.vue'
-import type { ActionStyle, GameMap, LootSummary, Session, SessionDetail, SessionEvent, SessionRun, Weapon } from '../types'
+import type { ActionStyle, GameMap, LootSummary, Session, SessionDetail, SessionEvent, Weapon } from '../types'
 
 const props = defineProps<{
   sessions: Session[]
@@ -24,9 +24,10 @@ watch(() => props.sessions.map((item) => item.id), (ids) => {
 }, { immediate: true })
 watch(selectedId, (id) => { void loadSession(id) }, { immediate: true })
 
-const runs = computed<SessionRun[]>(() => (detail.value?.runs ?? []).map((run) => ({
+const runs = computed(() => (detail.value?.runs ?? []).map((run) => ({
   ...run,
   loot: parseLoot(run.loot),
+  storedLootItems: parseLoot(run.storedLoot),
   report: parseReport(run.report),
 })))
 
@@ -130,6 +131,10 @@ async function loadSession(id: number | null) {
                 <b>HP {{ Math.round(run.endHp) }}</b>
               </summary>
               <div v-if="run.loot.length" class="run-loot"><span v-for="item in run.loot" :key="item.id">{{ item.name }} x{{ item.quantity }}</span></div>
+              <div v-if="run.result === 'incapacitated' && run.storedLootItems.length" class="run-loot">
+                <small>安全箱保住</small>
+                <span v-for="item in run.storedLootItems" :key="'secure-' + item.id">{{ item.name }} x{{ item.quantity }}</span>
+              </div>
               <pre>{{ run.report.join('\n') }}</pre>
             </details>
           </div>

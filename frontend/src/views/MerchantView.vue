@@ -1,9 +1,8 @@
-<!-- 商人页：6 类商人，按类别买卖对应物品，好感度影响价格并解锁高级商品。 -->
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, toRef } from 'vue'
 import { Refresh, Sell } from '@element-plus/icons-vue'
-import api, { getApiError } from '../api'
 import type { InventoryItem, ItemInstance, Merchant, MerchantCatalogItem } from '../types'
+import { formatMerchantRefresh, useMerchantCatalog } from '../composables/useMerchantCatalog'
 
 const props = defineProps<{
   merchants: Merchant[]
@@ -15,115 +14,52 @@ const props = defineProps<{
 
 const emit = defineEmits<{ purchase: [merchantId: string, itemId: string, quantity: number]; sell: [merchantId: string, itemId: string, quantity: number] }>()
 
-const selectedId = ref('')
-const catalog = ref<MerchantCatalogItem[]>([])
-const catalogLoading = ref(false)
-const catalogError = ref('')
-const sellQty = ref<Record<string, number>>({})
-const buyQty = ref<Record<string, number>>({})
-let catalogRequestToken = 0
+const {
+  selectedId, catalogLoading, catalogError, acceptsAny, nextRefreshAt, sellQty, buyQty,
+  selectedMerchant, buyableCatalog, sellable, loadCatalog, qtyFor, ownedQty, buyQuantity,
+} = useMerchantCatalog(toRef(props, 'merchants'), toRef(props, 'inventory'), toRef(props, 'itemInstances'), toRef(props, 'purchasingId'))
 
-const selectedMerchant = computed(() => props.merchants.find((m) => m.id === selectedId.value))
-const catalogById = computed(() => new Map(catalog.value.map((item) => [item.id, item])))
-const buyableCatalog = computed(() => catalog.value.filter((item) => item.buyable))
+const cash = computed(() => props.inventory.find((item) => item.itemId === 'cash')?.quantity ?? 0)
 
-const cash = computed(() => props.inventory.find((i) => i.itemId === 'cash')?.quantity ?? 0)
-
-async function loadCatalog(id: string) {
-  const token = ++catalogRequestToken
-  selectedId.value = id
-  catalog.value = []
-  catalogError.value = ''
-  const m = props.merchants.find((x) => x.id === id)
-  if (!m?.open) {
-    catalogLoading.value = false
-    return
-  }
-  catalogLoading.value = true
-  try {
-    const { data } = await api.get<MerchantCatalogItem[]>(`/merchants/${id}/catalog`)
-    if (token !== catalogRequestToken || selectedId.value !== id) return
-    catalog.value = data
-    for (const item of data) {
-      if (item.kind === 'ammo' && !buyQty.value[item.id]) buyQty.value[item.id] = 30
-    }
-  } catch (error) {
-    if (token !== catalogRequestToken || selectedId.value !== id) return
-    catalogError.value = getApiError(error, '商品目录加载失败')
-  } finally {
-    if (token === catalogRequestToken && selectedId.value === id) catalogLoading.value = false
-  }
+function isBarter(item: MerchantCatalogItem): boolean {
+  return (item.barterCosts?.length ?? 0) > 0
 }
 
-// 可出售给当前商人的同类别物品（不限来源，聚合两行库存数量）
-const sellable = computed(() => {
-  if (!selectedMerchant.value?.open) return []
-  const cat = selectedMerchant.value.category
-  const map = new Map<string, { itemId: string; name: string; sellPrice: number; quantity: number }>()
-  for (const i of props.inventory) {
-    if (i.itemId === 'cash' || i.quantity <= 0 || i.merchantCategory !== cat) continue
-    const catalogItem = catalogById.value.get(i.itemId)
-    if (!catalogItem) continue
-    const e = map.get(i.itemId) ?? { itemId: i.itemId, name: catalogItem.name || i.name, sellPrice: catalogItem.sellPrice, quantity: 0 }
-    e.quantity += i.quantity
-    map.set(i.itemId, e)
+function canBuy(item: MerchantCatalogItem): boolean {
+  if (!selectedMerchant.value || props.purchasingId !== null) return false
+  if (selectedMerchant.value.reputation < item.repRequirement) return false
+  if (isBarter(item)) {
+    if (item.barterLocked) return false
+    return (item.barterCosts ?? []).every((cost) => cost.have >= cost.need)
   }
-  for (const instance of props.itemInstances) {
-    if (instance.locationType !== 'inventory' || instance.status !== 'normal' || instance.currentDurability <= 0 || instance.merchantCategory !== cat) continue
-    const catalogItem = catalogById.value.get(instance.itemId)
-    if (!catalogItem) continue
-    const e = map.get(instance.itemId) ?? { itemId: instance.itemId, name: catalogItem.name || instance.name || instance.itemId, sellPrice: catalogItem.sellPrice, quantity: 0 }
-    e.quantity += 1
-    map.set(instance.itemId, e)
-  }
-  return [...map.values()]
-})
-
-function qtyFor(itemId: string): number {
-  const q = sellQty.value[itemId]
-  return q && q > 0 ? q : 1
+  const quantity = buyQuantity(item)
+  return cash.value >= item.price * quantity && quantity <= (item.stock ?? 999)
 }
-function ownedQty(itemId: string): number {
-  return props.inventory.filter((i) => i.itemId === itemId && i.quantity > 0).reduce((s, i) => s + i.quantity, 0)
-    + props.itemInstances.filter((i) => i.itemId === itemId && i.locationType === 'inventory' && i.status === 'normal' && i.currentDurability > 0).length
-}
-function buyQuantity(item: MerchantCatalogItem): number {
-  const quantity = buyQty.value[item.id]
-  if (quantity && quantity > 0) return quantity
-  return item.kind === 'ammo' ? 30 : 1
-}
-
-watch(() => props.merchants, (list) => {
-  if (!selectedId.value && list.length) {
-    const firstOpen = list.find((m) => m.open) ?? list[0]
-    void loadCatalog(firstOpen.id)
-  }
-}, { immediate: true })
 </script>
 
 <template>
   <section class="view-page merchant-view">
     <header class="page-heading">
-      <div><span class="eyebrow">灰区交易频道</span><h1>商人</h1><p>每位商人只买卖自己所属类别的物品，好感度越高价格越优并解锁高级商品。</p></div>
+      <div><span class="eyebrow">灰区交易频道</span><h1>商人</h1><p>专精商人只买卖本类；黑市收购任意货物，货架每 6 小时按稀有度刷新且售价翻倍。</p></div>
       <div class="channel-state"><span class="status-dot online" />开放交易</div>
     </header>
 
     <div class="merchant-grid">
       <button
-        v-for="m in merchants" :key="m.id" type="button"
-        class="merchant-card" :class="{ active: selectedId === m.id, closed: !m.open }"
-        @click="loadCatalog(m.id)"
+        v-for="merchant in merchants" :key="merchant.id" type="button"
+        class="merchant-card" :class="{ active: selectedId === merchant.id, closed: !merchant.open }"
+        @click="loadCatalog(merchant.id)"
       >
-        <div class="merchant-card__head"><strong>{{ m.name }}</strong><span :class="m.open ? 'open' : 'closed'">{{ m.open ? '营业' : '待开放' }}</span></div>
-        <p>{{ m.desc }}</p>
-        <div class="merchant-card__rep">好感度 <b>{{ m.reputation }}</b></div>
+        <div class="merchant-card__head"><strong>{{ merchant.name }}</strong><span :class="merchant.open ? 'open' : 'closed'">{{ merchant.open ? '营业' : '待开放' }}</span></div>
+        <p>{{ merchant.desc }}</p>
+        <div class="merchant-card__rep">好感度 <b>{{ merchant.reputation }}</b></div>
       </button>
     </div>
 
     <div v-if="selectedMerchant" class="merchant-detail">
       <div class="merchant-detail__title">
         <div><strong>{{ selectedMerchant.name }}</strong><span>{{ selectedMerchant.desc }}</span></div>
-        <b>好感度 {{ selectedMerchant.reputation }} <small>影响价格与解锁</small></b>
+        <b>好感度 {{ selectedMerchant.reputation }} <small>影响买卖价格</small></b>
       </div>
 
       <div v-if="!selectedMerchant.open" class="merchant-closed">
@@ -132,7 +68,9 @@ watch(() => props.merchants, (list) => {
 
       <template v-else>
         <div class="merchant-summary">
-          <span>现金 ￥{{ cash.toLocaleString() }}</span><span>{{ buyableCatalog.length }} 件可购买</span>
+          <span>现金 ￥{{ cash.toLocaleString() }}</span>
+          <span>{{ buyableCatalog.length }} 件可购买</span>
+          <span v-if="nextRefreshAt">下次刷新 {{ formatMerchantRefresh(nextRefreshAt) }}</span>
         </div>
 
         <section class="catalog-block">
@@ -140,12 +78,16 @@ watch(() => props.merchants, (list) => {
           <div v-if="catalogError" class="text-danger">{{ catalogError }}</div>
           <div v-else class="catalog-list surface-panel">
             <div v-for="item in buyableCatalog" :key="item.id" class="catalog-row">
-              <div><small>{{ item.kind }}</small><strong>{{ item.name }}</strong><p>{{ item.detail }} · {{ item.weight }}kg/{{ item.slots }}格 · 已有 {{ ownedQty(item.id) }}</p></div>
+              <div><small>{{ item.kind }}</small><strong>{{ item.name }}</strong><p>{{ item.detail }} · {{ item.weight }}kg/{{ item.slots }}格 · 已有 {{ ownedQty(item.id) }}<template v-if="item.stock !== undefined"> · 库存 {{ item.stock }}</template></p></div>
               <div class="catalog-action">
-                <b>￥{{ item.price.toLocaleString() }}</b>
+                <div v-if="isBarter(item)" class="barter-costs">
+                  <small v-for="cost in item.barterCosts" :key="cost.itemId" :class="{ ready: cost.have >= cost.need }">{{ cost.name }} {{ cost.have }}/{{ cost.need }}</small>
+                </div>
+                <b v-else>￥{{ item.price.toLocaleString() }}</b>
+                <small v-if="item.barterLockReason">{{ item.barterLockReason }}</small>
                 <small v-if="item.repRequirement > 0">需好感度 {{ item.repRequirement }}</small>
-                <el-input-number v-if="item.kind === 'ammo'" v-model="buyQty[item.id]" :min="1" :max="999" :step="30" size="small" />
-                <el-button type="primary" size="small" :loading="purchasingId === item.id" :disabled="purchasingId !== null || selectedMerchant.reputation < item.repRequirement || cash < item.price * buyQuantity(item)" @click="emit('purchase', selectedId, item.id, buyQuantity(item))">购买</el-button>
+                <el-input-number v-if="!isBarter(item) && (item.kind === 'ammo' || (item.stock !== undefined && item.stock > 1))" v-model="buyQty[item.id]" :min="1" :max="item.stock ?? 999" :step="item.kind === 'ammo' ? 30 : 1" size="small" />
+                <el-button type="primary" size="small" :loading="purchasingId === item.id" :disabled="!canBuy(item)" @click="emit('purchase', selectedId, item.id, isBarter(item) ? 1 : buyQuantity(item))">{{ isBarter(item) ? '兑换' : '购买' }}</el-button>
               </div>
             </div>
             <el-empty v-if="buyableCatalog.length === 0" description="暂无在售商品" />
@@ -153,7 +95,7 @@ watch(() => props.merchants, (list) => {
         </section>
 
         <section class="catalog-block">
-          <div class="panel-heading"><div><span>BUYBACK</span><h2>收购玩家</h2></div></div>
+          <div class="panel-heading"><div><span>BUYBACK</span><h2>{{ acceptsAny ? '收购任意货物' : '收购玩家' }}</h2></div></div>
           <div class="catalog-list surface-panel">
             <div v-for="item in sellable" :key="item.itemId" class="catalog-row">
               <div><small>可出售</small><strong>{{ item.name }}</strong><p>持有 {{ item.quantity }} · 单价 ￥{{ item.sellPrice.toLocaleString() }}</p></div>

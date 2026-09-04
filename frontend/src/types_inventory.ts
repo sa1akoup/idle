@@ -26,7 +26,7 @@ export interface InventoryItem {
   id: number
   itemId: string
   name: string
-  kind: 'currency' | 'material' | 'loot' | 'weapon' | 'armor' | 'ammo' | 'consumable' | 'chestrig' | 'backpack' | 'helmet' | 'headset'
+  kind: 'currency' | 'material' | 'loot' | 'weapon' | 'armor' | 'ammo' | 'consumable' | 'chestrig' | 'backpack' | 'helmet' | 'headset' | 'keycase' | 'secure'
   category: string
   quantity: number
   price: number
@@ -49,6 +49,13 @@ export interface Merchant {
   sortOrder: number
 }
 
+export interface MerchantBarterCost {
+  itemId: string
+  name: string
+  need: number
+  have: number
+}
+
 export interface MerchantCatalogItem {
   id: string
   name: string
@@ -69,6 +76,26 @@ export interface MerchantCatalogItem {
   fuelSeconds: number
   maxDurability: number
   instanceRequired: boolean
+  stock?: number
+  barterCosts?: MerchantBarterCost[]
+  barterLocked?: boolean
+  barterLockReason?: string
+}
+
+export interface MerchantCatalogResponse {
+  items: MerchantCatalogItem[]
+  nextRefreshAt?: string
+  acceptsAny: boolean
+  playerSellRate: number
+}
+
+export interface KeySlotView {
+  slotIndex: number
+  instanceId: number
+  itemId: string
+  name: string
+  currentDurability: number
+  maxDurability: number
 }
 
 export interface PlayerLoadout {
@@ -80,6 +107,10 @@ export interface PlayerLoadout {
   backpackId: string
   helmetId: string
   headsetId: string
+  keyCaseId?: string
+  keyCaseSlots?: number
+  keys?: KeySlotView[]
+  secureContainerId?: string
   consumables: string[]
   carriedAmmo?: AmmoCell[]
   presetWeaponId: string
@@ -115,6 +146,29 @@ export interface PlayerLoadout {
   updatedAt: string
 }
 
+export interface KeyCase {
+  id: string
+  name: string
+  keySlots: number
+  price: number
+  weight: number
+  slots: number
+  merchantCategory: string
+  repRequirement: number
+}
+
+export interface SecureContainer {
+  id: string
+  name: string
+  innerSlots: number
+  price: number
+  weight: number
+  slots: number
+  merchantCategory: string
+  repRequirement: number
+  unlockQuestId?: string
+}
+
 export interface SaveLoadoutRequest {
   weaponId: string
   armorId: string
@@ -122,6 +176,9 @@ export interface SaveLoadoutRequest {
   backpackId: string
   helmetId: string
   headsetId: string
+  keyCaseId?: string
+  secureContainerId?: string
+  keyInstanceIds?: number[]
   consumables: string[]
   carriedAmmo?: AmmoCell[]
   presetWeaponId: string
@@ -229,6 +286,7 @@ export type SessionEventType =
   | 'extraction_completed'
   | 'loot_extracted'
   | 'loot_stored'
+  | 'loot_secured'
   | 'loot_overflow'
   | 'ammo_refilled'
   | 'run_settled'

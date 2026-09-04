@@ -51,6 +51,7 @@ function eventTitle(event: SessionEvent): string {
     case 'extraction_completed': return '撤离完成'
     case 'loot_extracted': return `成功带出：${textOf(event, 'name', event.subjectId)}`
     case 'loot_stored': return `已存入仓库：${textOf(event, 'name', event.subjectId)}`
+    case 'loot_secured': return `安全箱保住：${textOf(event, 'name', event.subjectId)}`
     case 'loot_overflow': return `仓库不足，放弃：${textOf(event, 'name', event.subjectId)}`
     case 'ammo_refilled': return textOf(event, 'source') === 'preset_warehouse' ? '预设弹药已装入' : '弹药自动补给'
     case 'run_settled': return `第 ${event.runIndex} 局已结算`
@@ -66,7 +67,17 @@ function eventSummary(event: SessionEvent): string {
     case 'route_planned': return `${Array.isArray(valueOf(event, 'route')) ? (valueOf(event, 'route') as unknown[]).length : 0} 个节点 · ${textOf(event, 'extractionId', '常规撤离')}`
     case 'node_entered': return `${textOf(event, 'distance', '未知距离')} · 探索 ${numberOf(event, 'exploreTime')} 分钟`
     case 'node_move_started': return `移动 ${numberOf(event, 'moveTime')} 分钟 · 实际 ${Math.round(numberOf(event, 'actualMoveTimeSec') / 60)} 分钟`
-    case 'event_triggered': return `${valueOf(event, 'success') === false ? '判定未通过' : textOf(event, 'intent', '自动决策')} · ${textOf(event, 'phase')}`
+    case 'event_triggered': {
+      const text = textOf(event, 'text')
+      const consumed = valueOf(event, 'consumedItems')
+      const used = Array.isArray(consumed) ? consumed.filter((item): item is string => typeof item === 'string' && item.length > 0).join('、') : ''
+      const result = valueOf(event, 'success') === false ? '未通过' : '成功'
+      const parts = [result]
+      if (used) parts.push(`使用 ${used}`)
+      if (text) parts.push(text)
+      else parts.push(textOf(event, 'intent', '自动决策'))
+      return parts.join(' · ')
+    }
     case 'evacuation_started': return `${textOf(event, 'reason', '未知原因')}${valueOf(event, 'emergency') === true ? ' · 紧急' : ''}`
     case 'container_search_started': return `${textOf(event, 'source', '节点搜索')} · 搜索 ${numberOf(event, 'searchTime')} 分钟`
     case 'loot_found': return `${numberOf(event, 'quantity')} 件 · ${valueOf(event, 'collected') === false ? '未能装入携行' : '等待继续推进'}`
@@ -88,6 +99,7 @@ function eventSummary(event: SessionEvent): string {
     case 'extraction_completed': return `结果：${textOf(event, 'result', 'success')}`
     case 'loot_extracted': return `${numberOf(event, 'quantity')} 件成功撤离地图`
     case 'loot_stored': return `${numberOf(event, 'quantity')} 件已写入基地仓库`
+    case 'loot_secured': return `${numberOf(event, 'quantity')} 件由安全箱保住（非局内带出）`
     case 'loot_overflow': return `${numberOf(event, 'quantity')} 件因仓库容量不足被放弃`
     case 'ammo_refilled': {
       const rounds = numberOf(event, 'rounds')

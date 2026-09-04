@@ -70,6 +70,8 @@ function invoke(loadoutOverrides: Partial<PlayerLoadout> = {}) {
     backpacks: [],
     helmets: [],
     headsets: [],
+    keyCases: [],
+    secureContainers: [],
     savingName: false,
     savingLoadout: false,
   })

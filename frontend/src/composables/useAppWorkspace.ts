@@ -17,6 +17,8 @@ import type {
   Helmet,
   InventoryItem,
   ItemInstance,
+  KeyCase,
+  SecureContainer,
   MapGraph,
   Merchant,
   NavKey,
@@ -46,6 +48,8 @@ type ResourceKey =
   | 'backpacks'
   | 'helmets'
   | 'headsets'
+  | 'keyCases'
+  | 'secureContainers'
   | 'merchants'
   | 'inventory'
   | 'storageCapacity'
@@ -63,7 +67,7 @@ interface ViewState {
 
 const resourceKeys: ResourceKey[] = [
   'player', 'sessions', 'maps', 'enemies', 'weapons', 'ammos', 'armors', 'armorInstances', 'itemInstances',
-  'consumables', 'chestRigs', 'backpacks', 'helmets', 'headsets', 'merchants', 'inventory', 'storageCapacity',
+  'consumables', 'chestRigs', 'backpacks', 'helmets', 'headsets', 'keyCases', 'secureContainers', 'merchants', 'inventory', 'storageCapacity',
   'hideout', 'craftingRecipes', 'recovery', 'loadout', 'quests',
 ]
 
@@ -103,6 +107,8 @@ export function useAppWorkspace() {
   const backpacks = ref<Backpack[]>([])
   const helmets = ref<Helmet[]>([])
   const headsets = ref<Headset[]>([])
+  const keyCases = ref<KeyCase[]>([])
+  const secureContainers = ref<SecureContainer[]>([])
   const merchants = ref<Merchant[]>([])
   const inventory = ref<InventoryItem[]>([])
   const storageCapacity = ref<StorageCapacity | null>(null)
@@ -179,6 +185,8 @@ export function useAppWorkspace() {
     backpacks.value = []
     helmets.value = []
     headsets.value = []
+    keyCases.value = []
+    secureContainers.value = []
     merchants.value = []
     inventory.value = []
     storageCapacity.value = null
@@ -339,6 +347,8 @@ export function useAppWorkspace() {
       ensureResource('backpacks', () => api.get<Backpack[]>('/backpacks'), (data) => { backpacks.value = data }),
       ensureResource('helmets', () => api.get<Helmet[]>('/helmets'), (data) => { helmets.value = data }),
       ensureResource('headsets', () => api.get<Headset[]>('/headsets'), (data) => { headsets.value = data }),
+      ensureResource('keyCases', () => api.get<KeyCase[]>('/keycases'), (data) => { keyCases.value = data }),
+      ensureResource('secureContainers', () => api.get<SecureContainer[]>('/secure-containers'), (data) => { secureContainers.value = data }),
     ])
   }
 
@@ -770,7 +780,7 @@ export function useAppWorkspace() {
     activeView, user, authChecking, authError, mobileOpen, loading, loadError, viewState,
     savingPlayer, savingLoadout, purchasingId, sellingId, repairingId, upgradingFacilityId, craftingId,
     player, loadout, maps, mapGraphs, enemies, weapons, ammos, armors, armorInstances, itemInstances,
-    consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
+    consumables, chestRigs, backpacks, helmets, headsets, keyCases, secureContainers, merchants, inventory,
     storageCapacity, hideout, craftingRecipes, recovery, quests, acceptingQuestId, turningQuestId,
     sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
     loadAll, loadViewData, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,

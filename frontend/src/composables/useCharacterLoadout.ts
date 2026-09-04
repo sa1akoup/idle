@@ -14,7 +14,9 @@ import type {
   Helmet,
   InventoryItem,
   ItemInstance,
+  KeyCase,
   Merchant,
+  SecureContainer,
   Player,
   PlayerLoadout,
   SaveLoadoutRequest,
@@ -35,6 +37,8 @@ export interface CharacterProps {
   backpacks: Backpack[]
   helmets: Helmet[]
   headsets: Headset[]
+  keyCases: KeyCase[]
+  secureContainers: SecureContainer[]
   savingName: boolean
   savingLoadout: boolean
 }
@@ -48,7 +52,7 @@ export type CharacterEmit = {
 // equipSetContentKey 提取装备或预设的可编辑字段，供 dirty 状态和轮询同步判断。
 function equipSetContentKey(set: EquipSet, includePresetFields = false): unknown[] {
   const content: unknown[] = [
-    set.weaponId, set.armorId, set.chestRigId, set.backpackId, set.helmetId, set.headsetId, set.consumables,
+    set.weaponId, set.armorId, set.chestRigId, set.backpackId, set.helmetId, set.headsetId, set.keyCaseId, set.secureContainerId, set.consumables, set.keyInstanceIds,
     set.ammo.map((cell) => [cell.ammoId, cell.rounds]),
   ]
   if (includePresetFields) content.push(set.name, set.ammoId, set.ammoRounds)
@@ -133,10 +137,13 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
       headsetId: props.headsets.map((i) => ({ name: i.name, detail: `听力 Lv.${i.hearingLevel} · ${i.weight}kg${repTag(i.repRequirement)}` })),
       chestRigId: props.chestRigs.map((i) => ({ name: i.name, detail: `格数+${i.addSlots} 负重+${i.addWeight}kg · ${i.weight}kg${repTag(i.repRequirement)}` })),
       backpackId: props.backpacks.map((i) => ({ name: i.name, detail: `格数+${i.addSlots} 负重+${i.addWeight}kg · ${i.weight}kg${repTag(i.repRequirement)}` })),
+      keyCaseId: props.keyCases.map((i) => ({ name: i.name, detail: `钥匙格 ${i.keySlots} · ${i.weight}kg${repTag(i.repRequirement)}` })),
+      secureContainerId: props.secureContainers.map((i) => ({ name: i.name, detail: `口袋 ${i.innerSlots} 格 · ${i.weight}kg${repTag(i.repRequirement)}` })),
     }
     const idMap: Record<SlotKey, string[]> = {
       weaponId: props.weapons.map((i) => i.id), armorId: props.armors.map((i) => i.id), helmetId: props.helmets.map((i) => i.id),
       headsetId: props.headsets.map((i) => i.id), chestRigId: props.chestRigs.map((i) => i.id), backpackId: props.backpacks.map((i) => i.id),
+      keyCaseId: props.keyCases.map((i) => i.id), secureContainerId: props.secureContainers.map((i) => i.id),
     }
     return idMap[key].map((id, idx) => ({ id, ...map[key][idx] }))
   }
@@ -159,7 +166,7 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
   }
   
   const pickerOpen = ref(false)
-  const pickerKind = ref<'equip' | 'consumable' | 'ammo'>('equip')
+  const pickerKind = ref<'equip' | 'consumable' | 'ammo' | 'key'>('equip')
   const pickerContext = ref<'current' | 'preset'>('current')
   const pickerKey = ref<SlotKey>('weaponId')
   const pickerConsumableIndex = ref(0)
@@ -177,6 +184,13 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
     pickerConsumableIndex.value = index
     pickerOpen.value = true
   }
+  const pickerKeyIndex = ref(0)
+  function openKeyPicker(index: number) {
+    pickerKind.value = 'key'
+    pickerContext.value = 'current'
+    pickerKeyIndex.value = index
+    pickerOpen.value = true
+  }
   function openAmmoPicker(context: 'current', index: number) {
     pickerKind.value = 'ammo'
     pickerContext.value = context
@@ -189,6 +203,12 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
       const arr = padConsumables(set.consumables)
       arr[pickerConsumableIndex.value] = id
       set.consumables = arr.filter(Boolean)
+    } else if (pickerKind.value === 'key') {
+      const slots = [...current.value.keyInstanceIds]
+      const capacity = props.keyCases.find((item) => item.id === current.value.keyCaseId)?.keySlots ?? slots.length
+      while (slots.length < capacity) slots.push(0)
+      slots[pickerKeyIndex.value] = id === '' ? 0 : Number(id)
+      current.value.keyInstanceIds = slots.slice(0, capacity)
     } else if (pickerKind.value === 'ammo') {
       const cells = ammoCellsFromLoadout(set.ammo)
       const cell = cells[pickerAmmoIndex.value] ?? { ammoId: '', rounds: 0 }
@@ -264,6 +284,19 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
     return cell ?? { ammoId: '', rounds: 0 }
   }
   const pickerList = computed(() => {
+    if (pickerKind.value === 'key') {
+      const used = new Set(current.value.keyInstanceIds.filter((id, index) => id > 0 && index !== pickerKeyIndex.value))
+      const keys = props.itemInstances
+        .filter((instance) => instance.category === 'key' && instance.status === 'normal' && instance.currentDurability > 0
+          && (instance.locationType === 'inventory' || instance.locationType === 'keycase')
+          && !used.has(instance.id))
+        .map((instance) => ({
+          id: String(instance.id),
+          name: instance.name || instance.itemId,
+          detail: `剩余 ${Math.round(instance.currentDurability)}/${Math.round(instance.maxDurability)} 次`,
+        }))
+      return [{ id: '', name: '卸下', detail: '该格留空' }, ...keys]
+    }
     if (pickerKind.value === 'consumable') {
       return props.consumables
         .filter((c) => c.usableInSession && (pickerContext.value === 'preset' || ownedItemIds.value.has(c.id) || usableInstanceItemIds.value.has(c.id)))
@@ -273,6 +306,7 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
     return pickerContext.value === 'current' ? currentOptions(pickerKey.value) : slotOptions(pickerKey.value)
   })
   const pickerTitle = computed(() => {
+    if (pickerKind.value === 'key') return '钥匙包格子 · 仓库钥匙'
     if (pickerKind.value === 'consumable') {
       return `${pickerContext.value === 'current' ? '随身' : '预设'}补给 · ${pickerContext.value === 'current' ? '仓库道具' : '商人道具'}`
     }
@@ -329,7 +363,9 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
     const baseWeight = 50 + (strength - 50) * 0.3
     const chestRig = props.chestRigs.find((i) => i.id === current.value.chestRigId)
     const backpack = props.backpacks.find((i) => i.id === current.value.backpackId)
+    const secure = props.secureContainers.find((i) => i.id === current.value.secureContainerId)
     const bonusSlots = (chestRig?.addSlots ?? 0) + (backpack?.addSlots ?? 0)
+    const secureSlots = secure?.innerSlots ?? 0
     const bonusWeight = (chestRig?.addWeight ?? 0) + (backpack?.addWeight ?? 0)
   
     const items: { weight: number; slots: number }[] = []
@@ -343,6 +379,7 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
     push(current.value.headsetId, props.headsets)
     push(current.value.chestRigId, props.chestRigs)
     push(current.value.backpackId, props.backpacks)
+    if (secure) items.push({ weight: secure.weight, slots: 0 })
     for (const id of current.value.consumables) push(id, props.consumables)
   
     let usedWeight = items.reduce((s, i) => s + i.weight, 0)
@@ -357,7 +394,7 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
       usedWeight += groups * 0.5
     }
     return {
-      baseSlots, bonusSlots, totalSlots: baseSlots + bonusSlots,
+      baseSlots, bonusSlots, secureSlots, totalSlots: baseSlots + bonusSlots + secureSlots,
       baseWeight, bonusWeight, totalWeight: baseWeight + bonusWeight,
       usedSlots, usedWeight,
     }
@@ -376,6 +413,7 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
       weaponId: current.value.weaponId, armorId: current.value.armorId,
       chestRigId: current.value.chestRigId, backpackId: current.value.backpackId,
       helmetId: current.value.helmetId, headsetId: current.value.headsetId,
+      keyCaseId: current.value.keyCaseId, secureContainerId: current.value.secureContainerId, keyInstanceIds: current.value.keyInstanceIds,
       consumables: current.value.consumables,
       carriedAmmo: (current.value.ammo ?? []).map((cell) => ({ ammoId: cell.ammoId, rounds: cell.rounds })),
       presetWeaponId: p1.weaponId, presetArmorId: p1.armorId,
@@ -396,11 +434,20 @@ export function useCharacterLoadout(props: CharacterProps, emit: CharacterEmit) 
   // 未保存的当前装备调整：与最近一次后端同步的内容不一致即为有未保存修改，
   // 用于离开角色页前的提示；显式点击"保存装备配置"后由 loadout 回刷自动清零。
   const hasUnsavedChanges = computed(() => loadoutContentKey(current.value, presets.value) !== lastSyncedKey)
+  const keySlotCount = computed(() => props.keyCases.find((item) => item.id === current.value.keyCaseId)?.keySlots ?? 0)
+  function keySlotLabel(index: number): string {
+    const instanceID = current.value.keyInstanceIds[index] ?? 0
+    if (!instanceID) return ''
+    const instance = props.itemInstances.find((item) => item.id === instanceID)
+    if (!instance) return `#${instanceID}`
+    return `${instance.name || instance.itemId} ${Math.round(instance.currentDurability)}/${Math.round(instance.maxDurability)}`
+  }
 
   return {
     editing, nameDraft, current, presets, presetIndex, gridRows, slotDefs,
-    mainAttributes, skills, proficiencies, openPicker, openConsumablePicker, openAmmoPicker,
+    mainAttributes, skills, proficiencies, openPicker, openConsumablePicker, openAmmoPicker, openKeyPicker,
     slotName, consumableSlotCount, consumableAt, ammoSlotCount, ammoSlotMaxRounds, ammoAt, ammoNameAt, ammoCellMaxRounds,
+    keySlotCount, keySlotLabel,
     activePresetWeapon, activePresetAmmoOptions, repTag, liveCapacity, pickerOpen, pickerTitle, pickerList, pickOption,
     submitName, submitLoadout, hasUnsavedChanges,
   }

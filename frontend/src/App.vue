@@ -22,7 +22,7 @@ const {
   viewState,
   savingPlayer, savingLoadout, purchasingId, sellingId, repairingId,
   player, loadout, maps, mapGraphs, enemies, weapons, ammos, armors, armorInstances, itemInstances,
-  consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
+  consumables, chestRigs, backpacks, helmets, headsets, keyCases, secureContainers, merchants, inventory,
   storageCapacity, hideout, craftingRecipes, recovery, quests, acceptingQuestId, turningQuestId,
   sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
   loadAll, loadViewData, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,
@@ -103,7 +103,7 @@ function selectView(view: NavKey) {
             <CharacterView
               v-else-if="activeView === 'character' && loadout"
               :player="player" :loadout="loadout" :inventory="inventory" :item-instances="itemInstances" :weapons="weapons" :ammos="ammos" :armors="armors" :consumables="consumables"
-              :chest-rigs="chestRigs" :backpacks="backpacks" :helmets="helmets" :headsets="headsets" :merchants="merchants"
+              :chest-rigs="chestRigs" :backpacks="backpacks" :helmets="helmets" :headsets="headsets" :key-cases="keyCases" :secure-containers="secureContainers" :merchants="merchants"
               :saving-name="savingPlayer" :saving-loadout="savingLoadout"
               @save-name="savePlayerName" @save-loadout="saveLoadout"
               @dirty-change="characterDirty = $event"

@@ -24,6 +24,7 @@ const {
   openPicker,
   openConsumablePicker,
   openAmmoPicker,
+  openKeyPicker,
   slotName,
   consumableSlotCount,
   consumableAt,
@@ -32,6 +33,8 @@ const {
   ammoAt,
   ammoNameAt,
   ammoCellMaxRounds,
+  keySlotCount,
+  keySlotLabel,
   activePresetWeapon,
   activePresetAmmoOptions,
   repTag,
@@ -170,6 +173,21 @@ watch(hasUnsavedChanges, (dirty) => emit("dirtyChange", dirty), { immediate: tru
                 <strong :class="{ empty: !slotName('current', s.key) }">{{
                   slotName("current", s.key) || "空"
                 }}</strong>
+              </button>
+            </div>
+          </div>
+          <div class="consumable-block">
+            <span class="consumable-block__label">钥匙包格子 · 局外装入才开门，失能不丢</span>
+            <div class="slot-row" style="flex-wrap: wrap">
+              <button
+                v-for="i in keySlotCount"
+                :key="'key-' + i"
+                type="button"
+                class="slot-cell"
+                @click="openKeyPicker(i - 1)"
+              >
+                <span class="slot-label">钥匙{{ i }}</span>
+                <strong :class="{ empty: !keySlotLabel(i - 1) }">{{ keySlotLabel(i - 1) || '空' }}</strong>
               </button>
             </div>
           </div>
@@ -318,7 +336,7 @@ watch(hasUnsavedChanges, (dirty) => emit("dirtyChange", dirty), { immediate: tru
         >
         <small
           >基础 {{ liveCapacity.baseWeight.toFixed(1) }}kg + 胸挂/背包加成
-          {{ liveCapacity.bonusWeight.toFixed(1) }}kg</small
+          {{ liveCapacity.bonusWeight.toFixed(1) }}kg · 安全箱 +{{ liveCapacity.secureSlots }} 格（箱内计入负重）</small
         >
       </div>
       <div class="loadout-actions">
