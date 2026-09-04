@@ -62,7 +62,7 @@ func seedTestMaterials(t *testing.T, db *gorm.DB, items map[string]int) {
 	for itemID, quantity := range items {
 		if err := db.Create(&models.Inventory{
 			UserID: models.DefaultUserID, ItemID: itemID, Name: itemID, Kind: "loot",
-			Quantity: quantity, Price: 1, MerchantCategory: "mechanical",
+			Quantity: quantity, Price: 1, RaidExtract: true, MerchantCategory: "mechanical",
 		}).Error; err != nil {
 			t.Fatalf("写入制造材料 %s: %v", itemID, err)
 		}
@@ -117,8 +117,8 @@ func TestListCraftingRecipesGatesByWorkbenchLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取配方列表: %v", err)
 	}
-	if len(recipes) != 8 {
-		t.Fatalf("配方数量 = %d，期望 8", len(recipes))
+	if len(recipes) != 17 {
+		t.Fatalf("配方数量 = %d，期望 17", len(recipes))
 	}
 	if recipes[0].ID != "craft_tool_set" || recipes[0].RequiredLevel != 1 {
 		t.Fatalf("首条配方异常: %+v", recipes[0])
@@ -135,16 +135,16 @@ func TestListCraftingRecipesGatesByWorkbenchLevel(t *testing.T) {
 	}
 	var l2Found, l3Found bool
 	for _, recipe := range recipes {
-		if recipe.RequiredLevel == 2 && recipe.Reason != "需要工作台 LV.2" {
+		if recipe.FacilityID == "workbench" && recipe.RequiredLevel == 2 && recipe.Reason != "需要工作台 LV.2" {
 			t.Fatalf("L2 配方 %s 锁定原因异常: %s", recipe.ID, recipe.Reason)
 		}
-		if recipe.RequiredLevel == 2 {
+		if recipe.FacilityID == "workbench" && recipe.RequiredLevel == 2 {
 			l2Found = true
 		}
-		if recipe.RequiredLevel == 3 && recipe.Reason != "需要工作台 LV.3" {
+		if recipe.FacilityID == "workbench" && recipe.RequiredLevel == 3 && recipe.Reason != "需要工作台 LV.3" {
 			t.Fatalf("L3 配方 %s 锁定原因异常: %s", recipe.ID, recipe.Reason)
 		}
-		if recipe.RequiredLevel == 3 {
+		if recipe.FacilityID == "workbench" && recipe.RequiredLevel == 3 {
 			l3Found = true
 		}
 	}
@@ -207,6 +207,36 @@ func TestCraftProducesDurabilityInstance(t *testing.T) {
 	}
 	if instance.MaxDurability <= 0 || instance.CurrentDurability != instance.MaxDurability {
 		t.Fatalf("耐久产物实例不完整: %+v", instance)
+	}
+}
+
+func TestCraftRejectsShopBoughtMaterials(t *testing.T) {
+	db := newCraftingTestDB(t)
+	clearSeededInventory(t, db)
+	if err := db.Create(&models.Inventory{
+		UserID: models.DefaultUserID, ItemID: "metal_spare_parts", Name: "金属备件", Kind: "loot",
+		Quantity: 2, Price: 1, RaidExtract: false, MerchantCategory: "mechanical",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Inventory{
+		UserID: models.DefaultUserID, ItemID: "pack_of_screws", Name: "一包螺丝", Kind: "loot",
+		Quantity: 2, Price: 1, RaidExtract: false, MerchantCategory: "mechanical",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Inventory{
+		UserID: models.DefaultUserID, ItemID: "bundle_of_wires", Name: "一捆电线", Kind: "loot",
+		Quantity: 1, Price: 1, RaidExtract: false, MerchantCategory: "mechanical",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := StartCraftForUser(db, models.DefaultUserID, "craft_tool_set")
+	if err == nil || !strings.Contains(err.Error(), "局内带出") {
+		t.Fatalf("商店材料错误 = %v，期望局内带出", err)
+	}
+	if countRunningCraftJobs(t, db) != 0 {
+		t.Fatalf("商店材料不应创建制造作业")
 	}
 }
 
@@ -419,5 +449,46 @@ func TestCraftRejectsUnknownRecipe(t *testing.T) {
 	err := StartCraftForUser(db, models.DefaultUserID, "craft_missing")
 	if err == nil || !strings.Contains(err.Error(), "配方不存在") {
 		t.Fatalf("未知配方错误 = %v，期望配方不存在", err)
+	}
+}
+
+func TestMedstationCraftProducesSalewa(t *testing.T) {
+	db := newCraftingTestDB(t)
+	clearSeededInventory(t, db)
+	seedTestMaterials(t, db, map[string]int{"pile_of_meds": 1, "esmarch": 1})
+	if err := StartCraftForUser(db, models.DefaultUserID, "craft_salewa"); err != nil {
+		t.Fatalf("医疗站制造 Salewa: %v", err)
+	}
+	dueCraftJobs(t, db)
+	if err := settleDueHideoutJobsForUser(db, models.DefaultUserID); err != nil {
+		t.Fatalf("结算医疗站制造: %v", err)
+	}
+	var instance models.ItemInstance
+	if err := db.Where("user_id = ? AND item_id = ? AND location_type = ? AND status = ?",
+		models.DefaultUserID, "salewa", "inventory", "normal").First(&instance).Error; err != nil {
+		t.Fatalf("读取医疗站产物实例: %v", err)
+	}
+	if !instance.RaidExtract {
+		t.Fatal("医疗站产物应为局内带出")
+	}
+	if instance.MaxDurability <= 0 || instance.CurrentDurability != instance.MaxDurability {
+		t.Fatalf("Salewa 实例耐久不完整: %+v", instance)
+	}
+	var job models.FacilityJob
+	if err := db.Where("user_id = ? AND target_ref = ?", models.DefaultUserID, "craft_salewa").First(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	if job.FacilityID != "medstation" {
+		t.Fatalf("医疗站作业设施 = %s，期望 medstation", job.FacilityID)
+	}
+}
+
+func TestNutritionCraftRequiresFacilityLevel(t *testing.T) {
+	db := newCraftingTestDB(t)
+	clearSeededInventory(t, db)
+	seedTestMaterials(t, db, map[string]int{"army_crackers": 1, "squash_spread": 1})
+	err := StartCraftForUser(db, models.DefaultUserID, "craft_iskra")
+	if err == nil || !strings.Contains(err.Error(), "LV.1") {
+		t.Fatalf("饮食单元未升级时错误 = %v，期望 LV.1", err)
 	}
 }
