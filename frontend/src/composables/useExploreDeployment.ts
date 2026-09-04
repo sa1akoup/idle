@@ -9,12 +9,15 @@ import type {
   Armor,
   GameMap,
   InventoryItem,
+  ItemInstance,
   Player,
   PlayerLoadout,
   RecoveryMethod,
   RecoveryPolicy,
+  Quest,
   RecoveryView,
   Session,
+  HideoutSnapshot,
   StartSessionRequest,
   Weapon,
 } from '../types'
@@ -28,10 +31,19 @@ export interface ExploreProps {
   ammos: Ammo[]
   armors: Armor[]
   inventory: InventoryItem[]
+  itemInstances: ItemInstance[]
+  hideout: HideoutSnapshot | null
   recovery: RecoveryView | null
+  quests: Quest[]
+  acceptingId: string | null
+  turningId: string | null
 }
 
-export type ExploreEmit = (event: 'created', session: Session) => void
+export type ExploreEmit = {
+  (event: 'created', session: Session): void
+  (event: 'acceptQuest', questId: string): void
+  (event: 'turninQuest', questId: string): void
+}
 
 export function useExploreDeployment(props: ExploreProps, emit: ExploreEmit) {
 

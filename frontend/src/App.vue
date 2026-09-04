@@ -23,9 +23,11 @@ const {
   savingPlayer, savingLoadout, purchasingId, sellingId, repairingId,
   player, loadout, maps, mapGraphs, enemies, weapons, ammos, armors, armorInstances, itemInstances,
   consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
-  storageCapacity, hideout, craftingRecipes, recovery, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
+  storageCapacity, hideout, craftingRecipes, recovery, quests, acceptingQuestId, turningQuestId,
+  sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
   loadAll, loadViewData, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,
-  repairArmor, upgradeFacility, toggleGenerator, loadGeneratorFuel, unloadGeneratorFuel, craftingId, upgradingFacilityId, startCraft, handleSessionCreated, handleAuthenticated, logout,
+  repairArmor, upgradeFacility, toggleGenerator, loadGeneratorFuel, unloadGeneratorFuel, craftingId, upgradingFacilityId, startCraft,
+  acceptQuest, turnInQuest, handleSessionCreated, handleAuthenticated, logout,
 } = useAppWorkspace()
 
 // 角色页是否存在未保存的装备调整（由 CharacterView 的 dirtyChange 事件维护）。
@@ -93,8 +95,9 @@ function selectView(view: NavKey) {
           <template v-else>
             <ExploreView
               v-if="activeView === 'explore' && loadout"
-              :player="player" :loadout="loadout" :maps="maps" :weapons="weapons" :ammos="ammos" :armors="armors" :consumables="consumables" :inventory="inventory" :recovery="recovery"
-              @created="handleSessionCreated"
+              :player="player" :loadout="loadout" :maps="maps" :weapons="weapons" :ammos="ammos" :armors="armors" :consumables="consumables" :inventory="inventory" :item-instances="itemInstances" :hideout="hideout" :recovery="recovery"
+              :quests="quests" :accepting-id="acceptingQuestId" :turning-id="turningQuestId"
+              @created="handleSessionCreated" @accept-quest="acceptQuest" @turnin-quest="turnInQuest"
             />
             <MapView v-else-if="activeView === 'map'" :maps="maps" :map-graphs="mapGraphs" :enemies="enemies" />
             <CharacterView

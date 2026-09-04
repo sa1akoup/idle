@@ -58,6 +58,10 @@ const fuelCandidates = computed(() => props.itemInstances.filter((instance) => {
 	return props.consumables.some((item) => item.id === instance.itemId && item.fuelSeconds > 0)
 }))
 const activeFacility = computed(() => facilities.value.find((facility) => facility.id === activeModule.value) ?? null)
+const craftFacilityIds = new Set(['workbench', 'medstation', 'nutrition_unit'])
+const facilityRecipes = computed(() => props.craftingRecipes.filter((recipe) => recipe.facilityId === activeModule.value))
+const showCraftList = computed(() => craftFacilityIds.has(activeModule.value) && (activeModule.value !== 'workbench' || workbenchTab.value === 'craft'))
+const showRepairList = computed(() => activeModule.value === 'workbench' && workbenchTab.value === 'repair')
 
 function selectModule(id: string) {
   activeModule.value = id
@@ -82,6 +86,9 @@ function iconFor(facility: HideoutFacility): Component {
 }
 
 function effectText(facility: HideoutFacility): string {
+  if (facility.runtime === 'planned') {
+    return facility.level > 0 ? '规划中 · 已建成，本版本不生产' : '规划中 · 可升级储备材料'
+  }
   if (facility.storageBonus > 0) return `仓库 +${facility.storageBonus} 格`
   if (facility.hpRecoveryPerHour > 0) return `生命 +${facility.hpRecoveryPerHour}/小时`
   if (facility.energyRecoveryPerHour > 0) return `能量 +${facility.energyRecoveryPerHour}/小时`
@@ -92,13 +99,6 @@ function effectText(facility: HideoutFacility): string {
   if (facility.fuelConsumptionReductionPercent > 0) return `燃料消耗 -${facility.fuelConsumptionReductionPercent}%`
   if (facility.physicalSkillGrowthPercent > 0) return `身体技能成长 +${facility.physicalSkillGrowthPercent}%`
   if (facility.intelBonusPercent > 0) return `情报质量 +${facility.intelBonusPercent}%`
-	if (facility.id === 'booze_generator' && facility.level > 0) return '可生产月光酒'
-	if (facility.id === 'bitcoin_farm' && facility.level > 0) return '可生产实物比特币'
-	if (facility.id === 'scav_case' && facility.level > 0) return '可派遣 Scav 搜集物资'
-	if (facility.id === 'shooting_range' && facility.level > 0) return '可进行射击训练'
-	if (facility.id === 'gym' && facility.level > 0) return '可进行身体技能训练'
-	if (facility.id === 'library' && facility.level > 0) return '行动经验与技能成长提升'
-	if (facility.id === 'hall_of_fame' && facility.level > 0) return '荣誉陈列与技能成长提升'
   return facility.level > 0 ? '基础模块已接通' : '尚未接入安全区网络'
 }
 
@@ -111,13 +111,8 @@ function nextEffectText(facility: HideoutFacility): string {
   if (facility.id === 'water_collector') return '升级后饮水恢复效率提升'
   if (facility.id === 'rest_area') return '升级后压力恢复效率提升'
   if (facility.id === 'workbench') return '升级后维修更快、解锁更高等级制造'
-	if (facility.id === 'booze_generator') return '升级后提高月光酒生产能力'
-	if (facility.id === 'bitcoin_farm') return '升级后提高实物比特币生产能力'
-	if (facility.id === 'scav_case') return '升级后提高 Scav 派遣收益'
-	if (facility.id === 'shooting_range') return '升级后解锁更高等级训练'
-	if (facility.id === 'gym') return '升级后提高身体技能训练能力'
-	if (facility.id === 'library') return '升级后提高行动经验和技能成长'
-	if (facility.id === 'hall_of_fame') return '升级后提高荣誉陈列与技能成长'
+  if (facility.id === 'nutrition_unit') return '升级后解锁口粮与饮水制造'
+  if (facility.runtime === 'planned') return '升级消耗材料，生产能力将在后续版本接通'
   return '升级后情报质量提升'
 }
 
@@ -127,7 +122,7 @@ function requirementValue(requirement: HideoutRequirement): string {
 }
 
 function requirementText(requirement: HideoutRequirement): string {
-  if (requirement.requirementType === 'item') return `${requirement.label} ×${requirement.quantity}`
+  if (requirement.requirementType === 'item') return `${requirement.label} ×${requirement.quantity}（局内带出）`
   if (requirement.requirementType === 'facility') return `${requirement.label} LV.${requirementValue(requirement)}`
   if (requirement.requirementType === 'trader') return `${requirement.label} 好感 ${requirementValue(requirement)}`
   return `${requirement.label} ${requirementValue(requirement)}`
@@ -310,19 +305,39 @@ function recipeProgress(recipe: CraftingRecipe): number {
           </div>
         </template>
 
-        <template v-else-if="activeFacility && activeFacility.id === 'workbench'">
-          <el-tabs v-model="workbenchTab" class="workbench-tabs">
-            <el-tab-pane label="制造" name="craft">
-              <div class="crafting-list">
+        <template v-else-if="activeFacility && craftFacilityIds.has(activeFacility.id)">
+          <div v-if="activeFacility.state === 'upgrading'" class="module-detail__progress">
+            <span><b>施工中</b><em>等待模块上线</em></span>
+            <el-progress :percentage="jobProgress(activeJobs.find((job) => job.facilityId === activeFacility?.id))" :show-text="false" />
+          </div>
+          <div v-else-if="activeFacility.nextUpgrade" class="module-detail__upgrade">
+            <div class="module-detail__upgrade-copy">
+              <span>下一阶段 · LV.{{ activeFacility.nextUpgrade.level }}</span>
+              <strong>{{ nextEffectText(activeFacility) }}</strong>
+              <small>￥{{ activeFacility.nextUpgrade.cost }} · {{ Math.ceil(activeFacility.nextUpgrade.durationSec / 60) || 1 }} 分钟</small>
+              <small class="module-detail__requirements">{{ requirementSummary(activeFacility.nextUpgrade) }}</small>
+            </div>
+            <el-button
+              :icon="Tools"
+              :loading="props.upgradingFacilityId === activeFacility.id"
+              :disabled="!activeFacility.nextUpgrade.canStart"
+              @click="emit('upgrade', activeFacility.id)"
+            >升级</el-button>
+          </div>
+          <el-tabs v-if="activeFacility.id === 'workbench'" v-model="workbenchTab" class="workbench-tabs">
+            <el-tab-pane label="制造" name="craft" />
+            <el-tab-pane label="维修队列" name="repair" />
+          </el-tabs>
+          <div v-if="showCraftList" class="crafting-list">
                 <article
-                  v-for="recipe in props.craftingRecipes"
+                  v-for="recipe in facilityRecipes"
                   :key="recipe.id"
                   class="crafting-row"
                   :class="{ locked: !recipe.canStart }"
                 >
                   <div class="crafting-row__head">
                     <div>
-                      <small>REQ. WORKBENCH LV.{{ recipe.requiredLevel }} · {{ recipe.craftMinutes }} 分钟</small>
+                      <small>REQ. {{ recipe.facilityName || '设施' }} LV.{{ recipe.requiredLevel }} · {{ recipe.craftMinutes }} 分钟</small>
                       <strong>{{ recipe.name }}</strong>
                     </div>
                     <el-progress :percentage="recipeProgress(recipe)" :show-text="false" />
@@ -331,7 +346,7 @@ function recipeProgress(recipe: CraftingRecipe): number {
                     <div class="crafting-materials">
                       <span class="crafting-materials__label">材料</span>
                       <span v-for="input in recipe.inputs" :key="input.itemId" class="crafting-material" :class="materialClass(input)">
-                        {{ input.name }} <b>{{ input.have }} / {{ input.need }}</b>
+                        {{ input.name }}（局内带出） <b>{{ input.have }} / {{ input.need }}</b>
                       </span>
                     </div>
                     <div class="crafting-output">
@@ -354,10 +369,9 @@ function recipeProgress(recipe: CraftingRecipe): number {
                     >制造</el-button>
                   </div>
                 </article>
-                <div v-if="!props.craftingRecipes.length" class="crafting-empty">暂无可用配方</div>
+                <div v-if="!facilityRecipes.length" class="crafting-empty">暂无可用配方</div>
               </div>
-            </el-tab-pane>
-            <el-tab-pane label="维修队列" name="repair">
+          <div v-if="showRepairList">
               <div class="repair-bench__meta">维修归零护甲 · 完成后耐久上限减半</div>
               <div v-if="props.armorInstances.length" class="repair-list">
                 <div v-for="instance in props.armorInstances" :key="instance.id" class="repair-row">
@@ -372,8 +386,7 @@ function recipeProgress(recipe: CraftingRecipe): number {
                 </div>
               </div>
               <div v-else class="repair-empty"><el-icon><Box /></el-icon><span>暂无护甲实例</span></div>
-            </el-tab-pane>
-          </el-tabs>
+          </div>
         </template>
 
         <template v-else-if="activeFacility">

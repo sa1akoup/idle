@@ -9,6 +9,25 @@ export type NavKey =
   | 'hideout'
   | 'logs'
 
+export interface Quest {
+  id: string
+  merchantId: string
+  merchantName: string
+  name: string
+  description: string
+  status: 'locked' | 'available' | 'active' | 'completed'
+  objectiveType: 'extract_item' | 'defeat_kind' | 'visit_node' | 'style_extract' | 'survive_runs'
+  targetId: string
+  targetLabel: string
+  required: number
+  current: number
+  canAccept: boolean
+  canTurnIn: boolean
+  rewardCash: number
+  rewardRep: number
+  prerequisiteId: string
+}
+
 export interface User {
 	id: number
 	username: string
@@ -220,6 +239,7 @@ export interface HideoutFacility {
   fuelSlotCount: number
   requiresPower: boolean
   effectsJson: string
+  runtime: 'active' | 'planned'
   nextUpgrade: HideoutUpgrade | null
 }
 
@@ -299,6 +319,9 @@ export interface CraftingRecipe {
   craftMinutes: number
   output: CraftingOutput
   inputs: CraftingMaterial[]
+  facilityId: string
+  facilityName: string
+  facilityLevel: number
   workbenchLevel: number
   workbenchBusy: boolean
   canStart: boolean
@@ -331,6 +354,7 @@ export interface ItemInstance {
   locationType: string
   locationRef: string
   raidExtract: boolean
+  purposes?: string[]
 }
 
 export interface RecoveryTask {

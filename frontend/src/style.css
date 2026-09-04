@@ -1091,10 +1091,11 @@ b {
 .item-name > div { display: flex; flex-direction: column; }
 .item-name strong { font-size: 12px; }
 .item-name small { color: var(--text-muted); font-family: ui-monospace, Consolas, monospace; font-size: 9px; }
+.item-name .item-purpose { color: var(--olive); font-family: inherit; }
 .data-list-row > span { color: var(--text-secondary); }
 .data-list-row > strong:last-child { color: var(--amber); }
 .inventory-header,
-.inventory-row { grid-template-columns: minmax(210px, 1.4fr) .45fr .35fr .55fr .65fr; }
+.inventory-row { grid-template-columns: minmax(210px, 1.4fr) .45fr .35fr .7fr .65fr .55fr; }
 
 .channel-state { padding: 8px 12px; display: flex; align-items: center; gap: var(--space-2); color: var(--olive); background: #20251c; border: 1px solid #3d4b31; font-size: 10px; }
 .merchant-summary { margin-bottom: var(--space-4); display: flex; align-items: center; gap: var(--space-5); color: var(--text-secondary); font-family: ui-monospace, Consolas, monospace; font-size: 10px; }

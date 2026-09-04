@@ -351,7 +351,7 @@ watch(hasUnsavedChanges, (dirty) => emit("dirtyChange", dirty), { immediate: tru
             <span>SKILL</span>
             <h2>生存技能</h2>
           </div>
-          <small>训练值 / 100</small>
+          <small>行动成功判定会缓慢提升</small>
         </div>
         <div class="progress-list">
           <div v-for="skill in skills" :key="skill[0]" class="progress-row">
@@ -368,7 +368,7 @@ watch(hasUnsavedChanges, (dirty) => emit("dirtyChange", dirty), { immediate: tru
             <span>PROF</span>
             <h2>武器熟练度</h2>
           </div>
-          <small>实战成长</small>
+          <small>撤离成功且有效使用后提升</small>
         </div>
         <div class="progress-list">
           <div

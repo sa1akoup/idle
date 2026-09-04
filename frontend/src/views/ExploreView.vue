@@ -12,6 +12,53 @@ const {
   presetLabel, recoveryMethodLabel, canSubmit, startSession,
 } = useExploreDeployment(props, emit)
 
+const visibleQuests = () => props.quests.filter((quest) => quest.status !== 'locked')
+
+type ShoppingNeed = { key: string; label: string; detail: string; have: number; need: number }
+
+function firHave(itemId: string): number {
+  const stacked = props.inventory
+    .filter((item) => item.itemId === itemId && item.raidExtract)
+    .reduce((sum, item) => sum + item.quantity, 0)
+  const instances = props.itemInstances.filter((item) => (
+    item.itemId === itemId
+    && item.raidExtract
+    && item.locationType === 'inventory'
+    && item.status === 'normal'
+    && item.currentDurability > 0
+  )).length
+  return stacked + instances
+}
+
+function shoppingNeeds(): ShoppingNeed[] {
+  const rows: ShoppingNeed[] = []
+  for (const quest of props.quests) {
+    if (quest.status !== 'active' || quest.objectiveType !== 'extract_item' || !quest.targetId) continue
+    rows.push({
+      key: `quest-${quest.id}`,
+      label: `合同 · ${quest.name}`,
+      detail: quest.targetLabel,
+      have: firHave(quest.targetId),
+      need: quest.required,
+    })
+  }
+  for (const facility of props.hideout?.facilities ?? []) {
+    const upgrade = facility.nextUpgrade
+    if (!upgrade) continue
+    for (const requirement of upgrade.requirements) {
+      if (requirement.requirementType !== 'item' || !requirement.referenceId) continue
+      rows.push({
+        key: `hideout-${facility.id}-${requirement.referenceId}`,
+        label: `${facility.name} LV.${upgrade.level}`,
+        detail: `${requirement.label}（局内带出）`,
+        have: firHave(requirement.referenceId),
+        need: requirement.quantity,
+      })
+    }
+  }
+  return rows
+}
+
 // 随身弹药只读摘要：弹药槽在角色页配置，这里仅展示名称与发数。
 function carriedAmmoSummary(): string {
   const cells = props.loadout.carriedAmmo ?? []
@@ -108,6 +155,39 @@ function carriedAmmoSummary(): string {
           </div>
         </div>
 
+        <div v-if="shoppingNeeds().length" class="quest-block">
+          <div class="recovery-block__heading">
+            <span>本趟购物清单</span>
+            <small>合同与藏身处升级只认局内带出</small>
+          </div>
+          <div v-for="need in shoppingNeeds()" :key="need.key" class="quest-row">
+            <div>
+              <strong>{{ need.detail }}</strong>
+              <small>{{ need.label }} · {{ need.have }}/{{ need.need }}</small>
+            </div>
+            <span v-if="need.have >= need.need" class="quest-done">已齐</span>
+            <span v-else class="quest-pending">待搜</span>
+          </div>
+        </div>
+
+        <div class="quest-block">
+          <div class="recovery-block__heading">
+            <span>商人合同</span>
+            <small>上交物品必须是撤离带出的，商店购买无效</small>
+          </div>
+          <div v-if="!visibleQuests().length" class="style-note">暂无合同</div>
+          <div v-for="quest in visibleQuests()" :key="quest.id" class="quest-row">
+            <div>
+              <strong>{{ quest.name }}</strong>
+              <small>{{ quest.merchantName }} · {{ quest.targetLabel }} {{ quest.current }}/{{ quest.required }} · ￥{{ quest.rewardCash }}</small>
+            </div>
+            <el-button v-if="quest.canAccept" size="small" :loading="acceptingId === quest.id" @click="emit('acceptQuest', quest.id)">接取</el-button>
+            <el-button v-else-if="quest.canTurnIn" type="primary" size="small" :loading="turningId === quest.id" @click="emit('turninQuest', quest.id)">上交</el-button>
+            <span v-else-if="quest.status === 'completed'" class="quest-done">已完成</span>
+            <span v-else class="quest-pending">进行中</span>
+          </div>
+        </div>
+
         <div class="loadout-row">
           <div class="deployment-loadout">
             <span>当前携行</span>
@@ -147,3 +227,10 @@ function carriedAmmoSummary(): string {
     </div>
   </section>
 </template>
+
+<style scoped>
+.quest-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-top: 8px; }
+.quest-row small { display: block; opacity: 0.72; }
+.quest-done { font-size: 12px; color: var(--olive); }
+.quest-pending { font-size: 12px; color: var(--amber); }
+</style>

@@ -22,6 +22,7 @@ import type {
   NavKey,
   Player,
   PlayerLoadout,
+  Quest,
   RecoveryView,
   SaveLoadoutRequest,
   Session,
@@ -52,6 +53,7 @@ type ResourceKey =
   | 'craftingRecipes'
   | 'recovery'
   | 'loadout'
+  | 'quests'
 
 interface ViewState {
   loading: boolean
@@ -62,7 +64,7 @@ interface ViewState {
 const resourceKeys: ResourceKey[] = [
   'player', 'sessions', 'maps', 'enemies', 'weapons', 'ammos', 'armors', 'armorInstances', 'itemInstances',
   'consumables', 'chestRigs', 'backpacks', 'helmets', 'headsets', 'merchants', 'inventory', 'storageCapacity',
-  'hideout', 'craftingRecipes', 'recovery', 'loadout',
+  'hideout', 'craftingRecipes', 'recovery', 'loadout', 'quests',
 ]
 
 const viewKeys: NavKey[] = ['explore', 'live', 'map', 'character', 'inventory', 'merchant', 'hideout', 'logs']
@@ -83,6 +85,8 @@ export function useAppWorkspace() {
   const repairingId = ref<number | null>(null)
   const upgradingFacilityId = ref<string | null>(null)
   const craftingId = ref<string | null>(null)
+  const acceptingQuestId = ref<string | null>(null)
+  const turningQuestId = ref<string | null>(null)
   
   const player = ref<Player | null>(null)
   const loadout = ref<PlayerLoadout | null>(null)
@@ -105,6 +109,7 @@ export function useAppWorkspace() {
   const hideout = ref<HideoutSnapshot | null>(null)
   const craftingRecipes = ref<CraftingRecipe[]>([])
   const recovery = ref<RecoveryView | null>(null)
+  const quests = ref<Quest[]>([])
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<number | null>(null)
   let recoveryPollTimer: ReturnType<typeof setTimeout> | undefined
@@ -113,6 +118,7 @@ export function useAppWorkspace() {
   let loadoutSaveQueue: Promise<void> = Promise.resolve()
   let pendingLoadoutSaves = 0
   let loadoutSaveVersion = 0
+  let questWriteGeneration = 0
   
   const viewTitles: Record<NavKey, string> = {
     explore: '探索部署', live: '实时行动', map: '区域地图', character: '玩家角色', inventory: '本地仓库',
@@ -179,6 +185,7 @@ export function useAppWorkspace() {
     hideout.value = null
     craftingRecipes.value = []
     recovery.value = null
+    quests.value = []
     sessions.value = []
     activeSessionId.value = null
     activeView.value = 'explore'
@@ -292,8 +299,15 @@ export function useAppWorkspace() {
       ensureResource('armors', () => api.get<Armor[]>('/armors'), (data) => { armors.value = data }),
       ensureResource('consumables', () => api.get<Consumable[]>('/consumables'), (data) => { consumables.value = data }),
       ensureResource('inventory', () => api.get<InventoryItem[]>('/inventory'), (data) => { inventory.value = data }),
+      ensureResource('itemInstances', () => api.get<ItemInstance[]>('/item-instances'), (data) => { itemInstances.value = data }),
       ensureResource('recovery', () => api.get<RecoveryView | null>('/recovery/current'), (data) => { recovery.value = data }),
+      ensureResource('hideout', () => api.get<HideoutSnapshot>('/hideout'), (data) => { hideout.value = data }),
     ])
+    try {
+      await ensureResource('quests', () => api.get<Quest[]>('/quests'), (data) => { quests.value = data })
+    } catch {
+      quests.value = []
+    }
     scheduleRecoveryPoll()
   }
 
@@ -422,12 +436,13 @@ export function useAppWorkspace() {
   
   async function refreshSessions() {
     try {
-      const [sessionRes, playerRes, inventoryRes, storageCapacityRes, hideoutRes, recoveryRes, loadoutRes, armorInstancesRes, itemInstancesRes] = await Promise.all([
+      const [sessionRes, playerRes, inventoryRes, storageCapacityRes, hideoutRes, recoveryRes, loadoutRes, armorInstancesRes, itemInstancesRes, questRes] = await Promise.all([
         api.get<Session[]>('/sessions'), api.get<Player>('/player'), api.get<InventoryItem[]>('/inventory'),
         api.get<StorageCapacity>('/inventory/capacity'),
         api.get<HideoutSnapshot>('/hideout'),
         api.get<RecoveryView | null>('/recovery/current'),
         api.get<PlayerLoadout>('/loadout'), api.get<ArmorInstance[]>('/armor-instances'), api.get<ItemInstance[]>('/item-instances'),
+        api.get<Quest[]>('/quests'),
       ])
       sessions.value = sessionRes.data
       const nextActiveSession = sessions.value.find((item) => item.status === 'running')
@@ -441,7 +456,8 @@ export function useAppWorkspace() {
       loadout.value = loadoutRes.data
       armorInstances.value = armorInstancesRes.data
       itemInstances.value = itemInstancesRes.data
-      markResourcesLoaded('sessions', 'player', 'inventory', 'storageCapacity', 'hideout', 'recovery', 'loadout', 'armorInstances', 'itemInstances')
+      quests.value = questRes.data
+      markResourcesLoaded('sessions', 'player', 'inventory', 'storageCapacity', 'hideout', 'recovery', 'loadout', 'armorInstances', 'itemInstances', 'quests')
     } catch (error) {
       ElMessage.error(getApiError(error, '行动状态刷新失败'))
     }
@@ -524,6 +540,63 @@ export function useAppWorkspace() {
     }
   }
   
+  async function acceptQuest(questId: string) {
+    acceptingQuestId.value = questId
+    const generation = ++questWriteGeneration
+    try {
+      const { data } = await api.post<Quest[]>(`/quests/${questId}/accept`)
+      if (generation !== questWriteGeneration) return
+      quests.value = data
+      resourceLoaded.quests = true
+      const [inventoryRes, instanceRes] = await Promise.all([
+        api.get<InventoryItem[]>('/inventory'), api.get<ItemInstance[]>('/item-instances'),
+      ])
+      if (generation !== questWriteGeneration) return
+      inventory.value = inventoryRes.data
+      itemInstances.value = instanceRes.data
+      markResourcesLoaded('inventory', 'itemInstances')
+      ElMessage.success('已接取合同')
+    } catch (error) {
+      if (generation === questWriteGeneration) ElMessage.error(getApiError(error, '接取合同失败'))
+    } finally {
+      if (acceptingQuestId.value === questId) acceptingQuestId.value = null
+    }
+  }
+
+  async function turnInQuest(questId: string) {
+    turningQuestId.value = questId
+    const generation = ++questWriteGeneration
+    try {
+      const { data } = await api.post<Quest[]>(`/quests/${questId}/turnin`)
+      if (generation !== questWriteGeneration) return
+      quests.value = data
+      resourceLoaded.quests = true
+      ElMessage.success('合同已交付')
+      try {
+        const [inventoryRes, instanceRes, playerRes, merchantRes, capacityRes, hideoutRes, craftRes] = await Promise.all([
+          api.get<InventoryItem[]>('/inventory'), api.get<ItemInstance[]>('/item-instances'), api.get<Player>('/player'),
+          api.get<Merchant[]>('/merchants'), api.get<StorageCapacity>('/inventory/capacity'),
+          api.get<HideoutSnapshot>('/hideout'), api.get<CraftingRecipe[]>('/crafting/recipes'),
+        ])
+        if (generation !== questWriteGeneration) return
+        inventory.value = inventoryRes.data
+        itemInstances.value = instanceRes.data
+        player.value = playerRes.data
+        merchants.value = merchantRes.data
+        storageCapacity.value = capacityRes.data
+        hideout.value = hideoutRes.data
+        craftingRecipes.value = craftRes.data
+        markResourcesLoaded('quests', 'inventory', 'itemInstances', 'player', 'merchants', 'storageCapacity', 'hideout', 'craftingRecipes')
+      } catch {
+        if (generation === questWriteGeneration) ElMessage.warning('合同已交付，仓库状态刷新失败')
+      }
+    } catch (error) {
+      if (generation === questWriteGeneration) ElMessage.error(getApiError(error, '交付合同失败'))
+    } finally {
+      if (turningQuestId.value === questId) turningQuestId.value = null
+    }
+  }
+
   async function savePlayerName(name: string) {
     savingPlayer.value = true
     try {
@@ -698,8 +771,10 @@ export function useAppWorkspace() {
     savingPlayer, savingLoadout, purchasingId, sellingId, repairingId, upgradingFacilityId, craftingId,
     player, loadout, maps, mapGraphs, enemies, weapons, ammos, armors, armorInstances, itemInstances,
     consumables, chestRigs, backpacks, helmets, headsets, merchants, inventory,
-    storageCapacity, hideout, craftingRecipes, recovery, sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
+    storageCapacity, hideout, craftingRecipes, recovery, quests, acceptingQuestId, turningQuestId,
+    sessions, activeSessionId, viewTitles, cash, latestSession, activeSession,
     loadAll, loadViewData, refreshSessions, saveLoadout, purchaseItem, sellItem, savePlayerName,
-    repairArmor, upgradeFacility, toggleGenerator, loadGeneratorFuel, unloadGeneratorFuel, startCraft, handleSessionCreated, handleAuthenticated, logout,
+    repairArmor, upgradeFacility, toggleGenerator, loadGeneratorFuel, unloadGeneratorFuel, startCraft,
+    acceptQuest, turnInQuest, handleSessionCreated, handleAuthenticated, logout,
   }
 }

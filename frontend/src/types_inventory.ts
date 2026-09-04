@@ -35,6 +35,7 @@ export interface InventoryItem {
   raidExtract: boolean
   merchantCategory: string
   repRequirement: number
+  purposes?: string[]
   updatedAt: string
 }
 
