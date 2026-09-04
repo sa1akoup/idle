@@ -144,6 +144,30 @@ func seedEquipment(db *gorm.DB) error {
 		}
 	}
 
+	keyCases := []models.KeyCaseDef{
+		{ID: "keycase_03", Name: "简易钥匙包", KeySlots: 3, Price: 400, Weight: 1, Slots: 1, MerchantCategory: "clothing"},
+		{ID: "keycase_09", Name: "文件钥匙包", KeySlots: 9, Price: 1800, Weight: 1, Slots: 1, MerchantCategory: "clothing", RepRequirement: 15},
+		{ID: "keycase_12", Name: "大型钥匙包", KeySlots: 12, Price: 4200, Weight: 1, Slots: 2, MerchantCategory: "clothing", RepRequirement: 30},
+	}
+	for _, keyCase := range keyCases {
+		if err := upsertSeedDef(db, &keyCase, keyCase.ID); err != nil {
+			return err
+		}
+	}
+
+	secureContainers := []models.SecureContainerDef{
+		{ID: "secure_01", Name: "简易安全袋", InnerSlots: 1, Price: 400, Weight: 1, Slots: 1},
+		{ID: "secure_02", Name: "小型安全箱", InnerSlots: 2, Price: 900, Weight: 1, Slots: 1, MerchantCategory: "clothing", RepRequirement: 10, UnlockQuestID: "clothing_secure_2"},
+		{ID: "secure_04", Name: "标准安全箱", InnerSlots: 4, Price: 1800, Weight: 1, Slots: 1, MerchantCategory: "clothing", RepRequirement: 15, UnlockQuestID: "clothing_secure_4"},
+		{ID: "secure_06", Name: "扩容安全箱", InnerSlots: 6, Price: 3600, Weight: 1, Slots: 1, MerchantCategory: "clothing", RepRequirement: 25, UnlockQuestID: "clothing_secure_6"},
+		{ID: "secure_09", Name: "大型安全箱", InnerSlots: 9, Price: 7200, Weight: 2, Slots: 1, MerchantCategory: "clothing", RepRequirement: 35, UnlockQuestID: "clothing_secure_9"},
+	}
+	for _, container := range secureContainers {
+		if err := upsertSeedDef(db, &container, container.ID); err != nil {
+			return err
+		}
+	}
+
 	for _, inv := range initialEquipmentInventory() {
 		if err := upsertInventory(db, inv); err != nil {
 			return err
@@ -176,5 +200,7 @@ func initialEquipmentInventory() []models.Inventory {
 		{ItemID: "backpack_01", Name: "登山背包", Kind: "backpack", Quantity: 1, Price: 600, Weight: 2, Slots: 2, MerchantCategory: "clothing"},
 		{ItemID: "helmet_01", Name: "轻型头盔", Kind: "helmet", Quantity: 1, Price: 700, Weight: 2, Slots: 1, MerchantCategory: "clothing"},
 		{ItemID: "headset_01", Name: "基础战术耳机", Kind: "headset", Quantity: 1, Price: 500, Weight: 1, Slots: 1, MerchantCategory: "clothing"},
+		{ItemID: "keycase_03", Name: "简易钥匙包", Kind: "keycase", Quantity: 1, Price: 400, Weight: 1, Slots: 1, MerchantCategory: "clothing"},
+		{ItemID: "secure_01", Name: "简易安全袋", Kind: "secure", Quantity: 1, Price: 400, Weight: 1, Slots: 1},
 	}
 }

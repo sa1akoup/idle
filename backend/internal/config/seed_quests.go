@@ -31,6 +31,10 @@ func seedQuests(db *gorm.DB) error {
 			models.QuestObjectiveExtractItem, objItem("key_customs_office", 1), reward("weapon", 2800, 9), 9),
 		quest("weapon_safe", "weapon", 10, "金柜取样", "上交 1 条从局内带出的金链。海关保险箱和旧市收银机最容易出。", "weapon_key",
 			models.QuestObjectiveExtractItem, objItem("gold_chain", 1), reward("weapon", 3200, 10), 10),
+		quest("weapon_factory", "weapon", 11, "林缘探路", "进入林缘厂房的车间办公室并成功撤离。出发前把地图换成林缘厂房。", "weapon_safe",
+			models.QuestObjectiveVisitNode, objNode("factory_woods_office"), reward("weapon", 3600, 11), 37),
+		quest("weapon_boss", "weapon", 12, "猎杀首领", "击倒 1 名 Boss 后撤离。林缘厂房的车间办公室和林道会刷。", "weapon_factory",
+			models.QuestObjectiveDefeatKind, objKind("boss", 1), reward("weapon", 4500, 14), 38),
 
 		quest("medical_shortage", "medical", 1, "药品短缺", "上交 1 个从局内带出的 Salewa 急救包。商店购买的不算。", "",
 			models.QuestObjectiveExtractItem, objItem("salewa", 1), reward("medical", 1000, 4), 10),
@@ -71,6 +75,10 @@ func seedQuests(db *gorm.DB) error {
 			models.QuestObjectiveExtractItem, objItem("key_warehouse_office", 1), reward("mechanical", 2800, 9), 28),
 		quest("mechanical_battery", "mechanical", 10, "车载电瓶", "上交 1 块从局内带出的汽车电瓶。加油站油料堆和弃置轿车事件会出。", "mechanical_key",
 			models.QuestObjectiveExtractItem, objItem("car_battery", 1), reward("mechanical", 3400, 10), 29),
+		quest("mechanical_factory", "mechanical", 11, "厂房勘查", "进入林缘厂房的厂房车间并成功撤离。", "mechanical_battery",
+			models.QuestObjectiveVisitNode, objNode("factory_woods_shop"), reward("mechanical", 2800, 9), 39),
+		quest("mechanical_lumber", "mechanical", 12, "伐木场零件", "上交 2 份从局内带出的武器零件。林缘厂房车间和伐木场更容易出。", "mechanical_factory",
+			models.QuestObjectiveExtractItem, objItem("weapon_parts", 2), reward("mechanical", 3600, 11), 40),
 
 		quest("clothing_survive", "clothing", 1, "着装评估", "成功撤离 2 局。", "",
 			models.QuestObjectiveSurviveRuns, objSurvive(2), reward("clothing", 900, 3), 30),
@@ -86,6 +94,14 @@ func seedQuests(db *gorm.DB) error {
 			models.QuestObjectiveExtractItem, objItem("duct_tape", 2), reward("clothing", 2600, 8), 35),
 		quest("clothing_chain", "clothing", 7, "旧市金饰", "上交 1 条从局内带出的金链。旧市收银机、海关保险箱和夹克口袋都会出。", "clothing_tape",
 			models.QuestObjectiveExtractItem, objItem("gold_chain", 1), reward("clothing", 3000, 9), 36),
+		quest("clothing_secure_2", "clothing", 8, "缝一个口袋", "成功撤离 3 局后，服装商人愿意用材料换一只两格安全箱。", "clothing_survive",
+			models.QuestObjectiveSurviveRuns, objSurvive(3), reward("clothing", 1600, 5), 50),
+		quest("clothing_secure_4", "clothing", 9, "金饰担保", "上交 1 条从局内带出的金链，解锁四格安全箱兑换。", "clothing_secure_2",
+			models.QuestObjectiveExtractItem, objItem("gold_chain", 1), reward("clothing", 2400, 7), 51),
+		quest("clothing_secure_6", "clothing", 10, "厂房护运", "进入林缘厂房车间办公室并成功撤离，解锁六格安全箱兑换。", "clothing_secure_4",
+			models.QuestObjectiveVisitNode, objNode("factory_woods_office"), reward("clothing", 3200, 9), 52),
+		quest("clothing_secure_9", "clothing", 11, "首领级护运", "击倒 1 名 Boss 后撤离，解锁九格安全箱兑换。", "clothing_secure_6",
+			models.QuestObjectiveDefeatKind, objKind("boss", 1), reward("clothing", 4800, 12), 53),
 	}
 	for _, def := range defs {
 		var stored models.QuestDef

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"idle/internal/models"
 	"idle/internal/repository/catalog"
@@ -33,7 +34,19 @@ type MerchantCatalogItem struct {
 	RepairValue       float64 `json:"repairValue"`
 	FuelSeconds       int64   `json:"fuelSeconds"`
 	MaxDurability     float64 `json:"maxDurability"`
-	InstanceRequired  bool    `json:"instanceRequired"`
+	InstanceRequired  bool                 `json:"instanceRequired"`
+	Stock             int                  `json:"stock,omitempty"`
+	BarterCosts       []MerchantBarterCost `json:"barterCosts,omitempty"`
+	BarterLocked      bool                 `json:"barterLocked,omitempty"`
+	BarterLockReason  string               `json:"barterLockReason,omitempty"`
+}
+
+// MerchantCatalogResult 商人货架；黑市额外带刷新时间和跨类收购标记。
+type MerchantCatalogResult struct {
+	Items          []MerchantCatalogItem `json:"items"`
+	NextRefreshAt  *time.Time            `json:"nextRefreshAt,omitempty"`
+	AcceptsAny     bool                  `json:"acceptsAny"`
+	PlayerSellRate float64               `json:"playerSellRate"`
 }
 
 var ErrMerchantUnavailable = errors.New("商人商品不可用")
@@ -92,18 +105,26 @@ func GetMerchantByIDForUser(db *gorm.DB, userID uint, id string) (*models.Mercha
 }
 
 // MerchantCatalog 返回指定商人当前可售的商品目录。
-func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatalogItem, error) {
+func MerchantCatalog(db *gorm.DB, userID uint, merchant *models.MerchantDef) (MerchantCatalogResult, error) {
+	result := MerchantCatalogResult{
+		Items:          []MerchantCatalogItem{},
+		AcceptsAny:     isBlackMarket(merchant),
+		PlayerSellRate: playerSellMultiplier(merchant),
+	}
 	if !merchant.Open {
-		return nil, nil
+		return result, nil
+	}
+	if isBlackMarket(merchant) {
+		return blackMarketCatalog(db, userID, merchant)
 	}
 
 	buyPrice := buyMultiplier(merchant.Reputation)
-	sellPrice := sellMultiplier(merchant.Reputation)
+	sellPrice := playerSellMultiplier(merchant)
 	items := make([]MerchantCatalogItem, 0)
 	catalogRepo := catalog.New(db)
 	catalogItems, err := catalogRepo.ListByMerchantCategory(merchant.Category)
 	if err != nil {
-		return nil, err
+		return MerchantCatalogResult{}, err
 	}
 	itemIDs := make([]string, 0, len(catalogItems))
 	for _, item := range catalogItems {
@@ -111,7 +132,7 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 	}
 	useByID, err := catalogRepo.FindUsesByIDs(itemIDs)
 	if err != nil {
-		return nil, err
+		return MerchantCatalogResult{}, err
 	}
 
 	for _, item := range catalogItems {
@@ -159,12 +180,23 @@ func MerchantCatalog(db *gorm.DB, merchant *models.MerchantDef) ([]MerchantCatal
 			base.Detail = fmt.Sprintf("防护 %d / 覆盖 %d%%", item.Protect, item.Coverage)
 		case "headset":
 			base.Detail = fmt.Sprintf("听力 Lv.%d", item.HearingLevel)
+		case "keycase":
+			base.Detail = fmt.Sprintf("钥匙格 %d", item.AddSlots)
+			if err := attachMerchantBarter(db, userID, &base); err != nil {
+				return MerchantCatalogResult{}, err
+			}
+		case "secure":
+			base.Detail = fmt.Sprintf("口袋 %d 格 · 失能保搜刮", item.AddSlots)
+			if err := attachMerchantBarter(db, userID, &base); err != nil {
+				return MerchantCatalogResult{}, err
+			}
 		default:
 			continue
 		}
 		items = append(items, base)
 	}
-	return items, nil
+	result.Items = items
+	return result, nil
 }
 
 // usableItemDetail 基于物品描述与使用效果拼接详情文案（回复量、维修值、燃料时长等）。
@@ -239,6 +271,9 @@ func PurchaseFromMerchantForUserWithKey(db *gorm.DB, userID uint, operationKey, 
 		if !merchant.Open {
 			return fmt.Errorf("该商人暂未开放")
 		}
+		if isBlackMarket(merchant) {
+			return purchaseBlackMarketTx(tx, userID, merchant, itemID, quantity, operation)
+		}
 
 		item, err := catalog.New(tx).FindByID(itemID)
 		if err != nil {
@@ -246,6 +281,9 @@ func PurchaseFromMerchantForUserWithKey(db *gorm.DB, userID uint, operationKey, 
 		}
 		if item.MerchantCategory != merchant.Category {
 			return fmt.Errorf("该商人不经营此类物品")
+		}
+		if isMerchantBarter(item.ID) {
+			return purchaseMerchantBarterTx(tx, userID, merchant, item, quantity, operation)
 		}
 		if err := applyMerchantPriceForUser(tx, userID, &item); err != nil {
 			return err
@@ -326,10 +364,10 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 			if err != nil {
 				return err
 			}
-			if item.MerchantCategory != merchant.Category {
+			if !merchantAcceptsItem(merchant, item.MerchantCategory) {
 				return fmt.Errorf("该商人不收购此类物品")
 			}
-			price := roundPrice(item.Price, sellMultiplier(merchant.Reputation))
+			price := roundPrice(item.Price, playerSellMultiplier(merchant))
 			total = price * quantity
 			if err := addCash(tx, userID, total); err != nil {
 				return err
@@ -360,7 +398,7 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 			}
 			return fmt.Errorf("读取可出售物品: %w", err)
 		}
-		if sample.MerchantCategory != merchant.Category {
+		if !merchantAcceptsItem(merchant, sample.MerchantCategory) {
 			return fmt.Errorf("该商人不收购此类物品")
 		}
 
@@ -374,8 +412,7 @@ func SellItemForUserWithKey(db *gorm.DB, userID uint, operationKey, merchantID, 
 			return fmt.Errorf("%s 可出售数量不足（当前 %d）", itemID, sum.Qty)
 		}
 
-		// 出售价 = 基准价 × 好感度出售乘数（封顶 45%），四舍五入后乘以件数。
-		price := roundPrice(sample.Price, sellMultiplier(merchant.Reputation))
+		price := roundPrice(sample.Price, playerSellMultiplier(merchant))
 		total = price * quantity
 		if err := addCash(tx, userID, total); err != nil {
 			return err

@@ -74,6 +74,22 @@ func (h *Handler) ListBackpacks(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, list)
 }
+func (h *Handler) ListKeyCases(c *gin.Context) {
+	var list []models.KeyCaseDef
+	if err := h.db.Find(&list).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "钥匙包数据读取失败"})
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+func (h *Handler) ListSecureContainers(c *gin.Context) {
+	var list []models.SecureContainerDef
+	if err := h.db.Find(&list).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "安全箱数据读取失败"})
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
 func (h *Handler) ListHelmets(c *gin.Context) {
 	var list []models.HelmetDef
 	if err := h.db.Find(&list).Error; err != nil {
@@ -148,7 +164,7 @@ func (h *Handler) GetInventoryCapacity(c *gin.Context) {
 
 // GetLoadout 返回当前装备和失能后的自动补购预设。
 func (h *Handler) GetLoadout(c *gin.Context) {
-	loadout, err := service.GetPlayerLoadoutForUser(h.db, userID(c))
+	loadout, err := service.LoadoutViewForUser(h.db, userID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -163,9 +179,13 @@ func (h *Handler) UpdateLoadout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请完整选择武器与护甲"})
 		return
 	}
-	loadout, err := service.SavePlayerLoadoutForUser(h.db, userID(c), req)
-	if err != nil {
+	if _, err := service.SavePlayerLoadoutForUser(h.db, userID(c), req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	loadout, err := service.LoadoutViewForUser(h.db, userID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, loadout)
@@ -206,12 +226,12 @@ func (h *Handler) MerchantCatalog(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	items, err := service.MerchantCatalog(h.db, m)
+	catalog, err := service.MerchantCatalog(h.db, userID(c), m)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, items)
+	c.JSON(http.StatusOK, catalog)
 }
 
 // Sell 将局内带出物品出售给指定商人。

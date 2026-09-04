@@ -18,6 +18,9 @@ import (
 
 const currentUserDataUpgradeVersion = 4
 const progressionBootstrapVersion = 5
+const blackMarketUnlockVersion = 6
+const keyCaseUnlockVersion = 7
+const secureContainerUnlockVersion = 8
 
 const starterMainAttribute = 25
 
@@ -46,6 +49,15 @@ func RunUserDataUpgrades(db *gorm.DB) (int, error) {
 		return processed, err
 	}
 	if err := runProgressionBootstrapIfNeeded(db); err != nil {
+		return processed, err
+	}
+	if err := runBlackMarketUnlockIfNeeded(db); err != nil {
+		return processed, err
+	}
+	if err := runKeyCaseUnlockIfNeeded(db); err != nil {
+		return processed, err
+	}
+	if err := runSecureContainerUnlockIfNeeded(db); err != nil {
 		return processed, err
 	}
 	return processed, nil
@@ -164,6 +176,102 @@ func runProgressionBootstrapIfNeeded(db *gorm.DB) error {
 	return nil
 }
 
+func runBlackMarketUnlockIfNeeded(db *gorm.DB) error {
+	var record userDataUpgradeRecord
+	if err := db.Where("version = ?", blackMarketUnlockVersion).First(&record).Error; err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("读取黑市解锁适配记录: %w", err)
+	}
+	userIDs, err := listUpgradableUserIDs(db)
+	if err != nil {
+		return err
+	}
+	processed := 0
+	for _, userID := range userIDs {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			return unlockMerchantTx(tx, userID, blackMarketID)
+		}); err != nil {
+			return fmt.Errorf("用户 %d 黑市解锁失败: %w", userID, err)
+		}
+		processed++
+	}
+	if err := db.Create(&userDataUpgradeRecord{
+		Version:        blackMarketUnlockVersion,
+		CompletedAt:    time.Now(),
+		ProcessedUsers: processed,
+	}).Error; err != nil {
+		return fmt.Errorf("记录黑市解锁适配版本: %w", err)
+	}
+	log.Printf("[数据适配] 黑市商人已为 %d 个用户解锁", processed)
+	return nil
+}
+
+func runKeyCaseUnlockIfNeeded(db *gorm.DB) error {
+	var record userDataUpgradeRecord
+	if err := db.Where("version = ?", keyCaseUnlockVersion).First(&record).Error; err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("读取钥匙包适配记录: %w", err)
+	}
+	userIDs, err := listUpgradableUserIDs(db)
+	if err != nil {
+		return err
+	}
+	processed := 0
+	for _, userID := range userIDs {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := config.MigrateUserSurvivalData(tx, userID); err != nil {
+				return err
+			}
+			return ensureStarterKeyCaseTx(tx, userID)
+		}); err != nil {
+			return fmt.Errorf("用户 %d 钥匙包适配失败: %w", userID, err)
+		}
+		processed++
+	}
+	if err := db.Create(&userDataUpgradeRecord{
+		Version:        keyCaseUnlockVersion,
+		CompletedAt:    time.Now(),
+		ProcessedUsers: processed,
+	}).Error; err != nil {
+		return fmt.Errorf("记录钥匙包适配版本: %w", err)
+	}
+	log.Printf("[数据适配] 钥匙包已为 %d 个用户初始化", processed)
+	return nil
+}
+
+func runSecureContainerUnlockIfNeeded(db *gorm.DB) error {
+	var record userDataUpgradeRecord
+	if err := db.Where("version = ?", secureContainerUnlockVersion).First(&record).Error; err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("读取安全箱适配记录: %w", err)
+	}
+	userIDs, err := listUpgradableUserIDs(db)
+	if err != nil {
+		return err
+	}
+	processed := 0
+	for _, userID := range userIDs {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			return ensureStarterSecureContainerTx(tx, userID)
+		}); err != nil {
+			return fmt.Errorf("用户 %d 安全箱适配失败: %w", userID, err)
+		}
+		processed++
+	}
+	if err := db.Create(&userDataUpgradeRecord{
+		Version:        secureContainerUnlockVersion,
+		CompletedAt:    time.Now(),
+		ProcessedUsers: processed,
+	}).Error; err != nil {
+		return fmt.Errorf("记录安全箱适配版本: %w", err)
+	}
+	log.Printf("[数据适配] 安全箱已为 %d 个用户初始化", processed)
+	return nil
+}
+
 func bootstrapStarterAttributesTx(tx *gorm.DB, userID uint) error {
 	var character models.Character
 	if err := tx.Where("user_id = ?", userID).First(&character).Error; err != nil {
@@ -201,6 +309,17 @@ func unlockMerchantIfOpenTx(tx *gorm.DB, userID uint, merchantID string) error {
 	}
 	if !merchant.Open {
 		return nil
+	}
+	return unlockMerchantTx(tx, userID, merchantID)
+}
+
+func unlockMerchantTx(tx *gorm.DB, userID uint, merchantID string) error {
+	var merchant models.MerchantDef
+	if err := tx.Where("id = ?", merchantID).First(&merchant).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("读取商人 %s: %w", merchantID, err)
 	}
 	state := models.UserMerchantState{UserID: userID, MerchantID: merchantID, Unlocked: true}
 	result := tx.Where("user_id = ? AND merchant_id = ?", userID, merchantID).FirstOrCreate(&state)

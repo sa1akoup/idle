@@ -42,6 +42,8 @@ func (h *Handler) Register(r *gin.Engine) {
 	protected.GET("/backpacks", h.ListBackpacks)
 	protected.GET("/helmets", h.ListHelmets)
 	protected.GET("/headsets", h.ListHeadsets)
+	protected.GET("/keycases", h.ListKeyCases)
+	protected.GET("/secure-containers", h.ListSecureContainers)
 	protected.GET("/maps", h.ListMaps)
 	protected.GET("/maps/:id/graph", h.GetMapGraph)
 	protected.GET("/inventory", h.ListInventory)

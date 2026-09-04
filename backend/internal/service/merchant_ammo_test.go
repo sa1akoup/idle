@@ -66,15 +66,15 @@ func TestMerchantAmmoCatalogAndPurchaseRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := MerchantCatalog(db, userMerchant)
+	catalog, err := MerchantCatalog(db, userID, userMerchant)
 	if err != nil {
 		t.Fatalf("读取弹药目录: %v", err)
 	}
-	if len(catalog) != 6 {
-		t.Fatalf("商人目录数量 = %d，期望包含 N1-N6 以提供出售价格", len(catalog))
+	if len(catalog.Items) != 6 {
+		t.Fatalf("商人目录数量 = %d，期望包含 N1-N6 以提供出售价格", len(catalog.Items))
 	}
 	buyableCount := 0
-	for _, item := range catalog {
+	for _, item := range catalog.Items {
 		if item.Buyable {
 			buyableCount++
 		}

@@ -14,8 +14,10 @@ func Seed(db *gorm.DB) error {
 	if err := seedUser(db); err != nil {
 		return err
 	}
-	if err := seedPlayer(db); err != nil {
-		return err
+	if hasLocalDevUser(db) {
+		if err := seedPlayer(db); err != nil {
+			return err
+		}
 	}
 	if err := seedEquipment(db); err != nil {
 		return err
@@ -38,6 +40,9 @@ func Seed(db *gorm.DB) error {
 	if err := seedMap(db); err != nil {
 		return err
 	}
+	if err := seedMapFactory(db); err != nil {
+		return err
+	}
 	if err := seedContainers(db); err != nil {
 		return err
 	}
@@ -50,8 +55,10 @@ func Seed(db *gorm.DB) error {
 	if err := seedMerchants(db); err != nil {
 		return err
 	}
-	if err := seedMerchantStates(db); err != nil {
-		return err
+	if hasLocalDevUser(db) {
+		if err := seedMerchantStates(db); err != nil {
+			return err
+		}
 	}
 	if err := seedHideout(db); err != nil {
 		return err
@@ -62,11 +69,13 @@ func Seed(db *gorm.DB) error {
 	if err := seedQuests(db); err != nil {
 		return err
 	}
-	if err := seedLoadout(db); err != nil {
-		return err
-	}
-	if err := seedSurvivalForUser(db, models.DefaultUserID); err != nil {
-		return err
+	if hasLocalDevUser(db) {
+		if err := seedLoadout(db); err != nil {
+			return err
+		}
+		if err := seedSurvivalForUser(db, models.DefaultUserID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -89,10 +98,25 @@ func seedPlayerForUser(db *gorm.DB, userID uint) error {
 	return db.Where("user_id = ?", userID).FirstOrCreate(&player).Error
 }
 
-// seedUser 创建认证接口接入前的本地启动用户。
+// seedUser 仅在库中还没有任何账号时创建本地启动用户，避免覆盖已有注册账号。
 func seedUser(db *gorm.DB) error {
+	var count int64
+	if err := db.Model(&models.User{}).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
 	user := models.User{Username: "local", Status: "active"}
 	return db.Where("username = ?", user.Username).FirstOrCreate(&user).Error
+}
+
+func hasLocalDevUser(db *gorm.DB) bool {
+	var count int64
+	if err := db.Model(&models.User{}).Where("username = ?", "local").Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
 }
 
 // seedMerchantStates 为本地启动用户复制商人的初始好感度与解锁状态。
@@ -131,7 +155,7 @@ func seedLoadout(db *gorm.DB) error {
 func seedLoadoutForUser(db *gorm.DB, userID uint) error {
 	loadout := models.PlayerLoadout{
 		UserID:   userID,
-		WeaponID: "rifle_ak", ArmorID: "light_01", ChestRigID: "chestrig_01", BackpackID: "backpack_01", HelmetID: "helmet_01", HeadsetID: "headset_01",
+		WeaponID: "rifle_ak", ArmorID: "light_01", ChestRigID: "chestrig_01", BackpackID: "backpack_01", HelmetID: "helmet_01", HeadsetID: "headset_01", KeyCaseID: "keycase_03", SecureContainerID: "secure_01",
 		Consumables:    []string{"smoke", "toolkit"},
 		PresetWeaponID: "rifle_ak", PresetArmorID: "light_01", PresetChestRigID: "chestrig_01", PresetBackpackID: "backpack_01", PresetHelmetID: "helmet_01", PresetHeadsetID: "headset_01",
 		PresetName: "标准突击", PresetConsumables: []string{"smoke", "toolkit"}, PresetAmmoID: "ammo_762x39_n2", PresetAmmoRounds: 30,
@@ -171,6 +195,10 @@ func upsertInventory(db *gorm.DB, inv models.Inventory) error {
 }
 
 func upsertInventoryForUser(db *gorm.DB, userID uint, inv models.Inventory) error {
+	var userCount int64
+	if err := db.Model(&models.User{}).Where("id = ?", userID).Count(&userCount).Error; err == nil && userCount == 0 {
+		return nil
+	}
 	inv.UserID = userID
 	var stored models.Inventory
 	err := db.Where("user_id = ? AND item_id = ? AND raid_extract = ?", inv.UserID, inv.ItemID, inv.RaidExtract).First(&stored).Error

@@ -66,12 +66,12 @@ func TestSellReputationAndMechanicalCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := MerchantCatalog(db, userMerchant)
+	catalog, err := MerchantCatalog(db, userID, userMerchant)
 	if err != nil {
 		t.Fatal(err)
 	}
 	buyable := map[string]bool{}
-	for _, item := range catalog {
+	for _, item := range catalog.Items {
 		buyable[item.ID] = item.Buyable
 	}
 	if !buyable["screwdriver"] {

@@ -57,8 +57,8 @@ func TestFindByIDsBatchesAcrossCatalogTablesAndCachesResults(t *testing.T) {
 	if len(items) != 2 || items["weapon-1"].Kind != "weapon" || items["ammo-1"].Kind != "ammo" {
 		t.Fatalf("批量目录结果异常: %+v", items)
 	}
-	if counter.traces != 9 {
-		t.Fatalf("批量读取应访问 9 张目录表，实际 %d 次", counter.traces)
+	if counter.traces != 11 {
+		t.Fatalf("批量读取应访问 11 张目录表，实际 %d 次", counter.traces)
 	}
 
 	before := counter.traces

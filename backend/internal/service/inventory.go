@@ -75,15 +75,22 @@ func purchaseCatalogItems(tx *gorm.DB, userID uint, items []catalogItem) (int, e
 	}
 
 	totalPrice := 0
+	skipCash := true
 	for _, item := range items {
+		if item.SkipCash {
+			continue
+		}
+		skipCash = false
 		paid := item.PaidPrice
 		if paid <= 0 {
 			paid = item.Price
 		}
 		totalPrice += paid
 	}
-	if err := deductCash(tx, userID, totalPrice); err != nil {
-		return 0, err
+	if !skipCash {
+		if err := deductCash(tx, userID, totalPrice); err != nil {
+			return 0, err
+		}
 	}
 
 	// 弹药单次可购买 999 发，同类商品聚合后只执行一次库存更新。

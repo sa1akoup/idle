@@ -60,6 +60,10 @@ func seedSurvivalDefinitions(db *gorm.DB) error {
 		"weapon_repair_kit_used": {repairValue: 100, maxDurability: 100, useDurability: 100, priority: 1, instance: true, hideout: true},
 		"propane_tank":           {maxDurability: 100, useDurability: 100, fuelSeconds: 3600, priority: 1, instance: true, hideout: true},
 		"metal_fuel_tank":        {maxDurability: 100, useDurability: 100, fuelSeconds: 7200, priority: 2, instance: true, hideout: true},
+
+		"key_customs_office":   {maxDurability: 5, useDurability: 1, priority: 1, instance: true, session: true},
+		"key_clinic_pharmacy":  {maxDurability: 5, useDurability: 1, priority: 1, instance: true, session: true},
+		"key_warehouse_office": {maxDurability: 5, useDurability: 1, priority: 1, instance: true, session: true},
 	}
 
 	itemIDs := make([]string, 0, len(effects))
