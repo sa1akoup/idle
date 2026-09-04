@@ -85,7 +85,14 @@ func (manager *eventManager) Trigger(state *eventRunState, phase string, rng *ra
 			continue
 		}
 		roll := rng.Intn(10000) + 1
-		if roll > binding.TriggerBP {
+		triggerBP := binding.TriggerBP
+		if definition.Category == "exploration" && state.Tuning.Encounter.IntelEventBPBonus > 0 {
+			triggerBP += state.Tuning.Encounter.IntelEventBPBonus
+			if triggerBP > 10000 {
+				triggerBP = 10000
+			}
+		}
+		if roll > triggerBP {
 			continue
 		}
 		candidate := eventCandidate{binding: binding, def: definition, roll: roll, option: option}
@@ -335,6 +342,9 @@ func (manager *eventManager) resolveEvent(candidate eventCandidate, state *event
 	success, checkLine := resolveEventCheck(candidate.option.Check, candidate.option, state, rng)
 	if checkLine != "" {
 		*state.Lines = append(*state.Lines, "    "+checkLine)
+	}
+	if success && candidate.option.Check.Type == "attribute" {
+		state.creditSkill(candidate.option.Check.Attribute)
 	}
 	text := candidate.option.FailureText
 	effects := candidate.option.FailureEffects

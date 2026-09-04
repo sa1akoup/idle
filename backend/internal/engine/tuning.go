@@ -26,17 +26,17 @@ type Tuning struct {
 // CombatTuning 战斗判定与伤害压力系数。
 type CombatTuning struct {
 	// 命中率 = clamp(武器命中 + (操控-50)×HitRateCoef + 距离 + 伏击 - 目标闪避 - 压力×HitRateStressCoef)
-	HitRateCoef        float64 `json:"hitRateCoef"`        // 操控偏差系数 0.4
-	HitRateStressCoef  float64 `json:"hitRateStressCoef"`  // 压力命中惩罚 0.25
-	HitRateMin         float64 `json:"hitRateMin"`         // 5
-	HitRateMax         float64 `json:"hitRateMax"`         // 95
+	HitRateCoef       float64 `json:"hitRateCoef"`       // 操控偏差系数 0.4
+	HitRateStressCoef float64 `json:"hitRateStressCoef"` // 压力命中惩罚 0.25
+	HitRateMin        float64 `json:"hitRateMin"`        // 5
+	HitRateMax        float64 `json:"hitRateMax"`        // 95
 
 	// 压力增量 = max(StressMin, 压制×hitCoeff×StressSuppressCoef×(1-抗压×StressResistCoef) + 实伤×StressDamageCoef - 护甲抗压)
-	StressSuppressCoef    float64 `json:"stressSuppressCoef"`    // 交火压力系数 0.2
+	StressSuppressCoef     float64 `json:"stressSuppressCoef"`     // 交火压力系数 0.2
 	StressSuppressMissCoef float64 `json:"stressSuppressMissCoef"` // 未命中时的 hitCoeff 0.5
-	StressDamageCoef      float64 `json:"stressDamageCoef"`      // 受创压力系数 0.15
-	StressResistCoef      float64 `json:"stressResistCoef"`      // 抗压减压系数 0.005
-	StressMin             float64 `json:"stressMin"`             // 单次压力下限 1
+	StressDamageCoef       float64 `json:"stressDamageCoef"`       // 受创压力系数 0.15
+	StressResistCoef       float64 `json:"stressResistCoef"`       // 抗压减压系数 0.005
+	StressMin              float64 `json:"stressMin"`              // 单次压力下限 1
 
 	// 先手 = 敏捷×AgilityCoef + 感知×PerceptionCoef + 武器Ready + 护甲先手 - 压力×StressCoef + 伏击加成
 	InitiativeAgilityCoef    float64 `json:"initiativeAgilityCoef"`    // 0.35
@@ -89,12 +89,12 @@ type EncounterTuning struct {
 	ConcealAgilityCoef float64 `json:"concealAgilityCoef"` // 0.1
 
 	// 发现率 = clamp(50 + (侦察-隐蔽)×Coef, Min, Max); 耳机听力分别加减
-	FindBase         float64 `json:"findBase"`         // 50
-	FindCoef         float64 `json:"findCoef"`         // 0.5
-	FindMin          float64 `json:"findMin"`          // 10
-	FindMax          float64 `json:"findMax"`          // 90
-	HearingPBonus    float64 `json:"hearingPBonus"`    // 玩家发现率 + 听力×3
-	HearingEnemyNeg  float64 `json:"hearingEnemyNeg"`  // 敌人发现率 - 听力×2
+	FindBase        float64 `json:"findBase"`        // 50
+	FindCoef        float64 `json:"findCoef"`        // 0.5
+	FindMin         float64 `json:"findMin"`         // 10
+	FindMax         float64 `json:"findMax"`         // 90
+	HearingPBonus   float64 `json:"hearingPBonus"`   // 玩家发现率 + 听力×3
+	HearingEnemyNeg float64 `json:"hearingEnemyNeg"` // 敌人发现率 - 听力×2
 
 	// 绕行率 = clamp(50 + (潜行×0.5+敏捷×0.15+隐蔽-敌人感知×0.45)×Coef, Min, Max)
 	BypassStealthCoef float64 `json:"bypassStealthCoef"` // 0.5
@@ -105,22 +105,27 @@ type EncounterTuning struct {
 	BypassMax         float64 `json:"bypassMax"`         // 95
 
 	// 接近判定 = clamp(50 + (敏捷×0.35+潜行×0.25+感知×PerceptionCoef+基准-压力×0.15 - 拦截)×Coef, Min, Max)
-	ApproachAgilityCoef    float64 `json:"approachAgilityCoef"`    // 0.35
-	ApproachStealthCoef    float64 `json:"approachStealthCoef"`    // 0.25
-	ApproachBase           float64 `json:"approachBase"`           // 接近固定加成（感知接入后归 0）
-	ApproachPerceptionCoef float64 `json:"approachPerceptionCoef"` // 感知加成 0.1（替换原 +6 基准）
-	ApproachStressCoef      float64 `json:"approachStressCoef"`      // 0.15
+	ApproachAgilityCoef         float64 `json:"approachAgilityCoef"`         // 0.35
+	ApproachStealthCoef         float64 `json:"approachStealthCoef"`         // 0.25
+	ApproachBase                float64 `json:"approachBase"`                // 接近固定加成（感知接入后归 0）
+	ApproachPerceptionCoef      float64 `json:"approachPerceptionCoef"`      // 感知加成 0.1（替换原 +6 基准）
+	ApproachStressCoef          float64 `json:"approachStressCoef"`          // 0.15
 	ApproachBlockPerceptionCoef float64 `json:"approachBlockPerceptionCoef"` // 0.3
 	ApproachBlockSuppressCoef   float64 `json:"approachBlockSuppressCoef"`   // 0.3
-	ApproachCoef            float64 `json:"approachCoef"`            // 0.8
-	ApproachMin             float64 `json:"approachMin"`             // 10
-	ApproachMax             float64 `json:"approachMax"`             // 90
+	ApproachCoef                float64 `json:"approachCoef"`                // 0.8
+	ApproachMin                 float64 `json:"approachMin"`                 // 10
+	ApproachMax                 float64 `json:"approachMax"`                 // 90
 
 	// 节点遭遇概率 = clamp(节点基础值+热度(-撤离修正), Min, Max)
 	NodeDefaultChance int `json:"nodeDefaultChance"` // 60（默认节点）
 	NodeEvacModifier  int `json:"nodeEvacModifier"`  // 25（撤离模式下调）
 	NodeChanceMin     int `json:"nodeChanceMin"`     // 5
 	NodeChanceMax     int `json:"nodeChanceMax"`     // 90
+
+	// 情报中心写入快照：只加到玩家侦察，并提高探索事件 TriggerBP。缺省 0 保持旧快照行为。
+	IntelReconBonus            float64 `json:"intelReconBonus"`
+	IntelEventBPBonus          int     `json:"intelEventBPBonus"`
+	PhysicalSkillGrowthPercent int     `json:"physicalSkillGrowthPercent"`
 }
 
 // EventsTuning 事件属性判定系数：成功率 = clamp(55 + (属性-目标)×Coef, Min, Max)。
@@ -150,13 +155,13 @@ type SurvivalTuning struct {
 
 // SearchTuning 搜索风险与运气增产系数。
 type SearchTuning struct {
-	RiskPerLevel    float64 `json:"riskPerLevel"`    // 每级搜索风险 8
-	LuckCoef        float64 `json:"luckCoef"`        // 运气降低暴露率 0.15
-	PerceptionCoef  float64 `json:"perceptionCoef"`  // 感知降低暴露率 0.1
-	ExposeMin       float64 `json:"exposeMin"`       // 暴露率下限 2
-	ExposeMax       float64 `json:"exposeMax"`       // 暴露率上限 40
-	LuckBonusCoef   float64 `json:"luckBonusCoef"`   // 运气额外多搜一件的概率系数 0.3
-	FailPenalty     SearchFailPenalty `json:"failPenalty"`
+	RiskPerLevel   float64           `json:"riskPerLevel"`   // 每级搜索风险 8
+	LuckCoef       float64           `json:"luckCoef"`       // 运气降低暴露率 0.15
+	PerceptionCoef float64           `json:"perceptionCoef"` // 感知降低暴露率 0.1
+	ExposeMin      float64           `json:"exposeMin"`      // 暴露率下限 2
+	ExposeMax      float64           `json:"exposeMax"`      // 暴露率上限 40
+	LuckBonusCoef  float64           `json:"luckBonusCoef"`  // 运气额外多搜一件的概率系数 0.3
+	FailPenalty    SearchFailPenalty `json:"failPenalty"`
 }
 
 // AmmoDropTuning 敌人弹药掉落：按组（RoundsPerSlot）折算携带占用。
@@ -191,6 +196,7 @@ func DefaultTuning() Tuning {
 			ApproachStressCoef: 0.15, ApproachBlockPerceptionCoef: 0.3, ApproachBlockSuppressCoef: 0.3,
 			ApproachCoef: 0.8, ApproachMin: 10, ApproachMax: 90,
 			NodeDefaultChance: 60, NodeEvacModifier: 25, NodeChanceMin: 5, NodeChanceMax: 90,
+			IntelReconBonus: 0, IntelEventBPBonus: 0, PhysicalSkillGrowthPercent: 0,
 		},
 		Events: EventsTuning{
 			CheckBase: 55, CheckCoef: 1.1, CheckMin: 5, CheckMax: 95,
@@ -200,7 +206,7 @@ func DefaultTuning() Tuning {
 			EnergySurvivalCoef: 0.02, HydrationSurvivalCoef: 0.04, DrainMin: 5,
 			AutoHealTrigger: 0.6, AutoHealTarget: 0.8, AutoHealMedicalCoef: 0.002,
 			AutoRecoverThreshold: 0.8,
-			StressMoveRecovery: 5, StressExploreRecovery: 5,
+			StressMoveRecovery:   5, StressExploreRecovery: 5,
 		},
 		Search: SearchTuning{
 			RiskPerLevel: 8, LuckCoef: 0.15, PerceptionCoef: 0.1,
@@ -249,6 +255,9 @@ func ValidateTuning(t Tuning) error {
 	}
 	if t.Encounter.NodeChanceMax <= t.Encounter.NodeChanceMin {
 		return fmt.Errorf("调参配置 Encounter 节点遭遇率区间无效")
+	}
+	if t.Encounter.IntelReconBonus < 0 || t.Encounter.IntelEventBPBonus < 0 || t.Encounter.PhysicalSkillGrowthPercent < 0 {
+		return fmt.Errorf("调参配置 Encounter 情报或技能成长加成不能为负")
 	}
 	if t.Events.CheckMax <= t.Events.CheckMin {
 		return fmt.Errorf("调参配置 Events 判定区间无效")

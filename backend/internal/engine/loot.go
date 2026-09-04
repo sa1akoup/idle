@@ -143,17 +143,34 @@ func chooseContainerRule(container Container, rng *rand.Rand) (ContainerRule, bo
 	return ContainerRule{}, false
 }
 
-// chooseLootItem 从战利品目录中按类别与掉落权重抽一件物品，未配置权重按 1 参与。
-func chooseLootItem(catalog map[string]LootItem, category string, rng *rand.Rand) (LootItem, bool) {
+// lootAllowedInValueTier 按原版习惯：传奇件只出高价值容器，Rare 起才进中档箱。
+func lootAllowedInValueTier(rarity string, valueTier int) bool {
+	if valueTier <= 0 {
+		valueTier = 1
+	}
+	switch rarity {
+	case "legendary":
+		return valueTier >= 4
+	case "superrare":
+		return valueTier >= 3
+	case "rare":
+		return valueTier >= 2
+	default:
+		return true
+	}
+}
+
+// chooseLootItem 从战利品目录中按类别、容器价值档与掉落权重抽一件物品；权重 <= 0 的条目不参与。
+func chooseLootItem(catalog map[string]LootItem, category string, valueTier int, rng *rand.Rand) (LootItem, bool) {
 	ids := make([]string, 0, len(catalog))
 	totalWeight := 0
 	for id, item := range catalog {
-		if item.Category != category {
+		if item.Category != category || !lootAllowedInValueTier(item.Rarity, valueTier) {
 			continue
 		}
 		weight := item.DropWeight
 		if weight <= 0 {
-			weight = 1
+			continue
 		}
 		ids = append(ids, id)
 		totalWeight += weight
@@ -167,7 +184,7 @@ func chooseLootItem(catalog map[string]LootItem, category string, rng *rand.Rand
 		item := catalog[id]
 		weight := item.DropWeight
 		if weight <= 0 {
-			weight = 1
+			continue
 		}
 		if roll < weight {
 			return item, true

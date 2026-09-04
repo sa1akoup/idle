@@ -273,7 +273,7 @@ func PlanRoute(snapshot ScenarioSnapshot, style string, rng *rand.Rand, options 
 	if len(candidates) == 0 {
 		return RoutePlan{}, fmt.Errorf("地图 %s 的路线均超过绕行限制", snapshot.Map.ID)
 	}
-	normalizeCandidateScores(candidates, policy)
+	normalizeCandidateScores(candidates, policy, snapshot.Contracts)
 	bestScore := candidates[0].score
 	for _, candidate := range candidates[1:] {
 		if candidate.score > bestScore {
@@ -368,7 +368,7 @@ func filterDetours(candidates []routeCandidate, ratio float64) []routeCandidate 
 }
 
 // normalizeCandidateScores 按行动风格权重把各维度归一化后合并成路线得分。
-func normalizeCandidateScores(candidates []routeCandidate, policy StylePolicy) {
+func normalizeCandidateScores(candidates []routeCandidate, policy StylePolicy, contracts []QuestContract) {
 	maxValue, maxRisk, maxMove, maxExplore, maxLength := 1, 1, 1, 1, 1
 	for _, candidate := range candidates {
 		maxValue = maxInt(maxValue, candidate.value)
@@ -387,7 +387,30 @@ func normalizeCandidateScores(candidates []routeCandidate, policy StylePolicy) {
 		length := int64(candidate.length * 1000 / maxLength)
 		candidate.score = value*int64(policy.ValueWeight) - risk*int64(policy.RiskWeight) -
 			move*int64(policy.MoveTimeWeight) - explore*int64(policy.ExploreTimeWeight) - length*int64(policy.LengthWeight)
+		candidate.score += contractRouteBonus(contracts, candidate.plan)
 	}
+}
+
+func contractRouteBonus(contracts []QuestContract, plan RoutePlan) int64 {
+	if len(contracts) == 0 {
+		return 0
+	}
+	targets := make(map[string]struct{})
+	for _, contract := range contracts {
+		if contract.Type == "visit_node" && contract.NodeID != "" {
+			targets[contract.NodeID] = struct{}{}
+		}
+	}
+	if len(targets) == 0 {
+		return 0
+	}
+	bonus := int64(0)
+	for _, nodeID := range plan.NodeIDs {
+		if _, ok := targets[nodeID]; ok {
+			bonus += 500
+		}
+	}
+	return bonus
 }
 
 // nodeRisk 按遭遇角色返回风险等级，用于路线评分惩罚高危节点。

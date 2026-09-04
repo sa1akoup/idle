@@ -85,6 +85,7 @@ func maybeAutoHeal(state *eventRunState) {
 				continue
 			}
 			state.Player.HP = clamp(state.Player.HP+definition.HPRecovery*healRatio, 0, state.Player.MaxHP)
+			state.creditSkill("medical")
 		}
 	}
 	filtered := state.CarriedItems[:0]

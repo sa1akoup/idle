@@ -43,17 +43,22 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		activeProfile, activeRounds, activeIndex = Ammo{}, 0, -1
 	}
 	playerActor := buildPlayerActor(snapshot.Tuning, character, weapon, armor, armorDurability, activeProfile, activeRounds, hearing)
-	availableItems := make(map[string]int, len(consumables))
+	availableItems := make(map[string]int, len(consumables)+len(snapshot.StashKeys))
 	for _, item := range consumables {
 		availableItems[item.ItemID] += item.Quantity
+	}
+	for _, keyID := range snapshot.StashKeys {
+		if keyID != "" && availableItems[keyID] < 1 {
+			availableItems[keyID] = 1
+		}
 	}
 	state := &eventRunState{
 		Character: &character, Player: &playerActor, Snapshot: &snapshot, Mode: runModeExploring, Style: style, Styles: snapshot.Styles,
 		Tuning:     snapshot.Tuning,
 		AmmoStacks: CloneCarriedAmmoStacks(ammoStacks), activeAmmoIndex: activeIndex,
 		CarrySlots: carrySlots, CarryWeight: carryWeight, AvailableItems: availableItems, CarriedItems: CloneCarriedItems(carriedItems), ItemUseDefs: itemUseDefs,
-		ConsumedItems: make(map[string]int), Flags: make(map[string]bool), EventCounts: make(map[string]int),
-		LastEventVisit: make(map[string]int), Lines: &lines, Trace: &trace,
+		ConsumedItems: make(map[string]int), ConsumedStashItems: make(map[string]int), Flags: make(map[string]bool), EventCounts: make(map[string]int),
+		LastEventVisit: make(map[string]int), Lines: &lines, Trace: &trace, SkillCredits: make(map[string]struct{}),
 	}
 	loot := make([]LootDrop, 0)
 	state.CollectContainer = func(containerID, source string) error {
@@ -94,7 +99,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 				lines = append(lines, "    容器没有可用掉落规则")
 				break
 			}
-			item, ok := snapshot.LootItemsByCategory(rule.ItemCategory, rng)
+			item, ok := snapshot.LootItemsByCategory(rule.ItemCategory, container.ValueTier, rng)
 			if !ok {
 				lines = append(lines, fmt.Sprintf("    %s 分类暂无物品", rule.ItemCategory))
 				continue
@@ -120,6 +125,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 				continue
 			}
 			loot = append(loot, LootDrop{ItemID: item.ID, Quantity: quantity, ContainerID: containerID, Source: source})
+			state.noteCollectedKey(item.ID)
 			foundQuantity += quantity
 			state.LootSlots, state.LootWeight = needSlots, needWeight
 			lines = append(lines, fmt.Sprintf("    获得 %s x%d", item.Name, quantity))
@@ -401,6 +407,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 
 	if result != "incapacitated" {
 		result = "success"
+		state.creditSkill("survival")
 	}
 	character.HP = state.Player.HP
 	applyNeedDrain(state.Tuning, &character, state.DurationSec)
@@ -426,6 +433,7 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		playerStress: state.Player.Stress,
 		finished:     finishedSession, armorDurability: int(math.Round(state.Player.ArmorDurability)), carriedItems: CloneCarriedItems(state.CarriedItems),
 		armorBrokenDuringRun: state.ArmorBrokenDuringRun,
-		loot:                 cloneLoot(loot), extractedLoot: extractedLoot, consumedItems: state.ConsumedItems, report: lines, trace: trace,
+		loot:                 cloneLoot(loot), extractedLoot: extractedLoot, consumedItems: state.ConsumedItems, consumedStashItems: state.ConsumedStashItems, report: lines, trace: trace,
+		skillCredits: state.SkillCredits,
 	}, nil
 }

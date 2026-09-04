@@ -22,6 +22,7 @@ func simulateEncounter(t Tuning, player, enemy *BattleActor, distance string, he
 	started.Actor = player.Name
 	started.Target = enemy.Name
 	trace := []BattleTrace{started}
+	playerSpottedFirst := false
 	finish := func(result BattleResult) BattleResult {
 		timelineSec++
 		finished := newTrace(TraceBattleFinished, result.Rounds)
@@ -33,6 +34,7 @@ func simulateEncounter(t Tuning, player, enemy *BattleActor, distance string, he
 		result.EnemyStress = enemy.Stress
 		result.DurationSec = timelineSec
 		result.Trace = trace
+		result.PlayerSpottedFirst = playerSpottedFirst
 		return result
 	}
 	appendEscape := func(round int, actor, target string, escape escapeResult) {
@@ -50,7 +52,7 @@ func simulateEncounter(t Tuning, player, enemy *BattleActor, distance string, he
 	}
 	// 侦察值采用双方真实属性：玩家智力来自角色属性，敌人智力来自模板生成属性（替代原先固定 50/40）。
 	// 耳机听力等级：加成玩家发现率（+听力×HearingPBonus），并降低被敌人发现的概率（-听力×HearingEnemyNeg）。
-	pRecon := calcRecon(t, player.PerceptionEff, int(player.Intellect), player.Hearing*t.Encounter.HearingPBonus)
+	pRecon := calcRecon(t, player.PerceptionEff, int(player.Intellect), player.Hearing*t.Encounter.HearingPBonus+t.Encounter.IntelReconBonus)
 	eRecon := calcRecon(t, enemy.PerceptionEff, int(enemy.Intellect), 0)
 	pConceal := calcConceal(t, player.StealthEff, int(player.Agility), float64(player.Armor.Conceal))
 	eConceal := calcConceal(t, enemy.StealthEff, int(enemy.Agility), float64(enemy.Armor.Conceal))
@@ -59,7 +61,8 @@ func simulateEncounter(t Tuning, player, enemy *BattleActor, distance string, he
 	pFound := float64(rng.Intn(100)+1) <= pFindProb
 	eFound := float64(rng.Intn(100)+1) <= eFindProb
 	ambushPlayer, ambushEnemy := 0, 0
-	if pFound && !eFound {
+	playerSpottedFirst = pFound && !eFound
+	if playerSpottedFirst {
 		lines = append(lines, fmt.Sprintf("感知判定成功，提前发现敌人 (%.0f%%)", pFindProb))
 		ambushPlayer = t.Combat.AmbushInitBonus
 	} else if !pFound && eFound {
@@ -77,7 +80,7 @@ func simulateEncounter(t Tuning, player, enemy *BattleActor, distance string, he
 		bypassProb := clamp(t.Encounter.FindBase+(bypassVal-alertVal)*t.Encounter.BypassCoef, t.Encounter.BypassMin, t.Encounter.BypassMax)
 		if float64(rng.Intn(100)+1) <= bypassProb {
 			lines = append(lines, fmt.Sprintf("潜行绕行成功 (%.0f%%)，未触发交战", bypassProb))
-			return finish(BattleResult{Lines: lines, Winner: "escape"})
+			return finish(BattleResult{Lines: lines, Winner: "escape", BypassedWithoutFight: true, PlayerSpottedFirst: playerSpottedFirst})
 		}
 		lines = append(lines, fmt.Sprintf("绕行失败 (%.0f%%)，进入交战", bypassProb))
 	} else if approach == EncounterApproachAmbush {

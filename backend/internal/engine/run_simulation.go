@@ -27,12 +27,19 @@ type simulatedRun struct {
 	loot                    []LootDrop
 	extractedLoot           []LootDrop
 	consumedItems           map[string]int
+	consumedStashItems      map[string]int
 	report                  []string
 	trace                   []TraceEvent
+	skillCredits            map[string]struct{}
 }
 
-// SimulateRun 是探索引擎唯一的运行入口。它只读取快照和输入，不执行数据库读写。
+// SimulateRun 使用当前引擎版本执行一局探索，包含 v18 技能与情报成长。
 func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
+	return simulateRun(snapshot, input, true)
+}
+
+// simulateRun 是探索引擎运行入口。它只读取快照和输入，不执行数据库读写。
+func simulateRun(snapshot ScenarioSnapshot, input RunInput, applyProgression bool) (RunResult, error) {
 	if err := ValidateSnapshot(snapshot); err != nil {
 		return RunResult{}, fmt.Errorf("校验场景快照: %w", err)
 	}
@@ -114,6 +121,9 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	nextState.CarriedItems = CloneCarriedItems(outcome.carriedItems)
 	if outcome.result == "success" {
 		increaseWeaponProf(&nextState.Character, weapon.Category)
+		if applyProgression {
+			applyRunProgression(&nextState.Character, outcome.skillCredits, snapshot.Tuning.Encounter.PhysicalSkillGrowthPercent)
+		}
 	}
 	remaining := subtractItemStacks(nextState.Consumables, outcome.consumedItems)
 	nextState.Consumables = remaining
@@ -138,6 +148,7 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 		Loot:                    cloneLoot(outcome.loot),
 		ExtractedLoot:           cloneLoot(outcome.extractedLoot),
 		ConsumedItems:           itemCountsToStacks(outcome.consumedItems),
+		ConsumedStashItems:      itemCountsToStacks(outcome.consumedStashItems),
 		Report:                  append([]string(nil), outcome.report...),
 		Trace:                   append([]TraceEvent(nil), outcome.trace...),
 		NextState:               nextState,
@@ -151,7 +162,9 @@ func SimulateRun(snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 func SimulateRunVersion(version string, snapshot ScenarioSnapshot, input RunInput) (RunResult, error) {
 	switch version {
 	case EngineVersion:
-		return SimulateRun(snapshot, input)
+		return simulateRun(snapshot, input, true)
+	case LegacyEngineVersionV17:
+		return simulateRun(snapshot, input, false)
 	default:
 		return RunResult{}, fmt.Errorf("不支持的探索引擎版本 %s", version)
 	}

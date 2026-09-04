@@ -71,6 +71,7 @@ type RunResult struct {
 	Loot                    []LootDrop   `json:"loot"`
 	ExtractedLoot           []LootDrop   `json:"extractedLoot"`
 	ConsumedItems           []ItemStack  `json:"consumedItems"`
+	ConsumedStashItems      []ItemStack  `json:"consumedStashItems,omitempty"`
 	Report                  []string     `json:"report"`
 	Trace                   []TraceEvent `json:"trace"`
 	NextState               EngineState  `json:"nextState"`

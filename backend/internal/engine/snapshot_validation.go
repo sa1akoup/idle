@@ -116,6 +116,8 @@ func normalizeSnapshot(snapshot ScenarioSnapshot) ScenarioSnapshot {
 		snapshot.RecoveryPresets[index] = preset
 	}
 	sort.SliceStable(snapshot.Styles, func(i, j int) bool { return snapshot.Styles[i].ID < snapshot.Styles[j].ID })
+	sort.SliceStable(snapshot.Contracts, func(i, j int) bool { return snapshot.Contracts[i].QuestID < snapshot.Contracts[j].QuestID })
+	snapshot.StashKeys = sortedStrings(snapshot.StashKeys)
 	return snapshot
 }
 

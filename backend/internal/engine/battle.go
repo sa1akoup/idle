@@ -33,21 +33,23 @@ type BattleActor struct {
 }
 
 type BattleResult struct {
-	Lines         []string
-	Trace         []BattleTrace
-	Winner        string
-	HeatAdd       int
-	AmmoUsed      int
-	DamageDealt   float64
-	ArmorDamage   float64
-	PlayerHP      float64
-	PlayerStress  float64
-	EnemyHP       float64
-	EnemyStress   float64
-	Rounds        int
-	EscapeSuccess bool
-	SmokeUsed     bool
-	DurationSec   int64
+	Lines                []string
+	Trace                []BattleTrace
+	Winner               string
+	HeatAdd              int
+	AmmoUsed             int
+	DamageDealt          float64
+	ArmorDamage          float64
+	PlayerHP             float64
+	PlayerStress         float64
+	EnemyHP              float64
+	EnemyStress          float64
+	Rounds               int
+	EscapeSuccess        bool
+	SmokeUsed            bool
+	DurationSec          int64
+	PlayerSpottedFirst   bool
+	BypassedWithoutFight bool
 }
 
 type BattleTrace struct {

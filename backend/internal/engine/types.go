@@ -5,12 +5,15 @@ const (
 	SchemaVersion = "exploration-snapshot-v9"
 	// LegacyEngineVersionV16 仅用于升级时收尾旧 Session，不再用于执行新一局模拟。
 	LegacyEngineVersionV16 = "exploration-engine-v16"
-	EngineVersion          = "exploration-engine-v17"
+	// LegacyEngineVersionV17 继续模拟进行中的旧会话，但不应用 v18 技能与情报成长。
+	LegacyEngineVersionV17 = "exploration-engine-v17"
+	EngineVersion          = "exploration-engine-v18"
 )
 
 // EngineSupportedVersions 是 Session 生命周期可识别的版本白名单；v16 只允许迁移收尾，不能继续模拟。
 var EngineSupportedVersions = map[string]struct{}{
 	LegacyEngineVersionV16: {},
+	LegacyEngineVersionV17: {},
 	EngineVersion:          {},
 }
 
@@ -111,6 +114,7 @@ type LootItem struct {
 	Weight           int    `json:"weight"`
 	Slots            int    `json:"slots"`
 	DropWeight       int    `json:"dropWeight"`
+	Rarity           string `json:"rarity"`
 	MerchantCategory string `json:"merchantCategory"`
 	RepRequirement   int    `json:"repRequirement"`
 }
@@ -378,6 +382,19 @@ type ScenarioSnapshot struct {
 	Styles                   []StylePolicy                `json:"styles"`
 	Tuning                   Tuning                       `json:"tuning"`
 	RecoveryPresets          map[int]RecoveryPreset       `json:"recoveryPresets"`
+	Contracts                []QuestContract              `json:"contracts,omitempty"`
+	StashKeys                []string                     `json:"stashKeys,omitempty"`
+}
+
+// QuestContract 是开局冻结的商人合同目标，只影响路线偏向与结算核对。
+type QuestContract struct {
+	QuestID  string `json:"questId"`
+	Type     string `json:"type"`
+	ItemID   string `json:"itemId,omitempty"`
+	NodeID   string `json:"nodeId,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	Style    string `json:"style,omitempty"`
+	Quantity int    `json:"quantity"`
 }
 
 type CharacterState struct {

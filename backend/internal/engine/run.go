@@ -14,8 +14,9 @@ func assignLootDropIDs(loot []LootDrop, runIndex int) {
 }
 
 // LootItemsByCategory 从快照战利品表里按类别挑一件（供节点与事件共用）。
-func (snapshot ScenarioSnapshot) LootItemsByCategory(category string, rng *rand.Rand) (LootItem, bool) {
-	return chooseLootItem(snapshot.LootItems, category, rng)
+// valueTier 限制稀有度：LEDX/比特币等传奇件不会从低价值容器抽出。
+func (snapshot ScenarioSnapshot) LootItemsByCategory(category string, valueTier int, rng *rand.Rand) (LootItem, bool) {
+	return chooseLootItem(snapshot.LootItems, category, valueTier, rng)
 }
 
 // NodeContainerAssignmentsForNode 返回某节点配置的容器分配列表。
@@ -106,6 +107,12 @@ func resolveNodeEncounter(snapshot ScenarioSnapshot, state *eventRunState, event
 	// 交战前从携带弹药池中选中本次主弹（等级最高者），战后写回消耗。
 	state.syncActiveAmmo(snapshot)
 	result := simulateEncounter(snapshot.Tuning, state.Player, &enemyActor, node.Distance, state.Heat, state.hasItem("smoke"), approach, policy, enemyPolicy, forceEscape, rng)
+	if result.BypassedWithoutFight {
+		state.creditSkill("stealth")
+	}
+	if result.PlayerSpottedFirst {
+		state.creditSkill("perception")
+	}
 	state.writeBackActiveAmmo()
 	*state.Lines = append(*state.Lines, result.Lines[1:]...)
 	battleStartedAt := state.DurationSec

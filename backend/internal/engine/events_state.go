@@ -43,21 +43,37 @@ type eventRunState struct {
 	EncounterRole        string
 	NextMoveReductionSec int64
 
-	AvailableItems map[string]int
-	ConsumedItems  map[string]int
-	CarriedItems   []CarriedItem
-	ItemUseDefs    map[string]ItemUseDefinition
-	Flags          map[string]bool
-	EventCounts    map[string]int
-	LastEventVisit map[string]int
-	Lines          *[]string
-	Trace          *[]TraceEvent
+	AvailableItems     map[string]int
+	ConsumedItems      map[string]int
+	ConsumedStashItems map[string]int
+	CarriedItems       []CarriedItem
+	ItemUseDefs        map[string]ItemUseDefinition
+	Flags              map[string]bool
+	EventCounts        map[string]int
+	LastEventVisit     map[string]int
+	Lines              *[]string
+	Trace              *[]TraceEvent
 
 	CollectContainer     func(containerID, source string) error
 	CollectContainerPool func(poolID, source string, count int) error
 	HasContainerPool     func(poolID string) bool
 	DiscardLoot          func(quantity int) (int, error)
 	CollectAmmoDrop      func(itemID string, quantity int, source string) error
+	SkillCredits         map[string]struct{}
+}
+
+// creditSkill 记录本局可成长的技能；同一技能多次成功只计一次。
+func (state *eventRunState) creditSkill(name string) {
+	if state == nil || name == "" {
+		return
+	}
+	if state.SkillCredits == nil {
+		state.SkillCredits = make(map[string]struct{})
+	}
+	if characterSkillPtr(new(CharacterState), name) == nil {
+		return
+	}
+	state.SkillCredits[name] = struct{}{}
 }
 
 // addTrace 向本局轨迹追加一条事件记录。
@@ -94,7 +110,7 @@ func (state *eventRunState) hasItem(itemID string) bool {
 	return itemID != "" && state.AvailableItems[itemID] > 0
 }
 
-// consumeItem 消耗一个携带物品，找不到可用实例时返回 false。
+// consumeItem 消耗一个携带物品；仓库钥匙只在 AvailableItems 里时从仓库用量扣除。
 func (state *eventRunState) consumeItem(itemID string) bool {
 	if itemID == "" || state.AvailableItems[itemID] <= 0 {
 		return false
@@ -107,7 +123,33 @@ func (state *eventRunState) consumeItem(itemID string) bool {
 			return true
 		}
 	}
-	return false
+	state.AvailableItems[itemID]--
+	if state.AvailableItems[itemID] <= 0 {
+		delete(state.AvailableItems, itemID)
+	}
+	if state.ConsumedItems == nil {
+		state.ConsumedItems = make(map[string]int)
+	}
+	state.ConsumedItems[itemID]++
+	if state.ConsumedStashItems == nil {
+		state.ConsumedStashItems = make(map[string]int)
+	}
+	state.ConsumedStashItems[itemID]++
+	return true
+}
+
+func (state *eventRunState) noteCollectedKey(itemID string) {
+	if state == nil || state.Snapshot == nil || itemID == "" {
+		return
+	}
+	item, ok := state.Snapshot.LootItems[itemID]
+	if !ok || item.Category != "key" {
+		return
+	}
+	if state.AvailableItems == nil {
+		state.AvailableItems = make(map[string]int)
+	}
+	state.AvailableItems[itemID]++
 }
 
 // syncActiveAmmo 交战前从携带弹药池中选中本次攻击使用的主弹（等级最高且发数足够），

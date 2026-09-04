@@ -255,8 +255,9 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 		for _, option := range definition.Options {
 			for _, condition := range option.Conditions {
 				if condition.Type == "has_item" {
-					item, ok := snapshot.Items[condition.Ref]
-					if !ok || item.Kind != "consumable" {
+					_, inItems := snapshot.Items[condition.Ref]
+					loot, inLoot := snapshot.LootItems[condition.Ref]
+					if !inItems && (!inLoot || loot.Category != "key") {
 						return fmt.Errorf("事件 %s 的物品条件引用无效 %s", definitionID, condition.Ref)
 					}
 				}
@@ -282,12 +283,23 @@ func ValidateSnapshot(snapshot ScenarioSnapshot) error {
 						return fmt.Errorf("事件 %s 引用不存在遭遇角色 %s", definitionID, effect.Ref)
 					}
 				case "consume_item":
+					if loot, ok := snapshot.LootItems[effect.Ref]; ok && loot.Category == "key" {
+						break
+					}
 					item, ok := snapshot.Items[effect.Ref]
 					if !ok || item.Kind != "consumable" {
-						return fmt.Errorf("事件 %s 引用不存在消耗品 %s", definitionID, effect.Ref)
+						return fmt.Errorf("事件 %s 引用不存在消耗品或钥匙 %s", definitionID, effect.Ref)
 					}
 				}
 			}
+		}
+	}
+	for _, contract := range snapshot.Contracts {
+		if contract.QuestID == "" {
+			return fmt.Errorf("场景快照合同缺少编号")
+		}
+		if contract.Quantity < 0 {
+			return fmt.Errorf("合同 %s 的数量无效", contract.QuestID)
 		}
 	}
 	return nil
