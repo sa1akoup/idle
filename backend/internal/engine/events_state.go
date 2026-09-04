@@ -138,18 +138,24 @@ func (state *eventRunState) consumeItem(itemID string) bool {
 	return true
 }
 
+func remainingItemUses(item CarriedItem, defs map[string]ItemUseDefinition) int {
+	if item.CurrentDurability <= 0 {
+		return 0
+	}
+	use := 1.0
+	if def, ok := defs[item.ItemID]; ok && def.UseDurability > 0 {
+		use = def.UseDurability
+	}
+	uses := int(item.CurrentDurability / use)
+	if uses < 1 {
+		return 1
+	}
+	return uses
+}
+
 func (state *eventRunState) noteCollectedKey(itemID string) {
-	if state == nil || state.Snapshot == nil || itemID == "" {
-		return
-	}
-	item, ok := state.Snapshot.LootItems[itemID]
-	if !ok || item.Category != "key" {
-		return
-	}
-	if state.AvailableItems == nil {
-		state.AvailableItems = make(map[string]int)
-	}
-	state.AvailableItems[itemID]++
+	// 本局搜到的钥匙只作为战利品带出，不加入 AvailableItems，开门必须局外装进钥匙包。
+	_ = itemID
 }
 
 // syncActiveAmmo 交战前从携带弹药池中选中本次攻击使用的主弹（等级最高且发数足够），

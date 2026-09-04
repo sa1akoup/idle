@@ -236,7 +236,14 @@ type Enemy struct {
 	Evasion             int    `json:"evasion"`
 	Mobility            int    `json:"mobility"`
 	Suppress            int    `json:"suppress"`
-	BackpackContainerID string `json:"backpackContainerId"`
+	BackpackContainerID string        `json:"backpackContainerId"`
+	BossLootItems       []WeightedRef `json:"bossLootItems,omitempty"`
+}
+
+// WeightedRef 是模板池与 Boss 专属掉落共用的权重引用。
+type WeightedRef struct {
+	Ref    string `json:"ref"`
+	Weight int    `json:"weight"`
 }
 
 type EventCondition struct {
@@ -434,8 +441,9 @@ type LoadoutState struct {
 	ArmorInstanceID uint   `json:"armorInstanceId"`
 	ChestRigID      string `json:"chestRigId"`
 	BackpackID      string `json:"backpackId"`
-	HelmetID        string `json:"helmetId"`
-	HeadsetID       string `json:"headsetId"`
+	HelmetID          string `json:"helmetId"`
+	HeadsetID         string `json:"headsetId"`
+	SecureContainerID string `json:"secureContainerId"`
 }
 
 type CarryState struct {

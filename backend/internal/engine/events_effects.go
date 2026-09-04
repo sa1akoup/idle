@@ -31,6 +31,35 @@ func resolveEventCheck(check EventCheck, option EventOption, state *eventRunStat
 	}
 }
 
+func snapshotItemName(snapshot *ScenarioSnapshot, itemID string) string {
+	if snapshot == nil || itemID == "" {
+		return itemID
+	}
+	if item, ok := snapshot.LootItems[itemID]; ok && item.Name != "" {
+		return item.Name
+	}
+	if item, ok := snapshot.Items[itemID]; ok && item.Name != "" {
+		return item.Name
+	}
+	if ammo, ok := snapshot.Ammos[itemID]; ok && ammo.Name != "" {
+		return ammo.Name
+	}
+	return itemID
+}
+
+func snapshotItemCategory(snapshot *ScenarioSnapshot, itemID string) string {
+	if snapshot == nil {
+		return ""
+	}
+	if item, ok := snapshot.LootItems[itemID]; ok {
+		return item.Category
+	}
+	if item, ok := snapshot.Items[itemID]; ok {
+		return item.Category
+	}
+	return ""
+}
+
 // applyEventEffect 按效果类型修改运行状态并返回可读摘要，未知效果类型报错。
 func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) {
 	switch effect.Type {
@@ -78,7 +107,13 @@ func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) 
 		if err := state.CollectContainer(effect.Ref, "事件"); err != nil {
 			return "", err
 		}
-		return "搜索容器 " + effect.Ref, nil
+		name := effect.Ref
+		if state.Snapshot != nil {
+			if container, ok := state.Snapshot.Containers[effect.Ref]; ok && container.Name != "" {
+				name = container.Name
+			}
+		}
+		return "搜索容器 " + name, nil
 	case "container_pool":
 		if state.CollectContainerPool == nil {
 			return "", fmt.Errorf("事件奖励容器收集器未初始化")
@@ -90,7 +125,7 @@ func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) 
 		if err := state.CollectContainerPool(effect.Ref, "事件奖励", count); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("按权重搜索事件奖励池 %s x%d", effect.Ref, count), nil
+		return fmt.Sprintf("搜索事件奖励 %s", eventRewardPoolLabel(effect.Ref)), nil
 	case "encounter":
 		state.EncounterRole = effect.Ref
 		return "遭遇池切换为 " + effect.Ref, nil
@@ -112,10 +147,14 @@ func applyEventEffect(effect EventEffect, state *eventRunState) (string, error) 
 		state.Flags[effect.Ref] = effect.Value >= 0
 		return "记录局内标记 " + effect.Ref, nil
 	case "consume_item":
+		name := snapshotItemName(state.Snapshot, effect.Ref)
 		if state.consumeItem(effect.Ref) {
-			return "消耗 " + effect.Ref, nil
+			if snapshotItemCategory(state.Snapshot, effect.Ref) == "key" {
+				return "用" + name + "开锁", nil
+			}
+			return "消耗 " + name, nil
 		}
-		return "未携带可消耗的 " + effect.Ref, nil
+		return "未携带可消耗的 " + name, nil
 	case "discard_loot":
 		if state.DiscardLoot == nil {
 			return "", fmt.Errorf("物资丢弃器未初始化")
@@ -186,5 +225,33 @@ func getAttrValue(character *CharacterState, attribute string) int {
 		return character.Resist
 	default:
 		return 50
+	}
+}
+
+func eventRewardPoolLabel(poolID string) string {
+	switch poolID {
+	case "locked_reward":
+		return "上锁房间"
+	case "supply_reward":
+		return "补给点"
+	case "medical_reward":
+		return "医疗物资"
+	case "material_reward":
+		return "材料间"
+	case "intel_reward":
+		return "情报室"
+	case "workshop_reward":
+		return "工房"
+	case "fuel_reward":
+		return "油料堆"
+	case "sealed_reward":
+		return "密封柜"
+	case "market_reward":
+		return "市场暗格"
+	default:
+		if poolID == "" {
+			return "现场容器"
+		}
+		return poolID
 	}
 }

@@ -355,6 +355,8 @@ func (manager *eventManager) resolveEvent(candidate eventCandidate, state *event
 	if text != "" {
 		*state.Lines = append(*state.Lines, "    "+text)
 	}
+	effectSummaries := make([]string, 0, len(effects))
+	consumedNames := make([]string, 0)
 	for _, effect := range effects {
 		summary, err := applyEventEffect(effect, state)
 		if err != nil {
@@ -362,12 +364,17 @@ func (manager *eventManager) resolveEvent(candidate eventCandidate, state *event
 		}
 		if summary != "" {
 			*state.Lines = append(*state.Lines, "    效果："+summary)
+			effectSummaries = append(effectSummaries, summary)
+		}
+		if effect.Type == "consume_item" && effect.Ref != "" {
+			consumedNames = append(consumedNames, snapshotItemName(state.Snapshot, effect.Ref))
 		}
 	}
 	state.addTrace(TraceEventTriggered, state.DurationSec, state.Node.ID, candidate.def.ID, map[string]interface{}{
 		"phase": phase, "name": candidate.def.Name, "scopeType": candidate.binding.ScopeType,
 		"optionId": candidate.option.ID, "intent": intent, "success": success,
 		"roll": candidate.roll, "triggerBP": candidate.binding.TriggerBP,
+		"text": text, "effects": effectSummaries, "consumedItems": consumedNames,
 	})
 	return nil
 }

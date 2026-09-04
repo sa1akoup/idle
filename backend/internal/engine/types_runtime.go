@@ -40,6 +40,7 @@ type CarriedItem struct {
 	CurrentDurability float64 `json:"currentDurability"`
 	MaxDurability     float64 `json:"maxDurability"`
 	RaidExtract       bool    `json:"raidExtract"`
+	Secure            bool    `json:"secure,omitempty"`
 }
 
 type RunInput struct {

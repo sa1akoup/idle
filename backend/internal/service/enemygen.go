@@ -93,6 +93,14 @@ func GenerateEnemy(rng *rand.Rand, template models.EnemyTemplateDef, ctx Generat
 		name = template.Name
 	}
 
+	bossLoot := make([]engine.WeightedRef, 0, len(template.BossLootItems))
+	for _, item := range template.BossLootItems {
+		if item.Ref == "" || item.Weight <= 0 {
+			continue
+		}
+		bossLoot = append(bossLoot, engine.WeightedRef{Ref: item.Ref, Weight: item.Weight})
+	}
+
 	return engine.Enemy{
 		ID:                  template.ID + "_" + randomSuffix(rng),
 		Name:                name,
@@ -113,6 +121,7 @@ func GenerateEnemy(rng *rand.Rand, template models.EnemyTemplateDef, ctx Generat
 		Intellect:           intellect,
 		Resist:              resist,
 		BackpackContainerID: backpackID,
+		BossLootItems:       bossLoot,
 	}, nil
 }
 

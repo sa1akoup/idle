@@ -43,13 +43,17 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		activeProfile, activeRounds, activeIndex = Ammo{}, 0, -1
 	}
 	playerActor := buildPlayerActor(snapshot.Tuning, character, weapon, armor, armorDurability, activeProfile, activeRounds, hearing)
-	availableItems := make(map[string]int, len(consumables)+len(snapshot.StashKeys))
+	availableItems := make(map[string]int, len(consumables)+len(carriedItems))
 	for _, item := range consumables {
 		availableItems[item.ItemID] += item.Quantity
 	}
-	for _, keyID := range snapshot.StashKeys {
-		if keyID != "" && availableItems[keyID] < 1 {
-			availableItems[keyID] = 1
+	for _, item := range carriedItems {
+		if !item.Secure || item.InstanceID == 0 || item.CurrentDurability <= 0 {
+			continue
+		}
+		uses := remainingItemUses(item, itemUseDefs)
+		if uses > 1 {
+			availableItems[item.ItemID] += uses - 1
 		}
 	}
 	state := &eventRunState{
@@ -298,8 +302,13 @@ func simulateSingleRun(snapshot ScenarioSnapshot, character CharacterState, weap
 		if err := startEvacuationEvents(events, state, rng); err != nil {
 			return nil, err
 		}
-		if state.Mode == runModeExploring && enemyDefeated && enemy.BackpackContainerID != "" {
-			if err := state.CollectContainer(enemy.BackpackContainerID, "敌人背包"); err != nil {
+		if state.Mode == runModeExploring && enemyDefeated {
+			if enemy.BackpackContainerID != "" {
+				if err := state.CollectContainer(enemy.BackpackContainerID, "敌人背包"); err != nil {
+					return nil, err
+				}
+			}
+			if err := collectBossSpecialLoot(snapshot, state, enemy, rng, &loot); err != nil {
 				return nil, err
 			}
 		}

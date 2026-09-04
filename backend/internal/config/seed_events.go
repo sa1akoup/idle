@@ -35,7 +35,7 @@ func seedEvents(db *gorm.DB) error {
 }
 
 func eventDefinitions() []models.EventDef {
-	return []models.EventDef{
+	base := []models.EventDef{
 		// 战斗事件：只声明通用遭遇角色，具体敌人由地图遭遇池解析。
 		event("evt_common_patrol", "临时巡逻队", "一支巡逻队正沿节点推进。", "combat", "encounter", "repeat",
 			styled(checked("evade", nil, "stealth", 45, "", 0, "提前隐蔽，避开巡逻。", "巡逻队封住去路。", effects(fx("skip_combat", "", 0)), effects(fx("encounter", "patrol", 0))), []string{"balanced", "stealth"}, "bypass", 4, 2, 30),
@@ -178,6 +178,7 @@ func eventDefinitions() []models.EventDef {
 		event("evt_tunnel_locker", "维护储物柜", "通道壁上的维修柜还挂着锈锁。", "node", "", "once_per_run",
 			annotated(checked("force", []string{modeExploring}, "engineering", 50, "toolkit", 15, "撬开储物柜，搜出维修零件。", "锁芯拧断，里面只剩空盒。", effects(fx("container_pool", "locker_reward", 0)), effects(fx("time", "", 2))), "unlock", 2, 3)),
 	}
+	return append(base, extraEventDefinitions()...)
 }
 
 func eventBindings() []models.EventBinding {
@@ -280,7 +281,7 @@ func eventBindings() []models.EventBinding {
 	add("evt_market_register", "node", "city_ruins_node_3", "post_search", 800, 100, 80, 1, 0)
 	add("evt_gas_abandoned_car", "node", "city_ruins_node_9", "post_search", 800, 100, 80, 1, 0)
 	add("evt_tunnel_locker", "node", "city_ruins_node_4", "post_search", 800, 100, 80, 1, 0)
-	return bindings
+	return append(bindings, extraEventBindings()...)
 }
 
 func encounterPools() []models.EncounterPoolEntry {
@@ -293,6 +294,16 @@ func encounterPools() []models.EncounterPoolEntry {
 		{ID: "city_sniper_1", MapID: "city_ruins", Role: "sniper", EnemyID: "template_sniper", Weight: 100},
 		{ID: "city_extract_1", MapID: "city_ruins", Role: "extraction", EnemyID: "template_guard", Weight: 60},
 		{ID: "city_extract_2", MapID: "city_ruins", Role: "extraction", EnemyID: "template_elite", Weight: 40},
+		{ID: "factory_patrol_1", MapID: "factory_woods", Role: "patrol", EnemyID: "template_patrol", Weight: 100},
+		{ID: "factory_guard_1", MapID: "factory_woods", Role: "guard", EnemyID: "template_guard", Weight: 80},
+		{ID: "factory_guard_2", MapID: "factory_woods", Role: "guard", EnemyID: "template_patrol", Weight: 20},
+		{ID: "factory_elite_1", MapID: "factory_woods", Role: "elite", EnemyID: "template_elite", Weight: 80},
+		{ID: "factory_sniper_1", MapID: "factory_woods", Role: "sniper", EnemyID: "template_sniper", Weight: 100},
+		{ID: "factory_extract_1", MapID: "factory_woods", Role: "extraction", EnemyID: "template_guard", Weight: 60},
+		{ID: "factory_extract_2", MapID: "factory_woods", Role: "extraction", EnemyID: "template_elite", Weight: 40},
+		{ID: "factory_boss_killa", MapID: "factory_woods", Role: "boss", EnemyID: "template_boss_killa", Weight: 70},
+		{ID: "factory_boss_shturman", MapID: "factory_woods", Role: "boss", EnemyID: "template_boss_shturman", Weight: 70},
+		{ID: "factory_boss_elite", MapID: "factory_woods", Role: "boss", EnemyID: "template_elite", Weight: 20},
 	}
 }
 

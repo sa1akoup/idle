@@ -126,7 +126,11 @@ func seedEnemyTemplates(db *gorm.DB) error {
 			BossWeaponID: "rifle_rpk16", BossArmorID: "heavy_01", BossName: "【BOSS】铁腕·基拉",
 			AmmoLevelMin: 4, AmmoLevelMax: 4, AmmoRoundsBase: 120, AmmoRoundsMult: 1.5,
 			BackpackPool: []models.WeightedRef{{Ref: "enemy_backpack_elite", Weight: 100}},
-			SortOrder:   50,
+			BossLootItems: []models.WeightedRef{
+				{Ref: "graphics_card", Weight: 40}, {Ref: "weapon_parts", Weight: 30},
+				{Ref: "gold_chain", Weight: 20}, {Ref: "ledx", Weight: 10},
+			},
+			SortOrder: 50,
 		},
 		{
 			ID: "template_boss_shturman", Name: "施图尔曼", Kind: "boss", SpawnTags: []string{"high_value", "far", "outdoor"},
@@ -137,7 +141,11 @@ func seedEnemyTemplates(db *gorm.DB) error {
 			BossWeaponID: "sniper_svds", BossArmorID: "heavy_01", BossName: "【BOSS】林驻·施图尔曼",
 			AmmoLevelMin: 4, AmmoLevelMax: 5, AmmoRoundsBase: 40, AmmoRoundsMult: 1.2,
 			BackpackPool: []models.WeightedRef{{Ref: "enemy_backpack_elite", Weight: 100}},
-			SortOrder:   51,
+			BossLootItems: []models.WeightedRef{
+				{Ref: "weapon_parts", Weight: 40}, {Ref: "graphics_card", Weight: 22},
+				{Ref: "military_circuit_board", Weight: 30}, {Ref: "ledx", Weight: 8},
+			},
+			SortOrder: 51,
 		},
 	}
 	for _, t := range templates {

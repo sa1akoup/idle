@@ -416,6 +416,8 @@ func contractRouteBonus(contracts []QuestContract, plan RoutePlan) int64 {
 // nodeRisk 按遭遇角色返回风险等级，用于路线评分惩罚高危节点。
 func nodeRisk(node Node) int {
 	switch node.EncounterRole {
+	case "boss":
+		return 6
 	case "elite":
 		return 5
 	case "extraction":

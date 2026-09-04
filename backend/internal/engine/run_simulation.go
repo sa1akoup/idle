@@ -251,6 +251,13 @@ func LoadoutUsage(snapshot ScenarioSnapshot, loadout LoadoutState, consumables [
 		slots += item.Slots
 		weight += float64(item.Weight)
 	}
+	if loadout.SecureContainerID != "" {
+		item, ok := snapshot.Items[loadout.SecureContainerID]
+		if !ok {
+			return 0, 0, fmt.Errorf("配装物品 %s 不在场景快照目录中", loadout.SecureContainerID)
+		}
+		weight += float64(item.Weight)
+	}
 	for _, stack := range consumables {
 		if stack.Quantity <= 0 {
 			continue
