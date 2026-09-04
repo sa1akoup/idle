@@ -20,7 +20,7 @@ var requiredSchema = []schemaExpectation{
 	{table: "sessions", columns: []string{"status", "terminal_reason", "recovery_policy_json", "armor_instance_id", "next_run_at", "engine_version"}},
 	{table: "session_runs", columns: []string{"start_hp", "end_hp", "start_energy", "end_energy", "start_hydration", "end_hydration", "item_instance_changes"}},
 	{table: "session_events", columns: []string{"run_index", "sequence", "event_type", "available_at"}},
-	{table: "player_loadouts", columns: []string{"consumables", "consumable_refs", "carried_ammo", "preset_consumable_refs", "preset2_consumable_refs", "preset3_consumable_refs", "armor_instance_id"}},
+	{table: "player_loadouts", columns: []string{"consumables", "consumable_refs", "carried_ammo", "preset_consumable_refs", "preset2_consumable_refs", "preset3_consumable_refs", "armor_instance_id", "key_case_id", "secure_container_id"}},
 	{table: "inventories", columns: []string{"item_id", "quantity", "raid_extract"}},
 	{table: "loot_item_defs", columns: []string{"rarity", "drop_weight"}},
 	{table: "armor_instances", columns: []string{"armor_id", "cur_durability", "max_durability", "repair_count", "status"}},
@@ -37,6 +37,9 @@ var requiredSchema = []schemaExpectation{
 	{table: "user_data_migrations", columns: []string{"version", "completed_at", "processed_users", "created_instances", "stripped_refs"}},
 	{table: "quest_defs", columns: []string{"merchant_id", "objective_type", "objective_json", "reward_json", "prerequisite_id"}},
 	{table: "user_quests", columns: []string{"user_id", "quest_id", "status", "progress_json"}},
+	{table: "user_black_market_offers", columns: []string{"user_id", "item_id", "quantity", "cycle_start"}},
+	{table: "key_case_defs", columns: []string{"key_slots", "merchant_category"}},
+	{table: "secure_container_defs", columns: []string{"inner_slots", "merchant_category", "unlock_quest_id"}},
 	{table: "schema_migrations", columns: []string{"checksum"}},
 }
 

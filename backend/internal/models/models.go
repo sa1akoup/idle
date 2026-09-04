@@ -269,6 +269,31 @@ type HelmetDef struct {
 	RepRequirement   int    `json:"repRequirement"`
 }
 
+// KeyCaseDef 钥匙包：装备栏容器，只装钥匙实例，不占背包格。
+type KeyCaseDef struct {
+	ID               string `gorm:"primaryKey" json:"id"`
+	Name             string `json:"name"`
+	KeySlots         int    `json:"keySlots"`
+	Price            int    `json:"price"`
+	Weight           int    `json:"weight"`
+	Slots            int    `json:"slots"`
+	MerchantCategory string `json:"merchantCategory"`
+	RepRequirement   int    `json:"repRequirement"`
+}
+
+// SecureContainerDef 安全箱：探索口袋，按内部格数提供搜刮空间；失能只保口袋内物品。
+type SecureContainerDef struct {
+	ID               string `gorm:"primaryKey" json:"id"`
+	Name             string `json:"name"`
+	InnerSlots       int    `json:"innerSlots"`
+	Price            int    `json:"price"`
+	Weight           int    `json:"weight"`
+	Slots            int    `json:"slots"`
+	MerchantCategory string `json:"merchantCategory"`
+	RepRequirement   int    `json:"repRequirement"`
+	UnlockQuestID    string `json:"unlockQuestId"`
+}
+
 // HeadsetDef 耳机：听力提升等级（占位），后续提升部分事件成功率/降低被伏击率。
 type HeadsetDef struct {
 	ID               string `gorm:"primaryKey" json:"id"`

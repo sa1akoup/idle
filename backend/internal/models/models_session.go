@@ -101,6 +101,8 @@ type PlayerLoadout struct {
 	BackpackID            string           `json:"backpackId"`
 	HelmetID              string           `json:"helmetId"`
 	HeadsetID             string           `json:"headsetId"`
+	KeyCaseID             string           `json:"keyCaseId"`
+	SecureContainerID     string           `json:"secureContainerId"`
 	Consumables           []string         `gorm:"serializer:json" json:"consumables"`
 	ConsumableRefs        []LoadoutItemRef `gorm:"serializer:json" json:"consumableRefs"`
 	CarriedAmmo           []AmmoCell       `gorm:"serializer:json" json:"carriedAmmo"` // 随身携带弹药：最多 4 格，每格 1-60 发
@@ -257,6 +259,15 @@ type UserMerchantState struct {
 	Unlocked   bool      `json:"unlocked"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+// UserBlackMarketOffer 玩家当前周期的黑市货架；每 6 小时按掉落权重重抽。
+type UserBlackMarketOffer struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	UserID     uint      `gorm:"uniqueIndex:idx_user_black_offer,priority:1;index:idx_user_black_cycle;not null" json:"userId"`
+	ItemID     string    `gorm:"uniqueIndex:idx_user_black_offer,priority:2;not null" json:"itemId"`
+	Quantity   int       `json:"quantity"`
+	CycleStart time.Time `gorm:"index:idx_user_black_cycle;not null" json:"cycleStart"`
 }
 
 // ArmorInstance 护甲实例（耐久）
